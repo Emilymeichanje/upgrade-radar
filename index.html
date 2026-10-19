@@ -267,8 +267,14 @@ async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={.
 function exportData(){const blob=new Blob([JSON.stringify({decks:S.decks,cfg:S.cfg||null,exported:new Date().toISOString()},null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='upgrade-radar-data.json';a.click()}
 function importData(file){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);S.decks=j.decks||{};S.cfg=j.cfg||S.cfg;localStorage.setItem('decks',JSON.stringify(S.decks));if(S.cfg)localStorage.setItem('cfg',JSON.stringify(S.cfg));buildIndex();renderHome()}catch(e){alert('Not a valid export file')}};r.readAsText(file)}
 function parseList(txt){ // handles Archidekt, Moxfield, MTGO and plain exports
-  return txt.split(/\r?\n/).map(l=>l.trim())
-    .filter(l=>l&&!/^(\/\/|#|sideboard|maybeboard|considering|tokens?)\b/i.test(l)&&!/^(commander|deck|mainboard|companion)\s*:?\s*$/i.test(l))
+  const lines=[];let skip=false;
+  for(const raw of txt.split(/\r?\n/)){const l=raw.trim();if(!l)continue;
+    const head=l.replace(/^(\/\/|#)\s*/,'').replace(/\s*:?\s*$/,'').toLowerCase();
+    if(/^(sideboard|maybeboard|maybe|considering|tokens?)$/.test(head)){skip=true;continue}   // cards under these headers are not in the 99
+    if(/^(commander|commanders|deck|main|mainboard|companion)$/.test(head)){skip=false;continue}
+    if(/^(\/\/|#)/.test(l))continue;
+    if(!skip)lines.push(l)}
+  return lines
     .map(l=>l.replace(/\s*\[[^\]]*\]/g,'')          // Archidekt [Category] / [Commander{top}]
              .replace(/\s*\^[^^]*\^/g,'')            // Archidekt ^colour tags^
              .replace(/\s*\*[A-Z]+\*/g,'')           // *F* foil / *E* etched

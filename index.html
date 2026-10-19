@@ -251,7 +251,7 @@ function useCase(card,st,deck,sc,list){
   else swap=`<div class="swap">Paste your list in the "Your list" tab to get cut suggestions.</div>`;
   return parts.join('. ')+'.'+swap;
 }
-function commanderNames(deck){const n=[deck.name];if(deck.display&&deck.display.includes(' / '))n.push(...deck.display.split(' / '));return new Set(n.map(norm))}
+function commanderNames(deck){const n=[deck.name];if(deck.realName)n.push(deck.realName);if(deck.display&&deck.display.includes(' / '))n.push(...deck.display.split(' / '));return new Set(n.map(norm))}
 function swapFor(card,sc,deck,list){ // list: [{name,oracle,type,roles}] with edhrec stats attached; commander(s) never a cut
   const cmd=commanderNames(deck);
   const same=list.filter(x=>!cmd.has(norm(x.name))&&x.roles.some(r=>sc.roles.includes(r))&&!/\bLand\b/.test(x.type.split(' // ')[0]));
@@ -339,7 +339,7 @@ async function openDeck(slug){
   const d=S.index.find(x=>x.slug===slug);if(!d)return;S.cur=d;S.tab='new';
   $('#home').hidden=true;$('#detail').hidden=false;
   $('#detail').innerHTML=`<button class="back" id="back">← All decks</button>
-   <div class="hero">${d.img?`<img src="${esc(d.img)}" alt="">`:'<div class="ph"></div>'}<div><h2>${esc(d.display||d.name)}</h2><div class="meta"><span class="pips">${(d.ci||['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span><span class="tag br">${esc(d.bracket==='cEDH'?'cEDH':'Bracket '+d.bracket)}</span>${d.retired?'<span class="tag">retired</span>':''}${d.decks?`<span class="num">${fmt(d.decks)} EDHREC decks${d.rank?' · rank #'+fmt(d.rank):''}</span>`:''}${(d.tags||[]).slice(0,4).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}<button class="retire" id="retirebtn">${d.retired?'Rebuild':'Dismantle'}</button></div></div></div>
+   <div class="hero">${d.img?`<img src="${esc(d.img)}" alt="">`:'<div class="ph"></div>'}<div><h2>${esc(d.display||d.name)}</h2><div class="meta"><span class="pips">${(d.ci||['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span><span class="tag br">${esc(d.bracket==='cEDH'?'cEDH':'Bracket '+d.bracket)}</span>${d.realName?`<span class="tag" title="Printed as a flavor name; rules name shown">= ${esc(d.realName)}</span>`:''}${d.retired?'<span class="tag">retired</span>':''}${d.decks?`<span class="num">${fmt(d.decks)} EDHREC decks${d.rank?' · rank #'+fmt(d.rank):''}</span>`:''}${(d.tags||[]).slice(0,4).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}<button class="retire" id="retirebtn">${d.retired?'Rebuild':'Dismantle'}</button></div></div></div>
    <div id="confirm" hidden></div>
    <div class="tabs" role="tablist"><button role="tab" data-t="new">New cards</button><button role="tab" data-t="edh">EDHREC picks</button><button role="tab" data-t="list">Your list</button><button role="tab" data-t="kept">Shortlist</button></div>
    <div id="pane"><div class="empty">Loading…</div></div>`;
@@ -429,13 +429,13 @@ function wire(){
 async function resolveCommanders(){ // colors + art from Scryfall, one batched call, cached per browser
   let cache=null;try{cache=JSON.parse(localStorage.getItem('cmdrs')||'null')}catch(e){}
   const need=S.index.filter(d=>!d.ci||!d.ci.length||!d.art);
-  if(cache&&cache.date===S.snap.date){for(const d of need){const c=cache.m[d.name];if(c){d.ci=c.ci;d.art=c.art;d.img=c.img;S.cmdr[d.slug]=c}}}
+  if(cache&&cache.date===S.snap.date){for(const d of need){const c=cache.m[d.name];if(c){d.ci=c.ci;d.art=c.art;d.img=c.img;if(c.realName)d.realName=c.realName;S.cmdr[d.slug]=c}}}
   const still=need.filter(d=>!d.ci||!d.ci.length||!d.art);if(!still.length){renderHome();return}
   try{const cards=await cardsNamed(still.map(d=>d.name));const m=(cache&&cache.date===S.snap.date)?cache.m:{};
     // Scryfall's batch endpoint misses some cards (e.g. certain Secret Lair prints); look those up one by one
     const got=new Set(cards.map(c=>norm(c.name)));
-    for(const d of still.filter(x=>!got.has(norm(x.name)))){const c=await commanderCard(d);if(c)cards.push(c);await sleep(120)}
-    for(const c of cards){const d=still.find(x=>norm(x.name)===norm(c.name));if(!d)continue;c.art=c.img.replace('/small/','/art_crop/');d.ci=c.ci;d.art=c.art;d.img=c.img.replace('/small/','/normal/');S.cmdr[d.slug]=c;m[d.name]={ci:c.ci,art:c.art,img:d.img,oracle:c.oracle,type:c.type}}
+    for(const d of still.filter(x=>!got.has(norm(x.name)))){const c=await commanderCard(d);if(c){c._for=d.slug;cards.push(c)}await sleep(120)}
+    for(const c of cards){const d=c._for?still.find(x=>x.slug===c._for):still.find(x=>norm(x.name)===norm(c.name));if(!d)continue;if(norm(c.name)!==norm(d.name))d.realName=c.name;c.art=c.img.replace('/small/','/art_crop/');d.ci=c.ci;d.art=c.art;d.img=c.img.replace('/small/','/normal/');S.cmdr[d.slug]=c;m[d.name]={ci:c.ci,art:c.art,img:d.img,oracle:c.oracle,type:c.type,realName:d.realName||null}}
     try{localStorage.setItem('cmdrs',JSON.stringify({date:S.snap.date,m}))}catch(e){}
   }catch(e){console.warn('commander lookup',e)}
   renderHome();

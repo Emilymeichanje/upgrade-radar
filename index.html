@@ -251,8 +251,10 @@ function useCase(card,st,deck,sc,list){
   else swap=`<div class="swap">Paste your list in the "Your list" tab to get cut suggestions.</div>`;
   return parts.join('. ')+'.'+swap;
 }
-function swapFor(card,sc,deck,list){ // list: [{name,oracle,type,roles}] with edhrec stats attached
-  const same=list.filter(x=>x.roles.some(r=>sc.roles.includes(r))&&!/land/i.test(x.type));
+function commanderNames(deck){const n=[deck.name];if(deck.display&&deck.display.includes(' / '))n.push(...deck.display.split(' / '));return new Set(n.map(norm))}
+function swapFor(card,sc,deck,list){ // list: [{name,oracle,type,roles}] with edhrec stats attached; commander(s) never a cut
+  const cmd=commanderNames(deck);
+  const same=list.filter(x=>!cmd.has(norm(x.name))&&x.roles.some(r=>sc.roles.includes(r))&&!/\bLand\b/.test(x.type.split(' // ')[0]));
   if(!same.length)return null;
   same.sort((a,b)=>(a.st?a.st.s:-1)-(b.st?b.st.s:-1));
   const w=same[0];const reason=w.st?`same role, lowest synergy in your list (${Math.round(w.st.s*100)}, in ${pct(w.st.d,w.st.p)}% of decks)`:'same role, not in EDHREC\'s list for this commander';
@@ -357,7 +359,8 @@ async function deckListEnriched(d){ // returns [{name,oracle,type,roles,st}] or 
   const dk=S.decks[d.slug];if(!dk||!dk.list||!dk.list.length)return null;
   if(dk._enriched&&dk._enriched.n===dk.list.length)return dk._enriched.v;
   const st=statsFor(d);let cards=[];try{cards=await cardsNamed(dk.list)}catch(e){}
-  const v=cards.map(c=>({name:c.name,oracle:c.oracle,type:c.type,roles:rolesOf(c.oracle),st:st[norm(c.name)]||null}));
+  const cmd=commanderNames(d);
+  const v=cards.filter(c=>!cmd.has(norm(c.name))).map(c=>({name:c.name,oracle:c.oracle,type:c.type,roles:rolesOf(c.oracle),st:st[norm(c.name)]||null}));
   dk._enriched={n:dk.list.length,v};return v;
 }
 async function renderTab(){
@@ -368,7 +371,7 @@ async function renderTab(){
     pane.innerHTML=`<p class="note">One card per line. "1 Sol Ring", "1x Sol Ring (C21) 263" and plain names all work. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
       <textarea id="lst" aria-label="Decklist">${esc((dk.list||[]).join('\n'))}</textarea>
       <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg">${dk.list?dk.list.length+' cards saved':''}</span></div>`;
-    $('#savelist').onclick=async()=>{const list=parseList($('#lst').value);await saveDeck(d.slug,{list,_enriched:null});$('#lstmsg').textContent=list.length+' cards saved'};
+    $('#savelist').onclick=async()=>{const list=parseList($('#lst').value);await saveDeck(d.slug,{list,_enriched:null});const cmd=commanderNames(d);const ninety=list.filter(n=>!cmd.has(norm(n))).length;$('#lstmsg').textContent=`${list.length} lines saved (${ninety} in the 99; commander line ignored)`};
     return;
   }
   pane.innerHTML='<div class="empty">Fetching cards…</div>';

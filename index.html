@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Upgrade Radar</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one column, sticky header with filters; deck grid → deck detail with tabs. Numbers in mono; every color a token. */
+:root{
+  --bg:#f2f4f3;--panel:#ffffff;--fg:#17211d;--muted:#5d6b66;--line:#d6ddda;--soft:#e6ebe9;
+  --accent:#0f7a6f;--accent-fg:#ffffff;--good:#1c7c3f;--warn:#a2630a;--bad:#b2362f;
+  --W:#efe2b0;--U:#8ab8e6;--B:#9b8fae;--R:#e07b5f;--G:#79c07c;--C:#c3c9c6;
+  --display:"Fraunces",Georgia,serif;--body:"Source Sans 3","Segoe UI",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1513;--panel:#161d1a;--fg:#e8ece9;--muted:#98a6a0;--line:#2a3430;--soft:#1f2824;
+  --accent:#34c7b4;--accent-fg:#0b1512;--good:#5fd38a;--warn:#e3a94a;--bad:#f0776d;
+  --W:#d9ccA0;--U:#6fa2d6;--B:#8a7ea0;--R:#d9684c;--G:#5fae64;--C:#7e8884;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1513;--panel:#161d1a;--fg:#e8ece9;--muted:#98a6a0;--line:#2a3430;--soft:#1f2824;
+  --accent:#34c7b4;--accent-fg:#0b1512;--good:#5fd38a;--warn:#e3a94a;--bad:#f0776d;
+  --W:#d9cca0;--U:#6fa2d6;--B:#8a7ea0;--R:#d9684c;--G:#5fae64;--C:#7e8884;color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:16px/1.45 var(--body);margin:0}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+*{box-sizing:border-box}
+button,input,textarea,select{font:inherit;color:inherit}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:.86em}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));max-width:1080px;margin-inline:auto}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:var(--bg);border-bottom:1px solid var(--line)}
+header.top .wrap{padding-block:10px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+header.top h1{font-size:1.35rem;font-weight:700;letter-spacing:-.01em}
+header.top h1 small{font-family:var(--body);font-weight:400;color:var(--muted);font-size:.78rem;margin-left:8px}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-left:auto}
+.ctl label{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+input[type=date],input[type=search],select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 12px;cursor:pointer;font-size:.9rem}
+.chip[aria-pressed=true]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.chip:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main .wrap{padding-block:16px 48px}
+.status{font-size:.85rem;color:var(--muted);margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px 16px}
+.status b{color:var(--fg);font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.deck{display:grid;grid-template-columns:64px 1fr;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer;text-align:left;min-width:0;align-items:start}
+.deck:hover{border-color:var(--accent)}
+.deck img{width:64px;height:64px;object-fit:cover;border-radius:6px;background:var(--soft)}
+.deck .ph{width:64px;height:64px;border-radius:6px;background:var(--soft)}
+.deck h3{font-size:1rem;font-weight:700}
+.deck .meta{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;font-size:.8rem;color:var(--muted);margin-top:4px}
+.pips{display:inline-flex;gap:2px}
+.pip{width:11px;height:11px;border-radius:50%;border:1px solid var(--line)}
+.pip.W{background:var(--W)}.pip.U{background:var(--U)}.pip.B{background:var(--B)}.pip.R{background:var(--R)}.pip.G{background:var(--G)}.pip.C{background:var(--C)}
+.tag{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;padding:1px 7px;border-radius:4px;background:var(--soft);color:var(--muted)}
+.tag.br{background:var(--accent);color:var(--accent-fg)}
+.hits{font-family:var(--mono);font-size:.78rem;color:var(--accent)}
+.sect{font-family:var(--display);font-size:1.05rem;font-weight:700;margin:22px 0 10px;display:flex;align-items:baseline;gap:10px}
+.sect small{font-family:var(--body);font-weight:400;color:var(--muted);font-size:.8rem}
+/* detail */
+.back{background:none;border:0;color:var(--accent);padding:0;cursor:pointer;font-weight:600;margin-bottom:10px}
+.hero{display:grid;grid-template-columns:96px 1fr;gap:14px;align-items:start;margin-bottom:14px}
+.hero img{width:96px;border-radius:6px;background:var(--soft)}
+.hero h2{font-size:1.45rem;font-weight:700}
+.hero .meta{color:var(--muted);font-size:.9rem;margin-top:4px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px;overflow-x:auto}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 10px;cursor:pointer;color:var(--muted);white-space:nowrap}
+.tabs button[aria-selected=true]{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
+.list{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:56px 1fr;gap:12px;min-width:0}
+.card img{width:56px;border-radius:4px;background:var(--soft)}
+.card .ph{width:56px;height:78px;border-radius:4px;background:var(--soft)}
+.card .name{font-weight:700;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.card .name a{color:inherit;text-decoration:none}.card .name a:hover{text-decoration:underline}
+.card .mana{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+.card .type{font-size:.84rem;color:var(--muted)}
+.stats{display:flex;flex-wrap:wrap;gap:4px 12px;font-family:var(--mono);font-size:.76rem;margin-top:6px;color:var(--muted)}
+.stats b{color:var(--fg);font-weight:600}
+.stats .up{color:var(--good)}.stats .dn{color:var(--bad)}
+.roles{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.role{font-size:.72rem;padding:1px 7px;border-radius:4px;border:1px solid var(--line);color:var(--fg)}
+.role.fit{border-color:var(--accent);color:var(--accent)}
+.use{margin-top:8px;font-size:.92rem;border-left:3px solid var(--accent);padding-left:10px}
+.use .swap{color:var(--muted);font-size:.86rem;margin-top:3px}
+.oracle{font-size:.84rem;color:var(--muted);margin-top:6px;white-space:pre-wrap;display:none}
+.card.open .oracle{display:block}
+.acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.acts button{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:3px 10px;font-size:.82rem;cursor:pointer}
+.acts button.pri{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.score{font-family:var(--mono);font-size:.74rem;color:var(--muted)}
+.empty{color:var(--muted);padding:20px 0;font-size:.95rem}
+textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:var(--mono);font-size:.82rem;resize:vertical}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.note{font-size:.85rem;color:var(--muted)}
+.bar{height:4px;background:var(--soft);border-radius:2px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--accent)}
+.search{flex-basis:100%;display:flex;gap:10px;align-items:center}
+.search input{flex:1;min-width:0;padding:8px 12px;font-size:1rem}
+.panel{flex-basis:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:10px}
+.panel h3{font-size:1rem}
+.panel .f{display:grid;gap:4px}
+.panel input,.panel select{width:100%;padding:7px 9px;background:var(--bg);border:1px solid var(--line);border-radius:6px}
+.panel .warn{color:var(--warn);font-size:.86rem}
+.panel .err{color:var(--bad);font-size:.86rem}
+.sugg{display:flex;flex-wrap:wrap;gap:6px}
+.sugg button{background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:.84rem;cursor:pointer}
+.deck.retired{opacity:.6}
+.retire{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:.84rem;cursor:pointer;margin-left:auto}
+.confirm{background:var(--panel);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;margin:10px 0;display:grid;gap:8px}
+@media (max-width:480px){.deck{grid-template-columns:52px 1fr}.deck img,.deck .ph{width:52px;height:52px}.hero{grid-template-columns:72px 1fr}.hero img{width:72px}}
+@media (prefers-reduced-motion:no-preference){.deck,.card{transition:border-color .15s}}
+</style>
+
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <h1>Upgrade Radar <small id="count"></small></h1>
+  <div class="ctl">
+    <label for="since">New since</label><input type="date" id="since">
+    <button class="chip" id="b2" aria-pressed="true" data-b="2">Bracket 2</button>
+    <button class="chip" id="b3" aria-pressed="true" data-b="3">Bracket 3</button>
+    <button class="chip" id="bc" aria-pressed="true" data-b="cEDH">cEDH</button>
+    <button class="chip" id="addbtn">+ Add deck</button>
+    <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
+    <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
+  </div>
+  <div class="search"><input type="search" id="q" placeholder="Search decks: name, colors (e.g. WUB), bracket, tag" aria-label="Search decks" autocomplete="off"><span class="note" id="cap"></span></div>
+  <div id="addpanel" class="panel" hidden></div>
+</div></header>
+
+<main><div class="wrap">
+  <div class="status" id="status"><span>Loading snapshot…</span></div>
+  <div id="home"></div>
+  <div id="detail" hidden></div>
+</div></main>
+
+<script>
+(() => {
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct=(d,p)=>p?Math.round(100*d/p):0;
+const fmt=n=>Number(n||0).toLocaleString();
+const ciKey=ci=>(ci&&ci.length?[...ci].sort().join(''):'C');
+const norm=n=>String(n||'').split(' // ')[0].toLowerCase().replace(/[^a-z0-9]/g,'');
+
+const S={snap:null,index:[],decks:{},db:null,uid:null,since:null,brackets:new Set(['2','3','cEDH']),q:'',cur:null,tab:'new',
+  live:{},scry:{},cmdr:{},reprints:false};
+
+// ---------- roles (use-case heuristics) ----------
+const ROLES=[
+ ['Ramp',/add \{|search your library for (up to \w+ )?(a )?basic land|lands? onto the battlefield|land cards? from your library onto the battlefield|treasure token|\bmana\b.*\bcost\b.*\bless\b/i],
+ ['Card draw',/draw (a|two|three|x|\d+) cards?|draw cards|look at the top \w+ cards|impulse|exile the top card.*you may play|investigate|clue token/i],
+ ['Tutor',/search your library for (a|an|up to) (?!basic land)/i],
+ ['Removal',/destroy target|exile target (creature|permanent|nonland|artifact|enchantment)|deals? \w+ damage to (any target|target creature|target player)|fight|bite|-\d\/-\d|sacrifices? a creature/i],
+ ['Board wipe',/destroy all|exile all|each creature|all creatures|deals? \w+ damage to each/i],
+ ['Counterspell',/counter target/i],
+ ['Protection',/hexproof|indestructible|can't be countered|phase out|ward|regenerate|shroud|blink|exile .* return it to the battlefield/i],
+ ['Recursion',/return (target|up to \w+ target|all) .* from your graveyard|from your graveyard to (the battlefield|your hand)/i],
+ ['Tokens',/create (a|an|two|three|x|\d+) .* tokens?/i],
+ ['Go-wide pump',/creatures you control get \+|each creature you control gets \+|anthem/i],
+ ['Combat',/extra combat|additional combat|double strike|first strike|trample|menace|haste|attack/i],
+ ['Sacrifice outlet',/sacrifice (a|another|an) (creature|permanent|artifact)(?!s? you control, )/i],
+ ['Death trigger',/whenever .* (dies|is put into a graveyard)/i],
+ ['ETB value',/when .* enters/i],
+ ['Lifegain',/gain \w+ life|lifelink/i],
+ ['Discard / drain',/each opponent (loses|discards)|opponents? lose/i],
+ ['Stax / tax',/can't (cast|activate|attack|untap)|costs? \{\d\} more|spend only|skip/i],
+ ['Copy / clone',/copy (target|that|it)|enters as a copy/i],
+ ['Counters',/\+1\/\+1 counter|proliferate/i],
+ ['Spellslinger',/whenever you cast (an instant|a sorcery|a noncreature|an instant or sorcery)|magecraft|prowess|storm/i],
+ ['Artifacts',/artifact/i],
+ ['Enchantments',/enchantment/i],
+ ['Graveyard',/mill|graveyard/i],
+ ['Lands matter',/landfall|land enters/i],
+ ['Equipment',/equip/i],
+ ['Wincon',/you win the game|loses the game|infinite|each opponent loses \d+ life/i],
+];
+const TAGMAP={'Tokens':['Tokens','Go-wide pump','Sacrifice outlet'],'Go Wide':['Tokens','Go-wide pump'],'Aristocrats':['Sacrifice outlet','Death trigger','Tokens'],'Sacrifice':['Sacrifice outlet','Death trigger'],'Spellslinger':['Spellslinger','Card draw'],'Artifacts':['Artifacts'],'Enchantress':['Enchantments'],'Enchantments':['Enchantments'],'Lands Matter':['Lands matter','Ramp'],'Landfall':['Lands matter'],'Combo':['Tutor','Wincon','Protection'],'Ramp':['Ramp'],'Big Mana':['Ramp'],'Counterspells':['Counterspell'],'Control':['Counterspell','Removal','Board wipe'],'Stax':['Stax / tax'],'Hatebears':['Stax / tax'],'Voltron':['Equipment','Protection','Combat'],'Equipment':['Equipment'],'Auras':['Enchantments'],'Aggro':['Combat','Go-wide pump'],'+1/+1 Counters':['Counters'],'Proliferate':['Counters'],'Blink':['ETB value','Protection'],'ETB':['ETB value'],'Reanimator':['Recursion','Graveyard'],'Graveyard':['Graveyard','Recursion'],'Self-Mill':['Graveyard','Recursion'],'Lifegain':['Lifegain'],'Clones':['Copy / clone'],'Spell Copy':['Copy / clone'],'Extra Combats':['Combat'],'Ninjas':['Combat'],'Vampires':['Lifegain','Death trigger'],'Legends':['Tutor'],'Historic':['Artifacts'],'Treasure':['Ramp','Tokens'],'Mana Dorks':['Ramp'],'Toolbox':['Tutor'],'Group Slug':['Discard / drain'],'Mill':['Graveyard']};
+function rolesOf(txt){const r=[];for(const [n,re] of ROLES){if(re.test(txt||''))r.push(n)}return r.slice(0,5)}
+function themeRoles(deck){const set=new Set();for(const t of (deck.tags||[]))for(const r of (TAGMAP[t]||[]))set.add(r);return set}
+
+// ---------- snapshot ----------
+async function loadSnapshot(){
+  const r=await fetch('data/snapshot.json');S.snap=await r.json();buildIndex();
+  $('#status').innerHTML=`<span>EDHREC snapshot <b>${esc(S.snap.date)}</b></span><span>Scryfall: live</span><span id="livest">EDHREC live: checking…</span>`;
+}
+// try live EDHREC per commander; fall back silently
+async function liveEdh(deck){
+  if(S.live[deck.slug]!==undefined)return S.live[deck.slug];
+  try{const r=await fetch(`https://json.edhrec.com/pages/commanders/${deck.slug}.json`,{mode:'cors'});
+    if(!r.ok)throw 0;const j=await r.json();const jd=(j.container||j).json_dict||j;const out={lists:{},decks:(jd.card||{}).num_decks};
+    for(const L of jd.cardlists||[])out.lists[L.tag]=L.cardviews.map(c=>({n:c.name,s:+(c.synergy||0).toFixed(3),d:c.num_decks||0,p:c.potential_decks||1,l:+(c.lift||0).toFixed(2),z:+(c.trend_zscore||0).toFixed(2)}));
+    S.live[deck.slug]=out;$('#livest').textContent='EDHREC live: on';return out;
+  }catch(e){S.live[deck.slug]=null;$('#livest').textContent='EDHREC live: blocked, using snapshot';return null}
+}
+function statsFor(deck){ // name(norm) -> {s,d,p,l,z,list}
+  const src=S.live[deck.slug]||deck;const m={};
+  for(const [tag,arr] of Object.entries(src.lists||{}))for(const c of arr){const k=norm(c.n);if(!m[k]||tag==='newcards')m[k]={...c,list:tag}}
+  return m;
+}
+
+// ---------- scryfall ----------
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function scryPages(q,max=3){
+  let url='https://api.scryfall.com/cards/search?unique=cards&order=released&dir=desc&q='+encodeURIComponent(q),out=[];
+  for(let i=0;i<max&&url;i++){const r=await fetch(url);if(r.status===404)break;if(!r.ok)throw new Error('Scryfall '+r.status);const j=await r.json();out=out.concat(j.data||[]);url=j.has_more?j.next_page:null;if(url)await sleep(120)}
+  return out;
+}
+async function newCards(ci){
+  const key=ciKey(ci)+'|'+S.since+'|'+S.reprints;if(S.scry[key])return S.scry[key];
+  const id=ci.length?'id<='+ci.join(''):'id=c';
+  const q=`${id} legal:commander date>=${S.since} ${S.reprints?'':'-is:reprint'} -t:basic -is:funny game:paper`;
+  const cards=(await scryPages(q,4)).map(slim);S.scry[key]=cards;return cards;
+}
+async function cardsNamed(names){ // batch via /cards/collection (75 per call)
+  const out=[];for(let i=0;i<names.length;i+=75){const chunk=names.slice(i,i+75).map(name=>({name}));
+    const r=await fetch('https://api.scryfall.com/cards/collection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifiers:chunk})});
+    if(r.ok){const j=await r.json();out.push(...(j.data||[]).map(slim))}await sleep(120)}
+  return out;
+}
+function slim(c){const f=c.card_faces?.[0]||{};return{name:c.name,mana:c.mana_cost||f.mana_cost||'',type:c.type_line||f.type_line||'',oracle:c.oracle_text||c.card_faces?.map(x=>x.oracle_text).join('\n//\n')||'',set:c.set_name,setcode:c.set,date:c.released_at,ci:c.color_identity||[],img:c.image_uris?.small||f.image_uris?.small||'',uri:c.scryfall_uri,rank:c.edhrec_rank,price:c.prices?.usd,cmc:c.cmc}}
+async function commanderCard(deck){if(S.cmdr[deck.slug])return S.cmdr[deck.slug];
+  try{const r=await fetch('https://api.scryfall.com/cards/named?exact='+encodeURIComponent(deck.name));if(r.ok){S.cmdr[deck.slug]=slim(await r.json());return S.cmdr[deck.slug]}}catch(e){}return null}
+
+// ---------- scoring + use case ----------
+function score(card,st,deck,theme){
+  let s=0;const why=[];
+  if(st){s+=st.s*100;s+=pct(st.d,st.p)*0.6;if(st.z>1){s+=Math.min(st.z,10)*2;why.push('trending up')}}
+  else if(card.rank){s+=Math.max(0,30-card.rank/800)}
+  const roles=rolesOf(card.oracle);const fit=roles.filter(r=>theme.has(r));s+=fit.length*12;
+  if(/legendary/i.test(card.type)&&/legend/i.test((deck.tags||[]).join()))s+=6;
+  if(S.cmdr[deck.slug]){const ct=S.cmdr[deck.slug].oracle||'';const words=['token','counter','artifact','enchantment','instant','sorcery','land','graveyard','attack','dies','sacrifice','draw','treasure','energy','exile'];for(const w of words)if(new RegExp(w,'i').test(ct)&&new RegExp(w,'i').test(card.oracle)){s+=4;if(!fit.length)why.push('shares "'+w+'" with commander')}}
+  return{s:Math.round(s),roles,fit,why};
+}
+function useCase(card,st,deck,sc,list){
+  const parts=[];
+  if(sc.roles.length)parts.push(`<b>${esc(sc.roles.slice(0,3).join(' · '))}</b>`);else parts.push('<b>Niche effect</b>');
+  if(sc.fit.length)parts.push(`fits ${esc(deck.name.split(',')[0])}'s ${esc((deck.tags||[]).slice(0,2).join('/')||'core')} plan through ${esc(sc.fit.join(' and '))}`);
+  if(st){const inc=pct(st.d,st.p);const syn=Math.round(st.s*100);
+    parts.push(`EDHREC: in <b>${inc}%</b> of ${fmt(st.p)} eligible decks, synergy <b>${syn>0?'+':''}${syn}</b>${syn>=20?' (strongly commander-specific)':syn<=-10?' (worse here than in other decks)':''}`);
+    if(st.z>2)parts.push('adoption rising fast');}
+  else if(card.rank)parts.push(`EDHREC rank #${fmt(card.rank)} overall, not yet in this commander's data`);
+  else parts.push('too new for EDHREC data');
+  if(sc.why.length)parts.push(esc(sc.why.join(', ')));
+  let swap='';
+  if(list&&list.length){const cand=swapFor(card,sc,deck,list);if(cand)swap=`<div class="swap">Likely cut: <b>${esc(cand.name)}</b> — ${esc(cand.reason)}</div>`;else swap=`<div class="swap">No obvious cut with the same role; it would be an addition, not a swap.</div>`}
+  else swap=`<div class="swap">Paste your list in the "Your list" tab to get cut suggestions.</div>`;
+  return parts.join('. ')+'.'+swap;
+}
+function swapFor(card,sc,deck,list){ // list: [{name,oracle,type,roles}] with edhrec stats attached
+  const same=list.filter(x=>x.roles.some(r=>sc.roles.includes(r))&&!/land/i.test(x.type));
+  if(!same.length)return null;
+  same.sort((a,b)=>(a.st?a.st.s:-1)-(b.st?b.st.s:-1));
+  const w=same[0];const reason=w.st?`same role, lowest synergy in your list (${Math.round(w.st.s*100)}, in ${pct(w.st.d,w.st.p)}% of decks)`:'same role, not in EDHREC\'s list for this commander';
+  return{name:w.name,reason};
+}
+
+// ---------- db ----------
+async function initDb(){try{const raw=localStorage.getItem('decks');if(raw)S.decks=JSON.parse(raw);const c=localStorage.getItem('cfg');if(c)S.cfg=JSON.parse(c)}catch(e){}S.db=true;buildIndex()}
+async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={...cur,...patch};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}}
+function exportData(){const blob=new Blob([JSON.stringify({decks:S.decks,cfg:S.cfg||null,exported:new Date().toISOString()},null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='upgrade-radar-data.json';a.click()}
+function importData(file){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);S.decks=j.decks||{};S.cfg=j.cfg||S.cfg;localStorage.setItem('decks',JSON.stringify(S.decks));if(S.cfg)localStorage.setItem('cfg',JSON.stringify(S.cfg));buildIndex();renderHome()}catch(e){alert('Not a valid export file')}};r.readAsText(file)}
+function parseList(txt){return txt.split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&!/^(\/\/|#|sideboard|commander|deck|maybeboard)/i.test(l)).map(l=>l.replace(/^\d+x?\s+/,'').replace(/\s*\([A-Za-z0-9]{2,6}\)\s*[\w-]*\s*$/,'').replace(/\s*\*[FE]\*\s*$/,'').trim()).filter(Boolean)}
+
+// ---------- index: snapshot + your additions/retirements ----------
+const slugify=n=>n.normalize('NFKD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/['.,]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+function buildIndex(){
+  const base=S.snap.commanders.map(c=>({...c}));const have=new Set(base.map(c=>c.slug));
+  for(const [slug,dk] of Object.entries(S.decks))if(dk.custom&&!have.has(slug))base.push({name:dk.name,display:dk.name,bracket:dk.bracket||'3',slug,ci:[],tags:[],lists:{},decks:0,custom:true});
+  for(const d of base){const dk=S.decks[d.slug]||{};d.retired=!!dk.retired;if(dk.bracket)d.bracket=dk.bracket}
+  // keep resolved Scryfall data across rebuilds
+  for(const d of base){const old=S.index.find(x=>x.slug===d.slug);if(old&&old.ci&&old.ci.length&&(!d.ci||!d.ci.length)){d.ci=old.ci;d.art=old.art;d.img=old.img}}
+  S.index=base;
+}
+const active=()=>S.index.filter(d=>!d.retired);
+function cap(){return S.cfg?.cap||S.snap.commanders.length}
+function matches(d,q){if(!q)return true;const hay=[d.name,d.display,d.bracket==='cEDH'?'cedh':'bracket '+d.bracket,(d.ci||[]).join(''),...(d.tags||[])].join(' ').toLowerCase();
+  return q.split(/\s+/).every(t=>{if(/^[wubrg]{1,5}$/.test(t)){const want=t.toUpperCase().split('');const ci=d.ci||[];return want.every(c=>ci.includes(c))&&ci.length===want.length||hay.includes(t)}return hay.includes(t)})}
+
+// ---------- render home ----------
+function deckCard(d){const dk=S.decks[d.slug]||{};const n=(d.lists?.newcards||[]).length;
+  return`<button class="deck ${d.retired?'retired':''}" data-slug="${esc(d.slug)}">${d.art?`<img src="${esc(d.art)}" alt="" loading="lazy">`:'<div class="ph"></div>'}<div><h3>${esc(d.display||d.name)}</h3><div class="meta"><span class="pips">${(d.ci&&d.ci.length?d.ci:['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span>${d.retired?'<span class="tag">retired</span>':''}${d.custom?'<span class="tag">added by you</span>':d.unresolved?'<span class="tag">no EDHREC page</span>':`<span class="num">${fmt(d.decks)} decks</span>`}${dk.list?`<span class="tag">${dk.list.length} cards</span>`:''}${n?`<span class="hits">${n} new on EDHREC</span>`:''}</div></div></button>`}
+function renderHome(){
+  const act=active();const list=S.index.filter(d=>S.brackets.has(d.bracket)&&matches(d,S.q));
+  const live=list.filter(d=>!d.retired),ret=list.filter(d=>d.retired);
+  $('#count').textContent=`${live.length} shown`;$('#cap').textContent=`${act.length} / ${cap()} active`;
+  const groups=[['2','Bracket 2'],['3','Bracket 3'],['cEDH','cEDH']];
+  let h=groups.map(([b,label])=>{const ds=live.filter(d=>d.bracket===b);if(!ds.length)return'';
+    return`<div class="sect">${label}<small>${ds.length}</small></div><div class="grid">${ds.map(deckCard).join('')}</div>`}).join('');
+  if(ret.length)h+=`<div class="sect">Retired<small>${ret.length} — dismantled, kept for reference</small></div><div class="grid">${ret.map(deckCard).join('')}</div>`;
+  if(!live.length&&!ret.length)h='<div class="empty">No deck matches. Try part of a commander name, a bracket, or colors like "BG".</div>';
+  $('#home').innerHTML=h;
+  $('#home').querySelectorAll('.deck').forEach(b=>b.onclick=()=>openDeck(b.dataset.slug));
+}
+
+// ---------- add / dismantle (one in, one out) ----------
+function toggleAdd(open){const p=$('#addpanel');p.hidden=!open;if(!open)return;
+  const act=active().sort((a,b)=>a.name.localeCompare(b.name));const full=act.length>=cap();
+  p.innerHTML=`<h3>Add a deck</h3>
+   <div class="f"><label for="newname">Commander (exact card name)</label><input id="newname" placeholder="Start typing…"><div class="sugg" id="sugg"></div></div>
+   <div class="f"><label for="newbr">Bracket</label><select id="newbr"><option value="2">Bracket 2</option><option value="3" selected>Bracket 3</option><option value="cEDH">cEDH</option></select></div>
+   <div class="f"><label for="retireSel">Dismantle in exchange ${full?'(required: you are at your cap of '+cap()+')':'(optional)'}</label><select id="retireSel"><option value="">— none —</option>${act.map(d=>`<option value="${esc(d.slug)}">${esc(d.display||d.name)} · ${esc(d.bracket==='cEDH'?'cEDH':'B'+d.bracket)}</option>`).join('')}</select></div>
+   ${full?'<div class="warn">Your rule: a new deck means an existing one is dismantled. Pick which.</div>':''}
+   <div class="row"><button class="chip" id="addgo">Add deck</button><button class="chip" id="addcancel">Cancel</button><span class="err" id="adderr"></span></div>`;
+  let t;$('#newname').oninput=()=>{clearTimeout(t);const q=$('#newname').value.trim();if(q.length<3){$('#sugg').innerHTML='';return}
+    t=setTimeout(async()=>{try{const r=await fetch('https://api.scryfall.com/cards/autocomplete?q='+encodeURIComponent(q));const j=await r.json();$('#sugg').innerHTML=(j.data||[]).slice(0,6).map(n=>`<button type="button">${esc(n)}</button>`).join('');$('#sugg').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('#newname').value=b.textContent;$('#sugg').innerHTML=''})}catch(e){}},250)};
+  $('#addcancel').onclick=()=>toggleAdd(false);
+  $('#addgo').onclick=async()=>{const name=$('#newname').value.trim();const br=$('#newbr').value;const ret=$('#retireSel').value;const err=$('#adderr');err.textContent='';
+    if(!name)return err.textContent='Name the commander.';
+    if(full&&!ret)return err.textContent='Pick a deck to dismantle first.';
+    let card=null;try{const r=await fetch('https://api.scryfall.com/cards/named?exact='+encodeURIComponent(name));if(r.ok)card=slim(await r.json())}catch(e){}
+    if(!card)return err.textContent='Scryfall has no card with that exact name.';
+    if(!/legendary/i.test(card.type)&&!/can be your commander/i.test(card.oracle))return err.textContent='That card can\'t be a commander.';
+    const slug=slugify(card.name);
+    if(S.index.find(d=>d.slug===slug&&!d.retired))return err.textContent='That deck is already active.';
+    await saveDeck(slug,{custom:!S.snap.commanders.some(c=>c.slug===slug),name:card.name,bracket:br,retired:false,addedAt:new Date().toISOString(),replaced:ret||null});
+    if(ret)await saveDeck(ret,{retired:true,retiredAt:new Date().toISOString(),replacedBy:slug});
+    buildIndex();const d=S.index.find(x=>x.slug===slug);d.ci=card.ci;d.img=card.img.replace('/small/','/normal/');d.art=card.img.replace('/small/','/art_crop/');S.cmdr[slug]=card;
+    toggleAdd(false);renderHome();openDeck(slug)};
+}
+async function retireDeck(slug){await saveDeck(slug,{retired:true,retiredAt:new Date().toISOString()});buildIndex();$('#back').click()}
+async function rebuildDeck(slug){if(active().length>=cap()){$('#addpanel').hidden=false;toggleAdd(true);$('#newname').value=S.index.find(d=>d.slug===slug).name;window.scrollTo(0,0);return}
+  await saveDeck(slug,{retired:false,rebuiltAt:new Date().toISOString()});buildIndex();$('#back').click()}
+
+// ---------- detail ----------
+async function openDeck(slug){
+  const d=S.index.find(x=>x.slug===slug);if(!d)return;S.cur=d;S.tab='new';
+  $('#home').hidden=true;$('#detail').hidden=false;
+  $('#detail').innerHTML=`<button class="back" id="back">← All decks</button>
+   <div class="hero">${d.img?`<img src="${esc(d.img)}" alt="">`:'<div class="ph"></div>'}<div><h2>${esc(d.display||d.name)}</h2><div class="meta"><span class="pips">${(d.ci||['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span><span class="tag br">${esc(d.bracket==='cEDH'?'cEDH':'Bracket '+d.bracket)}</span>${d.retired?'<span class="tag">retired</span>':''}${d.decks?`<span class="num">${fmt(d.decks)} EDHREC decks${d.rank?' · rank #'+fmt(d.rank):''}</span>`:''}${(d.tags||[]).slice(0,4).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}<button class="retire" id="retirebtn">${d.retired?'Rebuild':'Dismantle'}</button></div></div></div>
+   <div id="confirm" hidden></div>
+   <div class="tabs" role="tablist"><button role="tab" data-t="new">New cards</button><button role="tab" data-t="edh">EDHREC picks</button><button role="tab" data-t="list">Your list</button><button role="tab" data-t="kept">Shortlist</button></div>
+   <div id="pane"><div class="empty">Loading…</div></div>`;
+  $('#back').onclick=()=>{S.cur=null;$('#detail').hidden=true;$('#home').hidden=false;renderHome();window.scrollTo(0,0)};
+  $('#detail').querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{S.tab=b.dataset.t;renderTab()});
+  $('#retirebtn').onclick=()=>{const c=$('#confirm');c.hidden=false;
+    c.innerHTML=d.retired?`<div class="confirm"><span>Rebuild ${esc(d.name)}? ${active().length>=cap()?'You are at your cap, so you will be asked which deck to dismantle in its place.':''}</span><div class="row"><button class="chip" id="cy">Rebuild</button><button class="chip" id="cn">Cancel</button></div></div>`
+     :`<div class="confirm"><span>Dismantle ${esc(d.name)}? It moves to Retired and keeps its list and shortlist, and frees a slot for a new deck.</span><div class="row"><button class="chip" id="cy">Dismantle</button><button class="chip" id="cn">Cancel</button></div></div>`;
+    $('#cn').onclick=()=>{c.hidden=true};$('#cy').onclick=()=>d.retired?rebuildDeck(d.slug):retireDeck(d.slug)};
+  window.scrollTo(0,0);
+  await Promise.all([d.unresolved?null:liveEdh(d),commanderCard(d)]);
+  const cc=S.cmdr[d.slug];if(cc&&(!d.ci||!d.ci.length)){d.ci=cc.ci;$('#detail .hero .pips').innerHTML=(d.ci.length?d.ci:['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}
+  if(cc&&!d.img){d.img=cc.img.replace('/small/','/normal/');$('#detail .hero .ph')?.replaceWith(Object.assign(new Image(),{src:d.img,alt:''}))}
+  renderTab();
+}
+async function deckListEnriched(d){ // returns [{name,oracle,type,roles,st}] or null
+  const dk=S.decks[d.slug];if(!dk||!dk.list||!dk.list.length)return null;
+  if(dk._enriched&&dk._enriched.n===dk.list.length)return dk._enriched.v;
+  const st=statsFor(d);let cards=[];try{cards=await cardsNamed(dk.list)}catch(e){}
+  const v=cards.map(c=>({name:c.name,oracle:c.oracle,type:c.type,roles:rolesOf(c.oracle),st:st[norm(c.name)]||null}));
+  dk._enriched={n:dk.list.length,v};return v;
+}
+async function renderTab(){
+  const d=S.cur;if(!d)return;const pane=$('#pane');
+  $('#detail').querySelectorAll('[role=tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===S.tab));
+  const dk=S.decks[d.slug]||{};const own=new Set((dk.list||[]).map(norm));const dismissed=dk.dismissed||{};const kept=dk.kept||{};
+  if(S.tab==='list'){
+    pane.innerHTML=`<p class="note">One card per line. "1 Sol Ring", "1x Sol Ring (C21) 263" and plain names all work. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
+      <textarea id="lst" aria-label="Decklist">${esc((dk.list||[]).join('\n'))}</textarea>
+      <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg">${dk.list?dk.list.length+' cards saved':''}</span></div>`;
+    $('#savelist').onclick=async()=>{const list=parseList($('#lst').value);await saveDeck(d.slug,{list,_enriched:null});$('#lstmsg').textContent=list.length+' cards saved'};
+    return;
+  }
+  pane.innerHTML='<div class="empty">Fetching cards…</div>';
+  const theme=themeRoles(d);const st=statsFor(d);const list=await deckListEnriched(d);
+  let cards=[];
+  try{
+    if(S.tab==='new'){cards=await newCards(d.ci||[]);}
+    else{ // EDHREC picks: union of lists, resolve via Scryfall collection
+      const names=[];const seen=new Set();
+      for(const tag of ['newcards','highsynergycards','topcards','highliftcards','creatures','instants','sorceries','enchantments','utilityartifacts','planeswalkers','utilitylands','battles'])for(const c of ((S.live[d.slug]||d).lists||{})[tag]||[]){const k=norm(c.n);if(!seen.has(k)&&!own.has(k)&&!(S.tab==='kept')){seen.add(k);names.push(c.n)}}
+      if(S.tab==='kept'){cards=await cardsNamed(Object.keys(kept))}
+      else cards=await cardsNamed(names.slice(0,150));
+    }
+  }catch(e){pane.innerHTML=`<div class="empty">Scryfall request failed (${esc(e.message)}). Try again in a moment.</div>`;return}
+  const rows=cards.filter(c=>!own.has(norm(c.name))&&c.name!==d.name&&(S.tab==='kept'||!dismissed[c.name])).map(c=>{const s=st[norm(c.name)]||null;const sc=score(c,s,d,theme);return{c,s,sc}}).sort((a,b)=>b.sc.s-a.sc.s);
+  const head=S.tab==='new'?`<div class="status"><span>Printed on or after <b>${esc(S.since)}</b> in ${esc(ciKey(d.ci||[]))} identity: <b>${rows.length}</b> cards</span><label class="note"><input type="checkbox" id="rep" ${S.reprints?'checked':''}> include reprints</label></div>`:S.tab==='kept'?`<div class="status"><span>Cards you kept for ${esc(d.name)}</span></div>`:`<div class="status"><span>EDHREC's lists for this commander, ranked by fit; cards already in your list are hidden</span></div>`;
+  pane.innerHTML=head+(rows.length?`<div class="list">${rows.slice(0,120).map(r=>cardRow(r,d,list,kept)).join('')}</div>`:`<div class="empty">${S.tab==='new'?'Nothing printed in this identity since that date. Move the date back.':S.tab==='kept'?'Nothing shortlisted yet.':'No EDHREC data for this commander.'}</div>`);
+  const rep=$('#rep');if(rep)rep.onchange=()=>{S.reprints=rep.checked;renderTab()};
+  pane.querySelectorAll('.card').forEach(el=>{
+    el.querySelector('.name').onclick=e=>{if(e.target.tagName!=='A')el.classList.toggle('open')};
+    el.querySelector('[data-keep]')?.addEventListener('click',async()=>{const k={...(S.decks[d.slug]?.kept||{})};const n=el.dataset.name;if(k[n])delete k[n];else k[n]=1;await saveDeck(d.slug,{kept:k});renderTab()});
+    el.querySelector('[data-skip]')?.addEventListener('click',async()=>{const k={...(S.decks[d.slug]?.dismissed||{})};k[el.dataset.name]=1;await saveDeck(d.slug,{dismissed:k});el.remove()});
+  });
+}
+function cardRow({c,s,sc},d,list,kept){
+  const inc=s?pct(s.d,s.p):null;const syn=s?Math.round(s.s*100):null;
+  return`<div class="card" data-name="${esc(c.name)}">${c.img?`<img src="${esc(c.img)}" alt="" loading="lazy">`:'<div class="ph"></div>'}<div style="min-width:0">
+    <div class="name"><a href="${esc(c.uri)}" target="_blank" rel="noopener">${esc(c.name)}</a><span class="mana">${esc(c.mana)}</span><span class="score">score ${sc.s}</span></div>
+    <div class="type">${esc(c.type)} · ${esc(c.set)} · <span class="num">${esc(c.date)}</span>${c.price?` · <span class="num">$${esc(c.price)}</span>`:''}</div>
+    <div class="stats">${s?`<span>inclusion <b>${inc}%</b></span><span>synergy <b class="${syn>0?'up':syn<0?'dn':''}">${syn>0?'+':''}${syn}</b></span><span>lift <b>${s.l}</b></span>${s.z>1?`<span class="up">▲ trending</span>`:''}${s.list==='newcards'?'<span class="up">new on EDHREC</span>':''}`:c.rank?`<span>EDHREC rank <b>#${fmt(c.rank)}</b></span>`:'<span>no EDHREC data yet</span>'}</div>
+    ${s?`<div class="bar"><i style="width:${inc}%"></i></div>`:''}
+    <div class="roles">${sc.roles.map(r=>`<span class="role ${sc.fit.includes(r)?'fit':''}">${esc(r)}</span>`).join('')}</div>
+    <div class="use">${useCase(c,s,d,sc,list)}</div>
+    <div class="oracle">${esc(c.oracle)}</div>
+    <div class="acts"><button data-keep class="${kept[c.name]?'pri':''}">${kept[c.name]?'Kept ✓':'Keep'}</button>${S.tab!=='kept'?'<button data-skip>Not for this deck</button>':''}<button onclick="this.closest('.card').classList.toggle('open')">Oracle text</button></div>
+  </div></div>`;
+}
+
+// ---------- controls ----------
+function wire(){
+  const dflt=new Date(Date.now()-90*864e5).toISOString().slice(0,10);
+  let saved=null;try{saved=localStorage.getItem('since')}catch(e){}
+  S.since=saved||dflt;$('#since').value=S.since;
+  $('#since').onchange=()=>{S.since=$('#since').value||dflt;try{localStorage.setItem('since',S.since)}catch(e){}if(S.cur)renderTab()};
+  document.querySelectorAll('.chip[data-b]').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);if(on)S.brackets.add(b.dataset.b);else S.brackets.delete(b.dataset.b);renderHome()});
+  $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if(S.cur){$('#back').click()}renderHome()};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#expbtn').onclick=exportData;$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  document.addEventListener('keydown',e=>{if(e.key==='/'&&!/input|textarea|select/i.test(document.activeElement.tagName)){e.preventDefault();$('#q').focus()}});
+}
+async function resolveCommanders(){ // colors + art from Scryfall, one batched call, cached per browser
+  let cache=null;try{cache=JSON.parse(localStorage.getItem('cmdrs')||'null')}catch(e){}
+  const need=S.index.filter(d=>!d.ci||!d.ci.length||!d.art);
+  if(cache&&cache.date===S.snap.date){for(const d of need){const c=cache.m[d.name];if(c){d.ci=c.ci;d.art=c.art;d.img=c.img;S.cmdr[d.slug]=c}}}
+  const still=need.filter(d=>!d.ci||!d.ci.length);if(!still.length){renderHome();return}
+  try{const cards=await cardsNamed(still.map(d=>d.name));const m=(cache&&cache.date===S.snap.date)?cache.m:{};
+    for(const c of cards){const d=still.find(x=>norm(x.name)===norm(c.name));if(!d)continue;c.art=c.img.replace('/small/','/art_crop/');d.ci=c.ci;d.art=c.art;d.img=c.img.replace('/small/','/normal/');S.cmdr[d.slug]=c;m[d.name]={ci:c.ci,art:c.art,img:d.img,oracle:c.oracle,type:c.type}}
+    try{localStorage.setItem('cmdrs',JSON.stringify({date:S.snap.date,m}))}catch(e){}
+  }catch(e){console.warn('commander lookup',e)}
+  renderHome();
+}
+(async()=>{wire();try{await loadSnapshot()}catch(e){$('#status').innerHTML='<span>Snapshot failed to load.</span>';return}
+  renderHome();await Promise.all([initDb(),resolveCommanders()]);renderHome();})();
+})();
+</script>
+
+</body>
+</html>

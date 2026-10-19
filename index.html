@@ -432,6 +432,9 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
   if(cache&&cache.date===S.snap.date){for(const d of need){const c=cache.m[d.name];if(c){d.ci=c.ci;d.art=c.art;d.img=c.img;S.cmdr[d.slug]=c}}}
   const still=need.filter(d=>!d.ci||!d.ci.length);if(!still.length){renderHome();return}
   try{const cards=await cardsNamed(still.map(d=>d.name));const m=(cache&&cache.date===S.snap.date)?cache.m:{};
+    // Scryfall's batch endpoint misses some cards (e.g. certain Secret Lair prints); look those up one by one
+    const got=new Set(cards.map(c=>norm(c.name)));
+    for(const d of still.filter(x=>!got.has(norm(x.name)))){const c=await commanderCard(d);if(c)cards.push(c);await sleep(120)}
     for(const c of cards){const d=still.find(x=>norm(x.name)===norm(c.name));if(!d)continue;c.art=c.img.replace('/small/','/art_crop/');d.ci=c.ci;d.art=c.art;d.img=c.img.replace('/small/','/normal/');S.cmdr[d.slug]=c;m[d.name]={ci:c.ci,art:c.art,img:d.img,oracle:c.oracle,type:c.type}}
     try{localStorage.setItem('cmdrs',JSON.stringify({date:S.snap.date,m}))}catch(e){}
   }catch(e){console.warn('commander lookup',e)}

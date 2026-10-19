@@ -430,7 +430,7 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
   let cache=null;try{cache=JSON.parse(localStorage.getItem('cmdrs')||'null')}catch(e){}
   const need=S.index.filter(d=>!d.ci||!d.ci.length||!d.art);
   if(cache&&cache.date===S.snap.date){for(const d of need){const c=cache.m[d.name];if(c){d.ci=c.ci;d.art=c.art;d.img=c.img;S.cmdr[d.slug]=c}}}
-  const still=need.filter(d=>!d.ci||!d.ci.length);if(!still.length){renderHome();return}
+  const still=need.filter(d=>!d.ci||!d.ci.length||!d.art);if(!still.length){renderHome();return}
   try{const cards=await cardsNamed(still.map(d=>d.name));const m=(cache&&cache.date===S.snap.date)?cache.m:{};
     // Scryfall's batch endpoint misses some cards (e.g. certain Secret Lair prints); look those up one by one
     const got=new Set(cards.map(c=>norm(c.name)));

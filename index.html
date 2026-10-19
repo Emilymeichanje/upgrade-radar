@@ -266,7 +266,16 @@ async function initDb(){try{const raw=localStorage.getItem('decks');if(raw)S.dec
 async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={...cur,...patch,updatedAt:new Date().toISOString()};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}}
 function exportData(){const blob=new Blob([JSON.stringify({decks:S.decks,cfg:S.cfg||null,exported:new Date().toISOString()},null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='upgrade-radar-data.json';a.click()}
 function importData(file){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);S.decks=j.decks||{};S.cfg=j.cfg||S.cfg;localStorage.setItem('decks',JSON.stringify(S.decks));if(S.cfg)localStorage.setItem('cfg',JSON.stringify(S.cfg));buildIndex();renderHome()}catch(e){alert('Not a valid export file')}};r.readAsText(file)}
-function parseList(txt){return txt.split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&!/^(\/\/|#|sideboard|commander|deck|maybeboard)/i.test(l)).map(l=>l.replace(/^\d+x?\s+/,'').replace(/\s*\([A-Za-z0-9]{2,6}\)\s*[\w-]*\s*$/,'').replace(/\s*\*[FE]\*\s*$/,'').trim()).filter(Boolean)}
+function parseList(txt){ // handles Archidekt, Moxfield, MTGO and plain exports
+  return txt.split(/\r?\n/).map(l=>l.trim())
+    .filter(l=>l&&!/^(\/\/|#|sideboard|maybeboard|considering|tokens?)\b/i.test(l)&&!/^(commander|deck|mainboard|companion)\s*:?\s*$/i.test(l))
+    .map(l=>l.replace(/\s*\[[^\]]*\]/g,'')          // Archidekt [Category] / [Commander{top}]
+             .replace(/\s*\^[^^]*\^/g,'')            // Archidekt ^colour tags^
+             .replace(/\s*\*[A-Z]+\*/g,'')           // *F* foil / *E* etched
+             .replace(/^\d+\s*x?\s+/i,'')            // "1x " / "1 "
+             .replace(/\s*\([A-Za-z0-9]{2,6}\)\s*[\w★-]*\s*$/,'') // (SET) 123
+             .trim())
+    .filter(Boolean)}
 
 // ---------- index: snapshot + your additions/retirements ----------
 const slugify=n=>n.normalize('NFKD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/['.,]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
@@ -368,7 +377,7 @@ async function renderTab(){
   $('#detail').querySelectorAll('[role=tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===S.tab));
   const dk=S.decks[d.slug]||{};const own=new Set((dk.list||[]).map(norm));const dismissed=dk.dismissed||{};const kept=dk.kept||{};
   if(S.tab==='list'){
-    pane.innerHTML=`<p class="note">One card per line. "1 Sol Ring", "1x Sol Ring (C21) 263" and plain names all work. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
+    pane.innerHTML=`<p class="note">Paste an export from Archidekt (Export → Text), Moxfield (Export → Copy for MTGO) or a plain list. Quantities, set codes, foil marks and Archidekt [categories] are stripped automatically. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
       <textarea id="lst" aria-label="Decklist">${esc((dk.list||[]).join('\n'))}</textarea>
       <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg">${dk.list?dk.list.length+' cards saved':''}</span></div>`;
     $('#savelist').onclick=async()=>{const list=parseList($('#lst').value);await saveDeck(d.slug,{list,_enriched:null});const cmd=commanderNames(d);const ninety=list.filter(n=>!cmd.has(norm(n))).length;$('#lstmsg').textContent=`${list.length} lines saved (${ninety} in the 99; commander line ignored)`};

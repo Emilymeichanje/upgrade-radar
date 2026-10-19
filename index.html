@@ -97,6 +97,8 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
 .bar i{display:block;height:100%;background:var(--accent)}
 .search{flex-basis:100%;display:flex;gap:10px;align-items:center}
 .search input{flex:1;min-width:0;padding:8px 12px;font-size:1rem}
+.search select{padding:7px 8px}
+.deck .upd{font-family:var(--mono);font-size:.72rem;color:var(--muted)}
 .panel{flex-basis:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:10px}
 .panel h3{font-size:1rem}
 .panel .f{display:grid;gap:4px}
@@ -124,8 +126,9 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
     <button class="chip" id="addbtn">+ Add deck</button>
     <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
     <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
+    <button class="chip" id="theme" title="Switch between light, dark and system theme">Theme: system</button>
   </div>
-  <div class="search"><input type="search" id="q" placeholder="Search decks: name, colors (e.g. WUB), bracket, tag" aria-label="Search decks" autocomplete="off"><span class="note" id="cap"></span></div>
+  <div class="search"><input type="search" id="q" placeholder="Search decks: name, colors (e.g. WUB), bracket, tag" aria-label="Search decks" autocomplete="off"><label class="note" for="sort">Sort</label><select id="sort"><option value="name">Name A–Z</option><option value="updated">Last updated</option><option value="decks">EDHREC popularity</option></select><span class="note" id="cap"></span></div>
   <div id="addpanel" class="panel" hidden></div>
 </div></header>
 
@@ -258,7 +261,7 @@ function swapFor(card,sc,deck,list){ // list: [{name,oracle,type,roles}] with ed
 
 // ---------- db ----------
 async function initDb(){try{const raw=localStorage.getItem('decks');if(raw)S.decks=JSON.parse(raw);const c=localStorage.getItem('cfg');if(c)S.cfg=JSON.parse(c)}catch(e){}S.db=true;buildIndex()}
-async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={...cur,...patch};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}}
+async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={...cur,...patch,updatedAt:new Date().toISOString()};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}}
 function exportData(){const blob=new Blob([JSON.stringify({decks:S.decks,cfg:S.cfg||null,exported:new Date().toISOString()},null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='upgrade-radar-data.json';a.click()}
 function importData(file){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);S.decks=j.decks||{};S.cfg=j.cfg||S.cfg;localStorage.setItem('decks',JSON.stringify(S.decks));if(S.cfg)localStorage.setItem('cfg',JSON.stringify(S.cfg));buildIndex();renderHome()}catch(e){alert('Not a valid export file')}};r.readAsText(file)}
 function parseList(txt){return txt.split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&!/^(\/\/|#|sideboard|commander|deck|maybeboard)/i.test(l)).map(l=>l.replace(/^\d+x?\s+/,'').replace(/\s*\([A-Za-z0-9]{2,6}\)\s*[\w-]*\s*$/,'').replace(/\s*\*[FE]\*\s*$/,'').trim()).filter(Boolean)}
@@ -279,16 +282,22 @@ function matches(d,q){if(!q)return true;const hay=[d.name,d.display,d.bracket===
   return q.split(/\s+/).every(t=>{if(/^[wubrg]{1,5}$/.test(t)){const want=t.toUpperCase().split('');const ci=d.ci||[];return want.every(c=>ci.includes(c))&&ci.length===want.length||hay.includes(t)}return hay.includes(t)})}
 
 // ---------- render home ----------
-function deckCard(d){const dk=S.decks[d.slug]||{};const n=(d.lists?.newcards||[]).length;
-  return`<button class="deck ${d.retired?'retired':''}" data-slug="${esc(d.slug)}">${d.art?`<img src="${esc(d.art)}" alt="" loading="lazy">`:'<div class="ph"></div>'}<div><h3>${esc(d.display||d.name)}</h3><div class="meta"><span class="pips">${(d.ci&&d.ci.length?d.ci:['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span>${d.retired?'<span class="tag">retired</span>':''}${d.custom?'<span class="tag">added by you</span>':d.unresolved?'<span class="tag">no EDHREC page</span>':`<span class="num">${fmt(d.decks)} decks</span>`}${dk.list?`<span class="tag">${dk.list.length} cards</span>`:''}${n?`<span class="hits">${n} new on EDHREC</span>`:''}</div></div></button>`}
+function updatedAt(d){const dk=S.decks[d.slug]||{};return dk.updatedAt||dk.addedAt||dk.retiredAt||''}
+function ago(iso){if(!iso)return'';const days=Math.floor((Date.now()-new Date(iso))/864e5);return days<1?'today':days===1?'yesterday':days<30?days+'d ago':days<365?Math.floor(days/30)+'mo ago':Math.floor(days/365)+'y ago'}
+function sortDecks(arr){const k=S.sort||'name';return [...arr].sort((a,b)=>{
+  if(k==='updated'){const ua=updatedAt(a),ub=updatedAt(b);if(ua!==ub)return ua?ub?ub.localeCompare(ua):-1:1}
+  if(k==='decks'&&(b.decks||0)!==(a.decks||0))return (b.decks||0)-(a.decks||0);
+  return (a.display||a.name).localeCompare(b.display||b.name)})}
+function deckCard(d){const dk=S.decks[d.slug]||{};const n=(d.lists?.newcards||[]).length;const u=updatedAt(d);
+  return`<button class="deck ${d.retired?'retired':''}" data-slug="${esc(d.slug)}">${d.art?`<img src="${esc(d.art)}" alt="" loading="lazy">`:'<div class="ph"></div>'}<div><h3>${esc(d.display||d.name)}</h3><div class="meta"><span class="pips">${(d.ci&&d.ci.length?d.ci:['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span>${d.retired?'<span class="tag">retired</span>':''}${d.custom?'<span class="tag">added by you</span>':d.unresolved?'<span class="tag">no EDHREC page</span>':`<span class="num">${fmt(d.decks)} decks</span>`}${dk.list?`<span class="tag">${dk.list.length} cards</span>`:''}${n?`<span class="hits">${n} new on EDHREC</span>`:''}${u?`<span class="upd">updated ${ago(u)}</span>`:''}</div></div></button>`}
 function renderHome(){
   const act=active();const list=S.index.filter(d=>S.brackets.has(d.bracket)&&matches(d,S.q));
   const live=list.filter(d=>!d.retired),ret=list.filter(d=>d.retired);
   $('#count').textContent=`${live.length} shown`;$('#cap').textContent=`${act.length} / ${cap()} active`;
   const groups=[['2','Bracket 2'],['3','Bracket 3'],['cEDH','cEDH']];
-  let h=groups.map(([b,label])=>{const ds=live.filter(d=>d.bracket===b);if(!ds.length)return'';
+  let h=groups.map(([b,label])=>{const ds=sortDecks(live.filter(d=>d.bracket===b));if(!ds.length)return'';
     return`<div class="sect">${label}<small>${ds.length}</small></div><div class="grid">${ds.map(deckCard).join('')}</div>`}).join('');
-  if(ret.length)h+=`<div class="sect">Retired<small>${ret.length} — dismantled, kept for reference</small></div><div class="grid">${ret.map(deckCard).join('')}</div>`;
+  if(ret.length)h+=`<div class="sect">Retired<small>${ret.length} — dismantled, kept for reference</small></div><div class="grid">${sortDecks(ret).map(deckCard).join('')}</div>`;
   if(!live.length&&!ret.length)h='<div class="empty">No deck matches. Try part of a commander name, a bracket, or colors like "BG".</div>';
   $('#home').innerHTML=h;
   $('#home').querySelectorAll('.deck').forEach(b=>b.onclick=()=>openDeck(b.dataset.slug));
@@ -407,6 +416,11 @@ function wire(){
   document.querySelectorAll('.chip[data-b]').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);if(on)S.brackets.add(b.dataset.b);else S.brackets.delete(b.dataset.b);renderHome()});
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if(S.cur&&S.q){S.cur=null;$('#detail').hidden=true;$('#home').hidden=false}renderHome()};
   $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#expbtn').onclick=exportData;$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
+  S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
+  const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};
+  S.theme=themeSaved||'system';applyTheme(S.theme);
+  $('#theme').onclick=()=>{const order=['system','dark','light'];S.theme=order[(order.indexOf(S.theme)+1)%3];try{localStorage.setItem('theme',S.theme)}catch(e){}applyTheme(S.theme)};
   document.addEventListener('keydown',e=>{if(e.key==='/'&&!/input|textarea|select/i.test(document.activeElement.tagName)){e.preventDefault();$('#q').focus()}});
 }
 async function resolveCommanders(){ // colors + art from Scryfall, one batched call, cached per browser

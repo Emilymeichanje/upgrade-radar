@@ -1,0 +1,29 @@
+name: Archidekt probe
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Call Archidekt API
+        run: |
+          mkdir -p data
+          node -e '
+          (async()=>{
+            const out={at:new Date().toISOString()};
+            try{
+              const r=await fetch("https://archidekt.com/api/decks/v3/?orderBy=-updatedAt&pageSize=2",{headers:{"user-agent":"upgrade-radar/1.0"}});
+              out.searchStatus=r.status; const t=await r.text(); out.searchHead=t.slice(0,300);
+              let id=null; try{const j=JSON.parse(t); id=j.results?.[0]?.id; out.firstKeys=Object.keys(j.results?.[0]||{});}catch(e){}
+              if(id){const r2=await fetch(`https://archidekt.com/api/decks/${id}/`,{headers:{"user-agent":"upgrade-radar/1.0"}});
+                out.deckStatus=r2.status; const j2=await r2.json(); out.deckKeys=Object.keys(j2); out.cardCount=(j2.cards||[]).length;
+                const c=(j2.cards||[])[0]; out.sampleCard=c?{qty:c.quantity,cats:c.categories,name:c.card?.oracleCard?.name}:null;}
+            }catch(e){out.error=String(e)}
+            require("fs").writeFileSync("data/archidekt-probe.json",JSON.stringify(out,null,1));
+          })()'
+      - name: Commit result
+        run: |
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add data/archidekt-probe.json && git commit -m "Archidekt probe result" && git push || echo nothing

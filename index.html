@@ -350,7 +350,7 @@ async function openDeck(slug){
      :`<div class="confirm"><span>Dismantle ${esc(d.name)}? It moves to Retired and keeps its list and shortlist, and frees a slot for a new deck.</span><div class="row"><button class="chip" id="cy">Dismantle</button><button class="chip" id="cn">Cancel</button></div></div>`;
     $('#cn').onclick=()=>{c.hidden=true};$('#cy').onclick=()=>d.retired?rebuildDeck(d.slug):retireDeck(d.slug)};
   window.scrollTo(0,0);
-  await Promise.all([d.unresolved?null:liveEdh(d),commanderCard(d)]);
+  await Promise.all([d.unresolved?null:liveEdh(d),commanderCard(d)]);if(S.cur!==d)return;
   const cc=S.cmdr[d.slug];if(cc&&(!d.ci||!d.ci.length)){d.ci=cc.ci;$('#detail .hero .pips').innerHTML=(d.ci.length?d.ci:['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}
   if(cc&&!d.img){d.img=cc.img.replace('/small/','/normal/');$('#detail .hero .ph')?.replaceWith(Object.assign(new Image(),{src:d.img,alt:''}))}
   renderTab();
@@ -364,7 +364,7 @@ async function deckListEnriched(d){ // returns [{name,oracle,type,roles,st}] or 
   dk._enriched={n:dk.list.length,v};return v;
 }
 async function renderTab(){
-  const d=S.cur;if(!d)return;const pane=$('#pane');
+  const d=S.cur;if(!d)return;const pane=$('#pane');const token=S.renderToken=(S.renderToken||0)+1;const stale=()=>token!==S.renderToken||S.cur!==d;
   $('#detail').querySelectorAll('[role=tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===S.tab));
   const dk=S.decks[d.slug]||{};const own=new Set((dk.list||[]).map(norm));const dismissed=dk.dismissed||{};const kept=dk.kept||{};
   if(S.tab==='list'){
@@ -375,7 +375,7 @@ async function renderTab(){
     return;
   }
   pane.innerHTML='<div class="empty">Fetching cards…</div>';
-  const theme=themeRoles(d);const st=statsFor(d);const list=await deckListEnriched(d);
+  const theme=themeRoles(d);const st=statsFor(d);const list=await deckListEnriched(d);if(stale())return;
   let cards=[];
   try{
     if(S.tab==='new'){cards=await newCards(d.ci||[]);}
@@ -385,7 +385,8 @@ async function renderTab(){
       if(S.tab==='kept'){cards=await cardsNamed(Object.keys(kept))}
       else cards=await cardsNamed(names.slice(0,150));
     }
-  }catch(e){pane.innerHTML=`<div class="empty">Scryfall request failed (${esc(e.message)}). Try again in a moment.</div>`;return}
+  }catch(e){if(stale())return;pane.innerHTML=`<div class="empty">Scryfall request failed (${esc(e.message)}). Try again in a moment.</div>`;return}
+  if(stale())return;
   const rows=cards.filter(c=>!own.has(norm(c.name))&&c.name!==d.name&&(S.tab==='kept'||!dismissed[c.name])).map(c=>{const s=st[norm(c.name)]||null;const sc=score(c,s,d,theme);return{c,s,sc}}).sort((a,b)=>b.sc.s-a.sc.s);
   const head=S.tab==='new'?`<div class="status"><span>Printed on or after <b>${esc(S.since)}</b> in ${esc(ciKey(d.ci||[]))} identity: <b>${rows.length}</b> cards</span><label class="note"><input type="checkbox" id="rep" ${S.reprints?'checked':''}> include reprints</label></div>`:S.tab==='kept'?`<div class="status"><span>Cards you kept for ${esc(d.name)}</span></div>`:`<div class="status"><span>EDHREC's lists for this commander, ranked by fit; cards already in your list are hidden</span></div>`;
   pane.innerHTML=head+(rows.length?`<div class="list">${rows.slice(0,120).map(r=>cardRow(r,d,list,kept)).join('')}</div>`:`<div class="empty">${S.tab==='new'?'Nothing printed in this identity since that date. Move the date back.':S.tab==='kept'?'Nothing shortlisted yet.':'No EDHREC data for this commander.'}</div>`);

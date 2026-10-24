@@ -139,7 +139,7 @@ class Game {
   destroy(owner, perm) { const i = owner.battlefield.indexOf(perm); if (i < 0) return; owner.battlefield.splice(i, 1); if (perm.card.isCommander) { owner.command.push(perm.card); this.say(`— ${perm.card.name} returns to the command zone`, owner); } else if (!perm.card.token) owner.graveyard.push(perm.card); }
   // --- combat ---
   attack(p, assignments) { // assignments: [{attacker, defender(player)}]
-    const results = [];
+    const results = []; const deaths = []; const kill0 = this.kill.bind(this); this.kill = (q, why) => { if (!q.dead) deaths.push([q, why]); q.dead = true; };
     for (const { attacker, defender } of assignments) {
       if (attacker.tapped || attacker.summoning && !attacker.card.kw.includes('haste')) continue;
       if (!attacker.card.kw.includes('vigilance')) attacker.tapped = true;
@@ -163,7 +163,8 @@ class Game {
       }
       if (defender.life <= 0) this.kill(defender, 'ran out of life');
     }
-    if (results.length) this.say(results.join('; '), p);
+    this.kill = kill0; if (results.length) this.say(results.join('; '), p);
+    for (const [q, why] of deaths) { q.dead = false; this.kill(q, why); }
   }
   canBlock(b, a) { const k = a.card.kw; if (k.includes('unblockable') || k.includes('shadow') || k.includes('horsemanship')) return false; if (k.includes('flying') && !(b.card.kw.includes('flying') || b.card.kw.includes('reach'))) return false; if (k.includes('fear') || k.includes('intimidate')) return false; if (k.includes('menace')) return false; /* simplification: menace needs 2 blockers; we don't double-block */ return true; }
   // --- turn structure ---

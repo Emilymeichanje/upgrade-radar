@@ -110,6 +110,39 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
 .deck.retired{opacity:.6}
 .retire{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:.84rem;cursor:pointer;margin-left:auto}
 .confirm{background:var(--panel);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;margin:10px 0;display:grid;gap:8px}
+/* playtest */
+.pt-setup{display:grid;gap:14px;max-width:720px}
+.seat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:8px}
+.seat h3{font-size:1rem}
+.seat .row select{flex:1;min-width:160px}
+.table{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.pl{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;display:grid;gap:6px;min-width:0}
+.pl.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.pl.dead{opacity:.45}
+.pl h3{font-size:1rem;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.pl .life{font-family:var(--mono);font-size:1.3rem;font-weight:600}
+.pl .life.low{color:var(--bad)}
+.pl .zone{font-size:.8rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 10px}
+.perms{display:flex;flex-wrap:wrap;gap:4px}
+.perm{font-size:.76rem;padding:2px 7px;border-radius:4px;border:1px solid var(--line);background:var(--bg);white-space:nowrap;cursor:default}
+.perm.tapped{opacity:.5;text-decoration:line-through}
+.perm.sick{border-style:dashed}
+.perm.cmdr{border-color:var(--accent)}
+.perm.land{color:var(--muted)}
+.perm.target:hover{border-color:var(--bad);cursor:pointer}
+.perm.sel{background:var(--accent);color:var(--accent-fg)}
+.hand{display:flex;flex-wrap:wrap;gap:6px}
+.hc{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:.84rem;cursor:pointer;display:grid;gap:2px;min-width:120px;max-width:200px}
+.hc:hover{border-color:var(--accent)}
+.hc.cant{opacity:.45;cursor:not-allowed}
+.hc .m{font-family:var(--mono);font-size:.74rem;color:var(--muted)}
+.hc .rl{font-size:.7rem;color:var(--accent)}
+.ctlbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0;position:sticky;top:calc(env(safe-area-inset-top,0px) + 120px);z-index:5;background:var(--bg);padding:8px 0}
+.ctlbar .chip.pri{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.gamelog{font-family:var(--mono);font-size:.76rem;color:var(--muted);max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;white-space:pre-wrap}
+.gamelog b{color:var(--fg)}
+.prompt{background:var(--panel);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;margin:8px 0}
+.threat{font-family:var(--mono);font-size:.72rem;color:var(--muted)}
 @media (max-width:480px){.deck{grid-template-columns:52px 1fr}.deck img,.deck .ph{width:52px;height:52px}.hero{grid-template-columns:72px 1fr}.hero img{width:72px}}
 @media (prefers-reduced-motion:no-preference){.deck,.card{transition:border-color .15s}}
 </style>
@@ -124,6 +157,7 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
     <button class="chip" id="b3" aria-pressed="true" data-b="3">Bracket 3</button>
     <button class="chip" id="bc" aria-pressed="true" data-b="cEDH">cEDH</button>
     <button class="chip" id="addbtn">+ Add deck</button>
+    <button class="chip" id="playbtn">▶ Playtest</button>
     <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
     <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
     <button class="chip" id="theme" title="Switch between light, dark and system theme">Theme: system</button>
@@ -136,6 +170,7 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
   <div class="status" id="status"><span>Loading snapshot…</span></div>
   <div id="home"></div>
   <div id="detail" hidden></div>
+  <div id="play" hidden></div>
 </div></main>
 
 <script>
@@ -222,7 +257,7 @@ async function cardsNamed(names){ // batch via /cards/collection (75 per call)
     if(r.ok){const j=await r.json();out.push(...(j.data||[]).map(slim))}await sleep(120)}
   return out;
 }
-function slim(c){const f=c.card_faces?.[0]||{};return{name:c.name,mana:c.mana_cost||f.mana_cost||'',type:c.type_line||f.type_line||'',oracle:c.oracle_text||c.card_faces?.map(x=>x.oracle_text).join('\n//\n')||'',set:c.set_name,setcode:c.set,date:c.released_at,ci:c.color_identity||[],img:c.image_uris?.small||f.image_uris?.small||'',uri:c.scryfall_uri,rank:c.edhrec_rank,price:c.prices?.usd,cmc:c.cmc}}
+function slim(c){const f=c.card_faces?.[0]||{};return{name:c.name,mana:c.mana_cost||f.mana_cost||'',type:c.type_line||f.type_line||'',oracle:c.oracle_text||c.card_faces?.map(x=>x.oracle_text).join('\n//\n')||'',set:c.set_name,setcode:c.set,date:c.released_at,ci:c.color_identity||[],img:c.image_uris?.small||f.image_uris?.small||'',uri:c.scryfall_uri,rank:c.edhrec_rank,price:c.prices?.usd,cmc:c.cmc,power:c.power??f.power,toughness:c.toughness??f.toughness,keywords:c.keywords||[]}}
 async function commanderCard(deck){if(S.cmdr[deck.slug])return S.cmdr[deck.slug];
   try{const r=await fetch('https://api.scryfall.com/cards/named?exact='+encodeURIComponent(deck.name));if(r.ok){S.cmdr[deck.slug]=slim(await r.json());return S.cmdr[deck.slug]}}catch(e){}return null}
 
@@ -426,6 +461,115 @@ function cardRow({c,s,sc},d,list,kept){
   </div></div>`;
 }
 
+// ---------- playtest (goldfish table) ----------
+function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detail';$('#play').hidden=v!=='play';if(v!=='detail')S.cur=null;window.scrollTo(0,0)}
+let ptLoaded=null;function loadPlaytest(){if(ptLoaded)return ptLoaded;ptLoaded=new Promise((res,rej)=>{const s=document.createElement('script');s.src='playtest.js?v=1';s.onload=res;s.onerror=()=>rej(new Error('playtest.js failed to load'));document.head.appendChild(s)});return ptLoaded}
+const PT={game:null,seats:[],sel:null,pending:null,log:[]};
+function decksWithLists(){return S.index.filter(d=>!d.retired&&S.decks[d.slug]?.list?.length>=60)}
+async function openPlaytest(){
+  showView('play');const el=$('#play');el.innerHTML='<div class="empty">Loading engine…</div>';
+  try{await loadPlaytest()}catch(e){el.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return}
+  const ds=decksWithLists();
+  if(ds.length<2){el.innerHTML=`<button class="back" id="ptback">← All decks</button><div class="empty">Playtest needs at least 2 decks with a saved list (you have ${ds.length}). Open a deck → "Your list" → paste → Save, then come back.</div>`;$('#ptback').onclick=()=>{showView('home');renderHome()};return}
+  const opt=ds.map(d=>`<option value="${esc(d.slug)}">${esc(d.display||d.name)}</option>`).join('');
+  const lv=`<select class="lvl"><option value="casual">Casual — plays its hand, attacks the lowest life, blocks only safely</option><option value="focused" selected>Focused — attacks the biggest threat, holds back blockers, wipes when behind</option><option value="cutthroat">Cutthroat — weighs engines and mana, spreads lethal, races when ahead</option></select>`;
+  el.innerHTML=`<button class="back" id="ptback">← All decks</button>
+   <h2 style="font-size:1.4rem;margin-bottom:4px">Goldfish table</h2>
+   <p class="note" style="max-width:720px">Four seats. You pilot seat 1; three AI seats run your other decks with real 99s, mulligans, mana and combat. The engine knows card types, costs, P/T, keywords and a few roles (ramp, draw, removal, wipe, pump, tokens) — it does not read oracle text, so treat results as curve and speed feedback, not as a verdict on combos or specific interactions.</p>
+   <div class="pt-setup">
+    <div class="seat"><h3>Seat 1 — you</h3><div class="row"><select id="s0">${opt}</select></div></div>
+    ${[1,2,3].map(i=>`<div class="seat"><h3>Seat ${i+1} — AI</h3><div class="row"><select id="s${i}">${opt}</select>${lv.replace('class="lvl"',`class="lvl" id="l${i}"`)}</div></div>`).join('')}
+    <div class="row"><button class="chip" id="ptrand">Randomize AI decks</button><button class="chip pri" id="ptstart">Start game</button><span class="note">Mulligans: London; AI decides its own, you decide yours.</span></div>
+   </div>`;
+  $('#ptback').onclick=()=>{showView('home');renderHome()};
+  const pick=()=>{const used=new Set([$('#s0').value]);for(const i of [1,2,3]){const pool=ds.filter(d=>!used.has(d.slug));const d=pool.length?pool[Math.floor(Math.random()*pool.length)]:ds[Math.floor(Math.random()*ds.length)];$('#s'+i).value=d.slug;used.add(d.slug)}};
+  pick();$('#ptrand').onclick=pick;
+  $('#ptstart').onclick=startGame;
+}
+async function startGame(){
+  const el=$('#play');const slugs=[0,1,2,3].map(i=>$('#s'+i).value);const lvls=[null,$('#l1').value,$('#l2').value,$('#l3').value];
+  el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>';
+  const seats=[];
+  for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===slugs[i]);const names=[...new Set(S.decks[d.slug].list)];
+    let cards=[];try{cards=await cardsNamed(names)}catch(e){}
+    const byName=new Map(cards.map(c=>[norm(c.name),c]));const cmd=commanderNames(d);
+    // expand duplicates (basics) back to full count
+    const full=S.decks[d.slug].list.map(n=>byName.get(norm(n))).filter(Boolean);
+    const cmdCards=[...cmd].map(n=>byName.get(n)||cards.find(c=>norm(c.name)===n)).filter(Boolean);
+    if(!cmdCards.length){const cc=S.cmdr[d.slug];if(cc)cmdCards.push(cc)}
+    const deck=Goldfish.buildDeck(full.filter(c=>!cmd.has(norm(c.name))).concat(cmdCards),cmdCards.map(c=>c.name));
+    if(deck.library.length<40){el.innerHTML=`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards resolved on Scryfall. Check the list for typos.</div><button class="chip" onclick="location.reload()">Back</button>`;return}
+    seats.push({name:(i===0?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human:i===0,ai:i?new Goldfish.AI(lvls[i]):null,level:lvls[i]});
+  }
+  PT.seats=seats;PT.log=[];PT.game=new Goldfish.Game(seats,{onLog:m=>{PT.log.push(m);const g=$('#glog');if(g){g.innerHTML+=esc(m)+'\n';g.scrollTop=g.scrollHeight}}});
+  // AI mulligans
+  for(const p of PT.game.players.slice(1)){let tries=0;while(!p.ai.keep(p.hand)&&tries<3){PT.game.mulligan(p);tries++}if(tries)PT.game.bottomCards(p,p.ai.bottomChoice(p.hand,tries));}
+  PT.phase='mull';PT.mulls=0;renderTable();
+}
+function cardLabel(c){return c.card?c.card.name:c.name}
+function permChip(b,owner,clickable){const c=b.card;const cls=['perm',b.tapped?'tapped':'',b.summoning&&c.isCreature?'sick':'',c.isCommander?'cmdr':'',c.isLand?'land':'',clickable?'target':'',PT.sel&&PT.sel.perm===b?'sel':''].filter(Boolean).join(' ');
+  const pt=c.isCreature?` ${c.power+(b.counters||0)}/${c.toughness+(b.counters||0)}`:'';return`<span class="${cls}" data-owner="${owner.i}" data-idx="${owner.battlefield.indexOf(b)}" title="${esc(c.type)}${c.kw&&c.kw.length?' · '+esc(c.kw.join(', ')):''}">${esc(c.name)}${pt}</span>`}
+function renderTable(){
+  const g=PT.game,me=g.players[0],el=$('#play');const ai=new Goldfish.AI('cutthroat');
+  const seatsHtml=g.players.map(p=>{const lands=p.battlefield.filter(b=>b.card.isLand),nonl=p.battlefield.filter(b=>!b.card.isLand);
+    const threat=p===me?'':`<span class="threat">threat ${ai.threatOf(g,me,p).toFixed(0)}</span>`;
+    return`<div class="pl ${g.players[g.active]===p?'active':''} ${p.dead?'dead':''}"><h3><span>${esc(p.name)}${p.ai?` <span class="tag">${esc(p.level)}</span>`:''}</span><span class="life ${p.life<=10?'low':''}">${p.life}</span></h3>
+     <div class="zone"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><span>gy ${p.graveyard.length}</span>${p.command.length?`<span>cmd zone: ${esc(p.command.map(c=>c.name).join(', '))}${p.cmdTax?' (tax '+p.cmdTax+')':''}</span>`:''}${threat}</div>
+     <div class="perms">${nonl.map(b=>permChip(b,p,p!==me&&PT.pending==='target')).join('')||'<span class="note">no permanents</span>'}</div>
+     <div class="perms">${lands.map(b=>permChip(b,p,false)).join('')}</div></div>`}).join('');
+  let ctl='';
+  if(g.winner){ctl=`<div class="prompt"><b>${esc(g.winner.name)} wins on turn ${g.turn}.</b> <button class="chip" id="ptagain">New game</button></div>`}
+  else if(PT.phase==='mull'){ctl=`<div class="prompt">Your opening hand (${me.hand.length}): <b>${esc(me.hand.map(c=>c.name).join(', '))}</b> — ${me.hand.filter(c=>c.isLand).length} lands. <button class="chip pri" id="keep">Keep</button> <button class="chip" id="mull">Mulligan${PT.mulls?' (bottom '+(PT.mulls+1)+')':''}</button></div>`}
+  else if(PT.phase==='bottom'){ctl=`<div class="prompt">Choose ${PT.mulls} card(s) to put on the bottom: click them in your hand. <button class="chip pri" id="bottomdone" ${PT.bottomSel.length===PT.mulls?'':'disabled'}>Done</button></div>`}
+  else if(PT.phase==='mine'){
+    const avail=g.availableMana(me);
+    ctl=`<div class="ctlbar"><span class="num">Turn ${g.turn} · your main phase · ${avail} mana open · land drop ${me.landsThisTurn?'used':'available'}</span>
+      <button class="chip" id="atk" ${me.battlefield.some(b=>b.card.isCreature&&!b.tapped&&(!b.summoning||b.card.kw.includes('haste')))?'':'disabled'}>Attack…</button>
+      <button class="chip pri" id="endturn">End turn</button></div>
+      ${PT.pending==='target'?'<div class="prompt">Pick a target on an opponent\'s board (click a permanent), or <button class="chip" id="cancel">cancel</button></div>':''}
+      ${PT.pending==='attack'?`<div class="prompt">Attacking <b>${esc(g.players[PT.atkTarget].name)}</b> with ${PT.atkSel.length} creature(s): click creatures in your board to toggle, pick a different defender: ${g.opponentsOf(me).map(q=>`<button class="chip" data-def="${q.i}">${esc(q.name)}</button>`).join(' ')} <button class="chip pri" id="atkgo" ${PT.atkSel.length?'':'disabled'}>Declare</button> <button class="chip" id="cancel">cancel</button></div>`:''}`;
+  }
+  else if(PT.phase==='ai'){ctl=`<div class="ctlbar"><span class="num">Turn ${g.turn} · ${esc(g.players[g.active].name)} is thinking…</span><button class="chip pri" id="step">Next</button><button class="chip" id="skipto">Skip to my turn</button></div>`}
+  const hand=me.hand.map((c,i)=>{const can=!c.isLand?g.canPay(me,c)&&PT.phase==='mine':PT.phase==='mine'&&me.landsThisTurn<1;const sel=PT.phase==='bottom'&&PT.bottomSel.includes(c);
+    return`<div class="hc ${can||PT.phase==='bottom'?'':'cant'} ${sel?'sel':''}" data-hand="${i}" title="${esc(c.oracle)}"><b>${esc(c.name)}</b><span class="m">${esc(c.mana.total?'cmc '+c.cmc:'')} ${esc(c.type)}</span>${c.roles.length?`<span class="rl">${esc(c.roles.join(' · '))}</span>`:''}</div>`}).join('');
+  const cmdBtns=me.command.map((c,i)=>`<button class="chip" data-cmd="${i}" ${PT.phase==='mine'&&g.canPay(me,{...c,mana:{...c.mana,total:c.mana.total+me.cmdTax,generic:c.mana.generic+me.cmdTax}})?'':'disabled'}>Cast ${esc(c.name)} (${c.mana.total+me.cmdTax})</button>`).join(' ');
+  el.innerHTML=`<button class="back" id="ptback">← Leave game</button>${ctl}<div class="table">${seatsHtml}</div>
+   <div class="sect">Your hand<small>${me.hand.length} cards · click a land to play it, a spell to cast it</small></div><div class="hand">${hand||'<span class="note">empty</span>'}</div>
+   <div class="row">${cmdBtns}</div>
+   <div class="sect">Log</div><div class="gamelog" id="glog">${esc(PT.log.slice(-200).join('\n'))}</div>`;
+  $('#glog').scrollTop=$('#glog').scrollHeight;
+  $('#ptback').onclick=()=>openPlaytest();
+  $('#ptagain')?.addEventListener('click',openPlaytest);
+  $('#keep')?.addEventListener('click',()=>{if(PT.mulls){PT.phase='bottom';PT.bottomSel=[]}else{PT.phase='mine';startHumanTurn()}renderTable()});
+  $('#mull')?.addEventListener('click',()=>{g.mulligan(me);PT.mulls++;renderTable()});
+  $('#bottomdone')?.addEventListener('click',()=>{g.bottomCards(me,PT.bottomSel);PT.phase='mine';startHumanTurn();renderTable()});
+  $('#endturn')?.addEventListener('click',()=>{g.endTurn(me);PT.pending=null;PT.phase='ai';g.nextPlayer();renderTable()});
+  $('#step')?.addEventListener('click',aiStep);$('#skipto')?.addEventListener('click',()=>{while(PT.phase==='ai'&&!g.winner)aiStep(false);renderTable()});
+  $('#cancel')?.addEventListener('click',()=>{PT.pending=null;PT.sel=null;renderTable()});
+  $('#atk')?.addEventListener('click',()=>{PT.pending='attack';PT.atkSel=me.battlefield.filter(b=>b.card.isCreature&&!b.tapped&&(!b.summoning||b.card.kw.includes('haste'))&&!b.card.kw.includes('defender'));PT.atkTarget=g.opponentsOf(me)[0].i;renderTable()});
+  $('#atkgo')?.addEventListener('click',()=>{g.attack(me,PT.atkSel.map(a=>({attacker:a,defender:g.players[PT.atkTarget]})));PT.pending=null;renderTable()});
+  el.querySelectorAll('[data-def]').forEach(b=>b.onclick=()=>{PT.atkTarget=+b.dataset.def;renderTable()});
+  el.querySelectorAll('.hc').forEach(h=>h.onclick=()=>{const c=me.hand[+h.dataset.hand];
+    if(PT.phase==='bottom'){const i=PT.bottomSel.indexOf(c);if(i>=0)PT.bottomSel.splice(i,1);else if(PT.bottomSel.length<PT.mulls)PT.bottomSel.push(c);renderTable();return}
+    if(PT.phase!=='mine')return;
+    if(c.isLand){g.playLand(me,c);renderTable();return}
+    if(!g.canPay(me,c))return;
+    if(c.roles.includes('removal')||(c.dmg&&!c.roles.includes('wipe'))){PT.pending='target';PT.sel={card:c};renderTable();return}
+    g.castFromHand(me,c,null);renderTable()});
+  el.querySelectorAll('[data-cmd]').forEach(b=>b.onclick=()=>{g.castCommander(me,me.command[+b.dataset.cmd],null);renderTable()});
+  el.querySelectorAll('.perm.target').forEach(pm=>pm.onclick=()=>{const owner=g.players[+pm.dataset.owner];const perm=owner.battlefield[+pm.dataset.idx];if(!perm)return;perm.owner=owner.i;
+    if(PT.sel&&PT.sel.card){g.castFromHand(me,PT.sel.card,perm)}PT.pending=null;PT.sel=null;renderTable()});
+  el.querySelectorAll('.pl').forEach((plEl,i)=>{if(PT.pending==='attack'&&i===0){plEl.querySelectorAll('.perm').forEach(pm=>{pm.classList.add('target');pm.onclick=()=>{const perm=me.battlefield[+pm.dataset.idx];const k=PT.atkSel.indexOf(perm);if(k>=0)PT.atkSel.splice(k,1);else if(perm.card.isCreature&&!perm.tapped)PT.atkSel.push(perm);renderTable()}})}});
+}
+function startHumanTurn(){const g=PT.game,me=g.players[0];g.beginTurn(me)}
+function aiStep(rerender=true){const g=PT.game;const p=g.players[g.active];
+  if(p.dead){g.nextPlayer();}
+  else if(p.human){PT.phase='mine';startHumanTurn();if(rerender)renderTable();return}
+  else{g.aiTurn(p);g.nextPlayer();}
+  if(g.winner)PT.phase='over';
+  else if(g.players[g.active].human){PT.phase='mine';startHumanTurn()}
+  if(rerender)renderTable()}
+
 // ---------- controls ----------
 function wire(){
   const dflt=new Date(Date.now()-90*864e5).toISOString().slice(0,10);
@@ -433,8 +577,8 @@ function wire(){
   S.since=saved||dflt;$('#since').value=S.since;
   $('#since').onchange=()=>{S.since=$('#since').value||dflt;try{localStorage.setItem('since',S.since)}catch(e){}if(S.cur)renderTab()};
   document.querySelectorAll('.chip[data-b]').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);if(on)S.brackets.add(b.dataset.b);else S.brackets.delete(b.dataset.b);renderHome()});
-  $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if(S.cur&&S.q){S.cur=null;$('#detail').hidden=true;$('#home').hidden=false}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#expbtn').onclick=exportData;$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#playbtn').onclick=openPlaytest;$('#expbtn').onclick=exportData;$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};

@@ -7,6 +7,7 @@ const G = window.Goldfish;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const big = img => (img || '').replace('/small/', '/normal/');
 const short = n => String(n || '').replace(/^(You|AI) · /, '');
+const done = (a, ms) => Promise.race([a.finished.catch(() => {}), new Promise(r => setTimeout(r, ms + 80))]);
 
 // ---------------- settings ----------------
 const DEFAULTS = { anim: !matchMedia('(prefers-reduced-motion: reduce)').matches, sound: true, volume: 0.5, speed: 'normal', stopEndStep: true };
@@ -186,17 +187,17 @@ class Table {
     Object.assign(g.style, { left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px' }); document.body.appendChild(g);
     toEl.style.opacity = '0';
     const a = g.animate([{ transform: `scale(${scaleFrom})`, left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px' }, { left: to.left + 'px', top: to.top + 'px', width: to.width + 'px', height: to.height + 'px', transform: 'scale(1)' }], { duration: this.dur(dur), easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
-    await a.finished.catch(() => {}); g.remove(); toEl.style.opacity = '';
+    await done(a, this.dur(dur)); g.remove(); toEl.style.opacity = '';
   }
   async floatText(el, text, color) {
     if (!el) return; const r = el.getBoundingClientRect(); const f = document.createElement('div'); f.className = 'float'; f.textContent = text; f.style.color = color;
     f.style.left = (r.left + r.width / 2 - 20) + 'px'; f.style.top = (r.top - 4) + 'px'; document.body.appendChild(f);
-    const d = this.dur(900) || 1; await f.animate([{ transform: 'translateY(0)', opacity: 1 }, { transform: 'translateY(-40px)', opacity: 0 }], { duration: d, easing: 'ease-out' }).finished.catch(() => {}); f.remove();
+    const d = this.dur(900) || 1; await done(f.animate([{ transform: 'translateY(0)', opacity: 1 }, { transform: 'translateY(-40px)', opacity: 0 }], { duration: d, easing: 'ease-out' }), d); f.remove();
   }
-  async anim(el, frames, ms, easing = 'ease') { if (!el || !this.dur(ms)) return; await el.animate(frames, { duration: this.dur(ms), easing }).finished.catch(() => {}); }
+  async anim(el, frames, ms, easing = 'ease') { if (!el || !this.dur(ms)) return; await done(el.animate(frames, { duration: this.dur(ms), easing }), this.dur(ms)); }
   async banner(text) {
     const mid = this.q('.gt-mid'); if (!mid || !this.dur(800)) return; const b = document.createElement('div'); b.className = 'banner'; b.textContent = text; mid.appendChild(b);
-    await b.animate([{ opacity: 0, transform: 'translate(-60px,-50%)' }, { opacity: 1, transform: 'translate(0,-50%)', offset: .25 }, { opacity: 1, transform: 'translate(0,-50%)', offset: .75 }, { opacity: 0, transform: 'translate(60px,-50%)' }], { duration: this.dur(1000) }).finished.catch(() => {}); b.remove();
+    await done(b.animate([{ opacity: 0, transform: 'translate(-60px,-50%)' }, { opacity: 1, transform: 'translate(0,-50%)', offset: .25 }, { opacity: 1, transform: 'translate(0,-50%)', offset: .75 }, { opacity: 0, transform: 'translate(60px,-50%)' }], { duration: this.dur(1000) }), this.dur(1000)); b.remove();
   }
   // ---------- events from the engine ----------
   async onEvent(e) {
@@ -434,5 +435,5 @@ class Table {
   endScreen() { this.ended = true; this.myTurn = false; this.render(); }
 }
 
-window.GoldfishUI = { start(el, seats, opts) { const t = new Table(el, seats, opts); t.start(); return t; }, loadSettings, saveSettings };
+window.GoldfishUI = { start(el, seats, opts) { const t = new Table(el, seats, opts); window.GoldfishUI.current = t; t.start(); return t; }, loadSettings, saveSettings };
 })();

@@ -545,7 +545,8 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
   renderHome();
 }
 (async()=>{wire();try{await loadSnapshot()}catch(e){$('#status').innerHTML='<span>Snapshot failed to load.</span>';return}
-  renderHome();await Promise.all([initDb(),resolveCommanders()]);renderHome();if(location.hash==='#playtest')openPlaytest();})();
+  renderHome();await Promise.all([initDb(),resolveCommanders()]);renderHome();if(location.hash==='#playtest')openPlaytest();
+  window.addEventListener('hashchange',()=>{if(location.hash==='#playtest'&&$('#play').hidden)openPlaytest();else if(location.hash!=='#playtest'&&!$('#play').hidden){if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()}});})();
 })();
 </script>
 

@@ -602,7 +602,10 @@ class AI {
   }
   pickFace(game, me) { return [...game.opponentsOf(me)].sort((a, b) => this.threatOf(game, me, b) - this.threatOf(game, me, a))[0]; }
   async combat(game, me) {
-    const attackers = me.battlefield.filter(b => game.canAttackWith(me, b) && game.powerOf(me, b) > 0);
+    let attackers = me.battlefield.filter(b => game.canAttackWith(me, b) && game.powerOf(me, b) > 0);
+    // mana creatures stay home (they're worth more as mana, especially with counter mana to hold up) unless the swing is lethal
+    const totalP = attackers.reduce((s, a) => s + game.powerOf(me, a), 0);
+    if (this.level !== 'casual' && !game.opponentsOf(me).some(q => totalP >= q.life)) attackers = attackers.filter(b => !(b.card.roles.includes('ramp') && game.powerOf(me, b) <= 2));
     if (!attackers.length) return;
     const myPower = attackers.reduce((s, a) => s + game.powerOf(me, a), 0);
     const oppsPower = game.opponentsOf(me).map(q => this.boardPower(game, q));

@@ -131,6 +131,21 @@ function tagAbilities(card) {
   return card;
 }
 
+/** "{T}: Add ..." -> {amount, colors}. colors 'C' = colourless only. Only plain {T} costs (no filters / sac outlets). */
+function parseManaAbility(o) {
+  const all = [...o.matchAll(/(?:^|\n)\{t\}: add ([^.\n]+)/g)].map(m => parseManaText(m[1])).filter(Boolean);
+  if (!all.length) return null;
+  return { amount: Math.max(...all.map(x => x.amount)), colors: [...new Set(all.flatMap(x => x.colors))].sort((a, b) => (a === 'C') - (b === 'C')) };
+}
+function parseManaText(t) {
+  if (/one mana of any color|one mana of any one color/.test(t)) return { amount: 1, colors: ['W', 'U', 'B', 'R', 'G'] };
+  if (/two mana in any combination of colors/.test(t)) return { amount: 2, colors: ['W', 'U', 'B', 'R', 'G'] };
+  if (/three mana in any combination|three mana of any one color/.test(t)) return { amount: 3, colors: ['W', 'U', 'B', 'R', 'G'] };
+  const syms = (t.match(/^((?:\{[wubrgc]\})+)/) || [])[1];
+  if (syms && !/ or /.test(t.slice(0, syms.length + 4))) { const list = syms.match(/\{([wubrgc])\}/g).map(s => s[1].toUpperCase()); return { amount: list.length, colors: [...new Set(list)] }; }
+  const opts = (t.match(/\{([wubrgc])\}/g) || []).map(s => s[1].toUpperCase()); // "{R} or {G}", "{G}, {W}, or {U}"
+  return opts.length ? { amount: 1, colors: [...new Set(opts)] } : null;
+}
 const COLORW = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' };
 /** graveyard hate: "exile target player's graveyard" (spells and Bojuka Bog-style lands) */
 function tagGyHate(card, o) {
@@ -187,6 +202,7 @@ function tagCard(c) {
     for (const col of 'WUBRG') if (new RegExp('add \\{' + col + '\\}|\\{t\\}: add \\{[^}]*' + col, 'i').test(o) || new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front)) card.produces.push(col);
     if (/add one mana of any color|mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|path of ancestry/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
     if (!card.produces.length) card.produces = ['C'];
+    { const ma = parseManaAbility(o); card.manaAmount = ma ? ma.amount : 1; }
     tagLandEntry(card, o); tagGyHate(card, o); tagAbilities(card);
     return card;
   }
@@ -218,6 +234,7 @@ function tagCard(c) {
   if (card.isCreature && /whenever|at the beginning/.test(o)) r.push('engine');
   if (!card.isCreature && (card.isArtifact || card.isEnchantment) && /whenever|at the beginning/.test(o) && !r.includes('ramp')) r.push('engine');
   tagAbilities(card);
+  if (!isLand) card.manaAb = parseManaAbility(o);
   // numbers applied when the card resolves: spells use their text minus triggered/activated lines; permanents use etbOps instead
   const isPerm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
   const res = isPerm ? '' : o.split('\n').filter(l => !/^(at the beginning|whenever|when )/.test(l) && !/^[^:"]+: /.test(l) && !/^(flashback|cycling|escape|jump-start)/.test(l)).join('\n');
@@ -290,23 +307,32 @@ class Game {
     if (p.life <= 0) await this.kill(p, 'ran out of life');
   }
   // ---------- mana ----------
-  manaSources(p) { return p.battlefield.filter(b => !b.tapped && !b.summoning && (b.card.isLand ? b.card.produces.length > 0 : (b.card.roles.includes('ramp') && (b.card.isArtifact || b.card.isCreature)))); }
-  availableMana(p) { return this.manaSources(p).length; }
+  manaSources(p) { return p.battlefield.filter(b => !b.tapped && !(b.summoning && b.card.isCreature) && (b.card.isLand ? b.card.produces.length > 0 : !!b.card.manaAb)); }
+  srcInfo(b) { return b.card.isLand ? { amount: b.card.manaAmount || 1, colors: b.card.produces } : b.card.manaAb; }
+  availableMana(p) { return this.manaSources(p).reduce((s, b) => s + this.srcInfo(b).amount, 0); }
+  /** plan which sources to tap for `cost` (+ `reserve` generic left over). returns the sources, or null */
+  manaPlan(p, cost, reserve = 0) {
+    const srcs = this.manaSources(p).map(b => ({ b, ...this.srcInfo(b), left: this.srcInfo(b).amount, used: false }));
+    if (srcs.reduce((s, x) => s + x.amount, 0) < cost.total + reserve) return null;
+    const need = { ...cost.pips };
+    // colour pips: prefer sources with the fewest colours (and already-tapped ones)
+    for (const col of 'WUBRG') while (need[col] > 0) {
+      const cand = srcs.filter(s => s.left > 0 && s.colors.includes(col)).sort((a, b) => (b.used - a.used) || (a.colors.length - b.colors.length) || (a.amount - b.amount))[0];
+      if (!cand) return null; cand.left--; cand.used = true; need[col]--;
+    }
+    // generic: use leftovers of tapped sources first, then colourless, then the rest
+    let g = cost.generic;
+    while (g > 0) {
+      const cand = srcs.filter(s => s.left > 0).sort((a, b) => (b.used - a.used) || ((b.colors[0] === 'C') - (a.colors[0] === 'C')) || (a.colors.length - b.colors.length) || (Math.abs(a.left - g) - Math.abs(b.left - g)))[0];
+      if (!cand) return null; const k = Math.min(cand.left, g); cand.left -= k; g -= k; cand.used = true;
+    }
+    const spare = srcs.filter(s => !s.used).reduce((s, x) => s + x.amount, 0);
+    if (spare < reserve) return null;
+    return srcs.filter(s => s.used).map(s => s.b);
+  }
   costOf(p, card, zone) { if (zone === 'gy') return card.gyCast ? card.gyCast.cost : card.mana; if (zone === 'cmd') return { ...card.mana, total: card.mana.total + p.cmdTax, generic: card.mana.generic + p.cmdTax }; return card.mana; }
-  canPayCost(p, cost, reserve = 0) {
-    const srcs = this.manaSources(p); if (srcs.length < cost.total + reserve) return false;
-    const pool = srcs.map(s => s.card.isLand ? s.card.produces : ['W', 'U', 'B', 'R', 'G']);
-    const need = { ...cost.pips }; const used = new Set();
-    for (const col of 'WUBRG') while (need[col] > 0) { const i = pool.findIndex((pr, idx) => !used.has(idx) && pr.includes(col)); if (i < 0) return false; used.add(i); need[col]--; }
-    return pool.length - used.size >= cost.generic + reserve;
-  }
-  payCost(p, cost) {
-    const srcs = this.manaSources(p); let n = cost.total; const need = { ...cost.pips };
-    // colour pips first, preferring sources that produce the fewest colours
-    const ordered = [...srcs].sort((a, b) => (a.card.isLand ? a.card.produces.length : 5) - (b.card.isLand ? b.card.produces.length : 5));
-    for (const s of ordered) { if (n <= 0) break; const pr = s.card.isLand ? s.card.produces : ['W', 'U', 'B', 'R', 'G']; const col = 'WUBRG'.split('').find(c => need[c] > 0 && pr.includes(c)); if (col) { need[col]--; s.tapped = true; n--; } }
-    for (const s of ordered) { if (n <= 0) break; if (!s.tapped) { s.tapped = true; n--; } }
-  }
+  canPayCost(p, cost, reserve = 0) { return !!this.manaPlan(p, cost, reserve); }
+  payCost(p, cost) { const plan = this.manaPlan(p, cost) || []; for (const b of plan) b.tapped = true; }
   /** can `p` cast `card` right now? returns 'mana' | 'free' | null. `instant` = outside own main phase */
   castMode(p, card, zone = 'hand', { instant = false } = {}) {
     if (card.isLand) return null;

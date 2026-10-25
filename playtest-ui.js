@@ -70,7 +70,8 @@ const STYLE = `
 .gt-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;align-items:start}
 @media (max-width:980px){.gt-main{grid-template-columns:minmax(0,1fr)}.gt-side{order:2}}
 .gt-board{display:grid;gap:10px;position:relative;min-width:0}
-.gt-opps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.gt-opps{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+@media (min-width:1200px){.gt-opps{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .gs{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;display:grid;gap:6px;min-width:0;position:relative;transition:border-color .2s,box-shadow .2s}
 .gs.act{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
 .gs.dead{opacity:.4;filter:grayscale(1)}
@@ -107,9 +108,9 @@ const STYLE = `
 .gc .cnt{position:absolute;left:50%;transform:translateX(-50%);bottom:-6px;font:700 .64rem var(--mono);background:var(--panel);border:1px solid var(--line);padding:0 4px;border-radius:4px;white-space:nowrap}
 .gc.lg{width:var(--tile-l)}
 .gc.tok{display:grid;place-items:center;text-align:center;font-size:.58rem;padding:4px;background:linear-gradient(160deg,var(--soft),var(--panel));border:1px solid var(--line)}
-.gt-mid{min-height:120px;display:grid;place-items:center;position:relative;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--accent) 8%,transparent),transparent 70%);border-radius:10px}
+.gt-mid{min-height:84px;display:grid;place-items:center;position:relative;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--accent) 8%,transparent),transparent 70%);border-radius:10px}
 .stk{display:flex;align-items:center;justify-content:center;padding-bottom:22px}
-.stk .sc{width:140px;aspect-ratio:.716;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);position:relative;margin-left:-40px;background:var(--soft)}
+.stk .sc{width:128px;aspect-ratio:.716;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);position:relative;margin-left:-40px;background:var(--soft)}
 .stk .sc:first-child{margin-left:0}
 .stk .sc img{width:100%;height:100%;border-radius:8px;object-fit:cover}
 .stk .sc .who{position:absolute;left:0;right:0;bottom:-20px;text-align:center;font-size:.72rem;color:var(--muted);white-space:nowrap}

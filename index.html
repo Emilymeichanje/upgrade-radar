@@ -110,6 +110,10 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
 .deck.retired{opacity:.6}
 .retire{background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:.84rem;cursor:pointer;margin-left:auto}
 .confirm{background:var(--panel);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;margin:10px 0;display:grid;gap:8px}
+.topnav{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px}
+.topnav button{border:0;background:none;padding:5px 14px;border-radius:999px;cursor:pointer;color:var(--muted);font-weight:600}
+.topnav button[aria-current=page]{background:var(--accent);color:var(--accent-fg)}
+body.playing .ctl,body.playing .search,body.playing #count{display:none}
 /* playtest */
 .pt-setup{display:grid;gap:14px;max-width:720px}
 .seat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:8px}
@@ -151,13 +155,13 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
 <body>
 <header class="top"><div class="wrap">
   <h1>Upgrade Radar <small id="count"></small></h1>
+  <nav class="topnav" aria-label="Sections"><button id="nav-decks" aria-current="page">Decks</button><button id="nav-play">Playtest</button></nav>
   <div class="ctl">
     <label for="since">New since</label><input type="date" id="since">
     <button class="chip" id="b2" aria-pressed="true" data-b="2">Bracket 2</button>
     <button class="chip" id="b3" aria-pressed="true" data-b="3">Bracket 3</button>
     <button class="chip" id="bc" aria-pressed="true" data-b="cEDH">cEDH</button>
     <button class="chip" id="addbtn">+ Add deck</button>
-    <button class="chip" id="playbtn">▶ Playtest</button>
     <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
     <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
     <button class="chip" id="theme" title="Switch between light, dark and system theme">Theme: system</button>
@@ -462,113 +466,53 @@ function cardRow({c,s,sc},d,list,kept){
 }
 
 // ---------- playtest (goldfish table) ----------
-function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detail';$('#play').hidden=v!=='play';if(v!=='detail')S.cur=null;window.scrollTo(0,0)}
-let ptLoaded=null;function loadPlaytest(){if(ptLoaded)return ptLoaded;ptLoaded=new Promise((res,rej)=>{const s=document.createElement('script');s.src='playtest.js?v=2';s.onload=res;s.onerror=()=>rej(new Error('playtest.js failed to load'));document.head.appendChild(s)});return ptLoaded}
-const PT={game:null,seats:[],sel:null,pending:null,log:[]};
+function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detail';$('#play').hidden=v!=='play';if(v!=='detail')S.cur=null;
+  document.body.classList.toggle('playing',v==='play');$('#nav-decks').toggleAttribute('aria-current',v!=='play');$('#nav-play').toggleAttribute('aria-current',v==='play');
+  if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
+  window.scrollTo(0,0)}
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=3').then(()=>loadScript('playtest-ui.js?v=3'));return ptLoaded}
+const PT={cfg:null,table:null};
 function decksWithLists(){return S.index.filter(d=>!d.retired&&S.decks[d.slug]?.list?.length>=60)}
 async function openPlaytest(){
-  showView('play');const el=$('#play');el.innerHTML='<div class="empty">Loading engine…</div>';
+  if(PT.table){PT.table.aborted=true;PT.table=null}
+  showView('play');const el=$('#play');el.innerHTML='<div class="empty">Loading the table…</div>';
   try{await loadPlaytest()}catch(e){el.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return}
   const ds=decksWithLists();
-  if(ds.length<2){el.innerHTML=`<button class="back" id="ptback">← All decks</button><div class="empty">Playtest needs at least 2 decks with a saved list (you have ${ds.length}). Open a deck → "Your list" → paste → Save, then come back.</div>`;$('#ptback').onclick=()=>{showView('home');renderHome()};return}
+  if(ds.length<2){el.innerHTML=`<h2 style="font-size:1.4rem">Playtest</h2><div class="empty">Playtest needs at least 2 decks with a saved list of 60+ cards (you have ${ds.length}). Open a deck in <b>Decks</b> → "Your list" → paste your Archidekt export → Save, then come back.</div>`;return}
   const opt=ds.map(d=>`<option value="${esc(d.slug)}">${esc(d.display||d.name)}</option>`).join('');
-  const lv=`<select class="lvl"><option value="casual">Casual — plays its hand, attacks the lowest life, blocks only safely</option><option value="focused" selected>Focused — attacks the biggest threat, holds back blockers, wipes when behind</option><option value="cutthroat">Cutthroat — weighs engines and mana, spreads lethal, races when ahead</option></select>`;
-  el.innerHTML=`<button class="back" id="ptback">← All decks</button>
-   <h2 style="font-size:1.4rem;margin-bottom:4px">Goldfish table</h2>
-   <p class="note" style="max-width:720px">Four seats. You pilot seat 1; three AI seats run your other decks with real 99s, mulligans, mana and combat. The engine knows card types, costs, P/T, keywords and a few roles (ramp, draw, removal, wipe, pump, tokens) — it does not read oracle text, so treat results as curve and speed feedback, not as a verdict on combos or specific interactions.</p>
+  const lv=id=>`<select id="${id}"><option value="casual">Casual</option><option value="focused" selected>Focused</option><option value="cutthroat">Cutthroat</option></select>`;
+  const prev=PT.cfg||{};
+  el.innerHTML=`<h2 style="font-size:1.4rem;margin-bottom:4px">Playtest</h2>
+   <p class="note" style="max-width:760px">Four-player Commander table. You pilot seat 1 against three AI opponents running your other decks. The AI counters spells it judges dangerous, removes attackers at instant speed, holds mana up and blocks to survive. The engine reads card types, costs, colours, power/toughness, keywords and roles (ramp, draw, removal, wipes, counterspells, tokens, pump), but <b>not</b> each card's unique text, so engines and combos don't run. Use it to test curve, speed and interaction.</p>
    <div class="pt-setup">
-    <div class="seat"><h3>Seat 1 — you</h3><div class="row"><select id="s0">${opt}</select></div></div>
-    ${[1,2,3].map(i=>`<div class="seat"><h3>Seat ${i+1} — AI</h3><div class="row"><select id="s${i}">${opt}</select>${lv.replace('class="lvl"',`class="lvl" id="l${i}"`)}</div></div>`).join('')}
-    <div class="row"><button class="chip" id="ptrand">Randomize AI decks</button><button class="chip pri" id="ptstart">Start game</button><span class="note">Mulligans: London; AI decides its own, you decide yours.</span></div>
+    <div class="seat"><h3>Seat 1 — you</h3><div class="row"><select id="s0">${opt}</select><label class="note"><input type="checkbox" id="watch" ${prev.watch?'checked':''}> AI pilots this seat too (watch mode)</label></div><div class="row" id="w0" ${prev.watch?'':'hidden'}>${lv('l0')}</div></div>
+    ${[1,2,3].map(i=>`<div class="seat"><h3>Seat ${i+1} — AI</h3><div class="row"><select id="s${i}">${opt}</select>${lv('l'+i)}</div></div>`).join('')}
+    <div class="row"><button class="chip" id="ptrand">Randomize AI decks</button><button class="chip" id="ptlvl">Randomize difficulty</button><button class="chip pri" id="ptstart">Start game</button></div>
+    <p class="note">Difficulty — <b>Casual</b>: plays its hand, attacks the lowest life, counters loosely and misses things. <b>Focused</b>: attacks the biggest threat, keeps blockers back, counters engines, commanders and anything aimed at its board. <b>Cutthroat</b>: weighs engines, card advantage and mana, holds counter mana up early, saves free counters for game-changing spells, takes lethal first and races when ahead.</p>
    </div>`;
-  $('#ptback').onclick=()=>{showView('home');renderHome()};
   const pick=()=>{const used=new Set([$('#s0').value]);for(const i of [1,2,3]){const pool=ds.filter(d=>!used.has(d.slug));const d=pool.length?pool[Math.floor(Math.random()*pool.length)]:ds[Math.floor(Math.random()*ds.length)];$('#s'+i).value=d.slug;used.add(d.slug)}};
-  pick();$('#ptrand').onclick=pick;
-  $('#ptstart').onclick=startGame;
+  if(prev.slugs){prev.slugs.forEach((s,i)=>{if(ds.some(d=>d.slug===s))$('#s'+i).value=s});prev.levels.forEach((l,i)=>{if(l&&$('#l'+i))$('#l'+i).value=l})}else pick();
+  $('#ptrand').onclick=pick;$('#ptlvl').onclick=()=>{for(const i of [1,2,3])$('#l'+i).value=['casual','focused','cutthroat'][Math.floor(Math.random()*3)]};
+  $('#watch').onchange=()=>{$('#w0').hidden=!$('#watch').checked};
+  $('#ptstart').onclick=()=>{PT.cfg={slugs:[0,1,2,3].map(i=>$('#s'+i).value),levels:[0,1,2,3].map(i=>$('#l'+i)?$('#l'+i).value:null),watch:$('#watch').checked};startGame(PT.cfg)};
 }
-async function startGame(){
-  const el=$('#play');const slugs=[0,1,2,3].map(i=>$('#s'+i).value);const lvls=[null,$('#l1').value,$('#l2').value,$('#l3').value];
-  el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>';
+async function startGame(cfg){
+  const el=$('#play');el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>';
   const seats=[];
-  for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===slugs[i]);const names=[...new Set(S.decks[d.slug].list)];
-    let cards=[];try{cards=await cardsNamed(names)}catch(e){}
+  for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===cfg.slugs[i]);const list=S.decks[d.slug].list;
+    let cards=[];try{cards=await cardsNamed([...new Set(list)])}catch(e){}
     const byName=new Map(cards.map(c=>[norm(c.name),c]));const cmd=commanderNames(d);
-    // expand duplicates (basics) back to full count
-    const full=S.decks[d.slug].list.map(n=>byName.get(norm(n))).filter(Boolean);
-    const cmdCards=[...cmd].map(n=>byName.get(n)||cards.find(c=>norm(c.name)===n)).filter(Boolean);
-    if(!cmdCards.length){const cc=S.cmdr[d.slug];if(cc)cmdCards.push(cc)}
+    const full=list.map(n=>byName.get(norm(n))).filter(Boolean);
+    let cmdCards=[...cmd].map(n=>byName.get(n)).filter(Boolean);
+    if(!cmdCards.length){const cc=S.cmdr[d.slug]||await commanderCard(d);if(cc)cmdCards=[cc]}
     const deck=Goldfish.buildDeck(full.filter(c=>!cmd.has(norm(c.name))).concat(cmdCards),cmdCards.map(c=>c.name));
-    if(deck.library.length<40){el.innerHTML=`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards resolved on Scryfall. Check the list for typos.</div><button class="chip" onclick="location.reload()">Back</button>`;return}
-    seats.push({name:(i===0?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human:i===0,ai:i?new Goldfish.AI(lvls[i]):null,level:lvls[i]});
+    if(deck.library.length<40){el.innerHTML=`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards were found on Scryfall. Check the list for typos.</div><button class="chip" id="ptback2">Back to setup</button>`;$('#ptback2').onclick=openPlaytest;return}
+    const human=i===0&&!cfg.watch;
+    seats.push({name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'focused'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')});
   }
-  PT.seats=seats;PT.log=[];PT.game=new Goldfish.Game(seats,{onLog:m=>{PT.log.push(m);const g=$('#glog');if(g){g.innerHTML+=esc(m)+'\n';g.scrollTop=g.scrollHeight}}});
-  // AI mulligans
-  for(const p of PT.game.players.slice(1)){let tries=0;while(!p.ai.keep(p.hand)&&tries<3){PT.game.mulligan(p);tries++}if(tries)PT.game.bottomCards(p,p.ai.bottomChoice(p.hand,tries));}
-  PT.phase='mull';PT.mulls=0;renderTable();
+  el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg)});
 }
-function cardLabel(c){return c.card?c.card.name:c.name}
-function permChip(b,owner,clickable){const c=b.card;const cls=['perm',b.tapped?'tapped':'',b.summoning&&c.isCreature?'sick':'',c.isCommander?'cmdr':'',c.isLand?'land':'',clickable?'target':'',PT.sel&&PT.sel.perm===b?'sel':''].filter(Boolean).join(' ');
-  const pt=c.isCreature?` ${c.power+(b.counters||0)}/${c.toughness+(b.counters||0)}`:'';return`<span class="${cls}" data-owner="${owner.i}" data-idx="${owner.battlefield.indexOf(b)}" title="${esc(c.type)}${c.kw&&c.kw.length?' · '+esc(c.kw.join(', ')):''}">${esc(c.name)}${pt}</span>`}
-function renderTable(){
-  const g=PT.game,me=g.players[0],el=$('#play');const ai=new Goldfish.AI('cutthroat');
-  const seatsHtml=g.players.map(p=>{const lands=p.battlefield.filter(b=>b.card.isLand),nonl=p.battlefield.filter(b=>!b.card.isLand);
-    const threat=p===me?'':`<span class="threat">threat ${ai.threatOf(g,me,p).toFixed(0)}</span>`;
-    return`<div class="pl ${g.players[g.active]===p?'active':''} ${p.dead?'dead':''}"><h3><span>${esc(p.name)}${p.ai?` <span class="tag">${esc(p.level)}</span>`:''}</span><span class="life ${p.life<=10?'low':''}">${p.life}</span></h3>
-     <div class="zone"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><span>gy ${p.graveyard.length}</span>${p.command.length?`<span>cmd zone: ${esc(p.command.map(c=>c.name).join(', '))}${p.cmdTax?' (tax '+p.cmdTax+')':''}</span>`:''}${threat}</div>
-     <div class="perms">${nonl.map(b=>permChip(b,p,p!==me&&PT.pending==='target')).join('')||'<span class="note">no permanents</span>'}</div>
-     <div class="perms">${lands.map(b=>permChip(b,p,false)).join('')}</div></div>`}).join('');
-  let ctl='';
-  if(g.winner){ctl=`<div class="prompt"><b>${esc(g.winner.name)} wins on turn ${g.turn}.</b> <button class="chip" id="ptagain">New game</button></div>`}
-  else if(PT.phase==='mull'){ctl=`<div class="prompt">Your opening hand (${me.hand.length}): <b>${esc(me.hand.map(c=>c.name).join(', '))}</b> — ${me.hand.filter(c=>c.isLand).length} lands. <button class="chip pri" id="keep">Keep</button> <button class="chip" id="mull">Mulligan${PT.mulls?' (bottom '+(PT.mulls+1)+')':''}</button></div>`}
-  else if(PT.phase==='bottom'){ctl=`<div class="prompt">Choose ${PT.mulls} card(s) to put on the bottom: click them in your hand. <button class="chip pri" id="bottomdone" ${PT.bottomSel.length===PT.mulls?'':'disabled'}>Done</button></div>`}
-  else if(PT.phase==='mine'){
-    const avail=g.availableMana(me);
-    ctl=`<div class="ctlbar"><span class="num">Turn ${g.turn} · your main phase · ${avail} mana open · land drop ${me.landsThisTurn?'used':'available'}</span>
-      <button class="chip" id="atk" ${me.battlefield.some(b=>b.card.isCreature&&!b.tapped&&(!b.summoning||b.card.kw.includes('haste')))?'':'disabled'}>Attack…</button>
-      <button class="chip pri" id="endturn">End turn</button></div>
-      ${PT.pending==='target'?'<div class="prompt">Pick a target on an opponent\'s board (click a permanent), or <button class="chip" id="cancel">cancel</button></div>':''}
-      ${PT.pending==='attack'?`<div class="prompt">Attacking <b>${esc(g.players[PT.atkTarget].name)}</b> with ${PT.atkSel.length} creature(s): click creatures in your board to toggle, pick a different defender: ${g.opponentsOf(me).map(q=>`<button class="chip" data-def="${q.i}">${esc(q.name)}</button>`).join(' ')} <button class="chip pri" id="atkgo" ${PT.atkSel.length?'':'disabled'}>Declare</button> <button class="chip" id="cancel">cancel</button></div>`:''}`;
-  }
-  else if(PT.phase==='ai'){ctl=`<div class="ctlbar"><span class="num">Turn ${g.turn} · ${esc(g.players[g.active].name)} is thinking…</span><button class="chip pri" id="step">Next</button><button class="chip" id="skipto">Skip to my turn</button></div>`}
-  const hand=me.hand.map((c,i)=>{const can=!c.isLand?g.canPay(me,c)&&PT.phase==='mine':PT.phase==='mine'&&me.landsThisTurn<1;const sel=PT.phase==='bottom'&&PT.bottomSel.includes(c);
-    return`<div class="hc ${can||PT.phase==='bottom'?'':'cant'} ${sel?'sel':''}" data-hand="${i}" title="${esc(c.oracle)}"><b>${esc(c.name)}</b><span class="m">${esc(c.mana.total?'cmc '+c.cmc:'')} ${esc(c.type)}</span>${c.roles.length?`<span class="rl">${esc(c.roles.join(' · '))}</span>`:''}</div>`}).join('');
-  const cmdBtns=me.command.map((c,i)=>`<button class="chip" data-cmd="${i}" ${PT.phase==='mine'&&g.canPay(me,{...c,mana:{...c.mana,total:c.mana.total+me.cmdTax,generic:c.mana.generic+me.cmdTax}})?'':'disabled'}>Cast ${esc(c.name)} (${c.mana.total+me.cmdTax})</button>`).join(' ');
-  el.innerHTML=`<button class="back" id="ptback">← Leave game</button>${ctl}<div class="table">${seatsHtml}</div>
-   <div class="sect">Your hand<small>${me.hand.length} cards · click a land to play it, a spell to cast it</small></div><div class="hand">${hand||'<span class="note">empty</span>'}</div>
-   <div class="row">${cmdBtns}</div>
-   <div class="sect">Log</div><div class="gamelog" id="glog">${esc(PT.log.slice(-200).join('\n'))}</div>`;
-  $('#glog').scrollTop=$('#glog').scrollHeight;
-  $('#ptback').onclick=()=>openPlaytest();
-  $('#ptagain')?.addEventListener('click',openPlaytest);
-  $('#keep')?.addEventListener('click',()=>{if(PT.mulls){PT.phase='bottom';PT.bottomSel=[]}else{PT.phase='mine';startHumanTurn()}renderTable()});
-  $('#mull')?.addEventListener('click',()=>{g.mulligan(me);PT.mulls++;renderTable()});
-  $('#bottomdone')?.addEventListener('click',()=>{g.bottomCards(me,PT.bottomSel);PT.phase='mine';startHumanTurn();renderTable()});
-  $('#endturn')?.addEventListener('click',()=>{g.endTurn(me);PT.pending=null;PT.phase='ai';g.nextPlayer();renderTable()});
-  $('#step')?.addEventListener('click',aiStep);$('#skipto')?.addEventListener('click',()=>{while(PT.phase==='ai'&&!g.winner)aiStep(false);renderTable()});
-  $('#cancel')?.addEventListener('click',()=>{PT.pending=null;PT.sel=null;renderTable()});
-  $('#atk')?.addEventListener('click',()=>{PT.pending='attack';PT.atkSel=me.battlefield.filter(b=>b.card.isCreature&&!b.tapped&&(!b.summoning||b.card.kw.includes('haste'))&&!b.card.kw.includes('defender'));PT.atkTarget=g.opponentsOf(me)[0].i;renderTable()});
-  $('#atkgo')?.addEventListener('click',()=>{g.attack(me,PT.atkSel.map(a=>({attacker:a,defender:g.players[PT.atkTarget]})));PT.pending=null;renderTable()});
-  el.querySelectorAll('[data-def]').forEach(b=>b.onclick=()=>{PT.atkTarget=+b.dataset.def;renderTable()});
-  el.querySelectorAll('.hc').forEach(h=>h.onclick=()=>{const c=me.hand[+h.dataset.hand];
-    if(PT.phase==='bottom'){const i=PT.bottomSel.indexOf(c);if(i>=0)PT.bottomSel.splice(i,1);else if(PT.bottomSel.length<PT.mulls)PT.bottomSel.push(c);renderTable();return}
-    if(PT.phase!=='mine')return;
-    if(c.isLand){g.playLand(me,c);renderTable();return}
-    if(!g.canPay(me,c))return;
-    if(c.roles.includes('removal')||(c.dmg&&!c.roles.includes('wipe'))){PT.pending='target';PT.sel={card:c};renderTable();return}
-    g.castFromHand(me,c,null);renderTable()});
-  el.querySelectorAll('[data-cmd]').forEach(b=>b.onclick=()=>{g.castCommander(me,me.command[+b.dataset.cmd],null);renderTable()});
-  el.querySelectorAll('.perm.target').forEach(pm=>pm.onclick=()=>{const owner=g.players[+pm.dataset.owner];const perm=owner.battlefield[+pm.dataset.idx];if(!perm)return;perm.owner=owner.i;
-    if(PT.sel&&PT.sel.card){g.castFromHand(me,PT.sel.card,perm)}PT.pending=null;PT.sel=null;renderTable()});
-  el.querySelectorAll('.pl').forEach((plEl,i)=>{if(PT.pending==='attack'&&i===0){plEl.querySelectorAll('.perm').forEach(pm=>{pm.classList.add('target');pm.onclick=()=>{const perm=me.battlefield[+pm.dataset.idx];const k=PT.atkSel.indexOf(perm);if(k>=0)PT.atkSel.splice(k,1);else if(perm.card.isCreature&&!perm.tapped)PT.atkSel.push(perm);renderTable()}})}});
-}
-function startHumanTurn(){const g=PT.game,me=g.players[0];g.beginTurn(me)}
-function aiStep(rerender=true){const g=PT.game;const p=g.players[g.active];
-  if(p.dead){g.nextPlayer();}
-  else if(p.human){PT.phase='mine';startHumanTurn();if(rerender)renderTable();return}
-  else{g.aiTurn(p);g.nextPlayer();}
-  if(g.winner)PT.phase='over';
-  else if(g.players[g.active].human){PT.phase='mine';startHumanTurn()}
-  if(rerender)renderTable()}
 
 // ---------- controls ----------
 function wire(){
@@ -578,7 +522,7 @@ function wire(){
   $('#since').onchange=()=>{S.since=$('#since').value||dflt;try{localStorage.setItem('since',S.since)}catch(e){}if(S.cur)renderTab()};
   document.querySelectorAll('.chip[data-b]').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);if(on)S.brackets.add(b.dataset.b);else S.brackets.delete(b.dataset.b);renderHome()});
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#playbtn').onclick=openPlaytest;$('#expbtn').onclick=exportData;$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};
@@ -601,7 +545,7 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
   renderHome();
 }
 (async()=>{wire();try{await loadSnapshot()}catch(e){$('#status').innerHTML='<span>Snapshot failed to load.</span>';return}
-  renderHome();await Promise.all([initDb(),resolveCommanders()]);renderHome();})();
+  renderHome();await Promise.all([initDb(),resolveCommanders()]);renderHome();if(location.hash==='#playtest')openPlaytest();})();
 })();
 </script>
 

@@ -1,56 +1,71 @@
-/* Upgrade Radar — Goldfish Table
-   A rules-lite 4-seat Commander simulator. It knows card types, costs, P/T, keywords and a few tagged
-   roles (ramp, draw, removal, wipe, pump). It does NOT resolve oracle text. Treat results as curve/speed
-   feedback, not as a verdict on specific interactions.
-   Exposed as window.Goldfish = { Game, AI, buildDeck, tagCard } so index.html and headless tests share it. */
+/* Upgrade Radar — Goldfish Table engine (v3)
+   Rules-lite 4-seat Commander simulator with instant-speed interaction.
+   Knows: card types, costs and colours, P/T, keywords, and tagged roles (ramp, draw, removal, wipe, pump,
+   tokens, counterspell incl. restrictions / "unless pays" / free pitch & commander counters, flash).
+   Does NOT resolve oracle text: engines and unique abilities don't run. Treat results as curve, speed and
+   interaction feedback, not a verdict on specific card interactions.
+   Every state change is announced through `hooks.emit(event)` (awaited), so a UI can animate it; headless
+   runs pass no hooks. Exposed as window.Goldfish. */
 (function (root) {
 'use strict';
 
-// ---------- card tagging (from slim Scryfall objects: name, mana, type, oracle, cmc, power?, toughness?) ----------
 const KW = ['flying','trample','menace','haste','lifelink','deathtouch','first strike','double strike','vigilance','hexproof','indestructible','flash','reach','ward','unblockable','skulk','shadow','fear','intimidate','horsemanship','defender'];
+const EVASIVE = ['flying','unblockable','menace','shadow','trample','fear','intimidate','horsemanship','skulk'];
+let UID = 1;
+
 function manaInfo(cost) {
-  // returns {generic, pips:{W,U,B,R,G}, total, x}
   const pips = { W: 0, U: 0, B: 0, R: 0, G: 0 }; let generic = 0, x = false;
   for (const m of (cost || '').match(/\{[^}]+\}/g) || []) {
     const s = m.slice(1, -1);
     if (/^\d+$/.test(s)) generic += +s;
     else if (s === 'X') x = true;
     else if (/^[WUBRG]$/.test(s)) pips[s]++;
-    else if (/\//.test(s)) { const c = s.split('/').find(p => /^[WUBRG]$/.test(p)); if (c) pips[c]++; else generic++; } // hybrid: pick first colour; phyrexian: colour
-    else if (s === 'C') generic++;
+    else if (/\//.test(s)) { const c = s.split('/').find(p => /^[WUBRG]$/.test(p)); if (c) pips[c]++; else generic++; }
     else generic++;
   }
-  const total = generic + Object.values(pips).reduce((a, b) => a + b, 0);
-  return { generic, pips, total, x };
+  return { generic, pips, total: generic + Object.values(pips).reduce((a, b) => a + b, 0), x };
 }
+const NUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, x: 3 };
+
 function tagCard(c) {
   const t = c.type || '', o = (c.oracle || '').toLowerCase();
   const front = t.split(' // ')[0];
   const isLand = /\bLand\b/.test(front);
   const card = {
-    name: c.name, type: front, oracle: c.oracle || '', cmc: isLand ? 0 : (c.cmc || 0), mana: manaInfo(c.mana),
+    uid: UID++, name: c.name, type: front, oracle: c.oracle || '', cmc: isLand ? 0 : (c.cmc || 0), manaCost: c.mana || '', mana: manaInfo(c.mana),
     img: c.img || '', isLand, isCreature: /\bCreature\b/.test(front), isInstant: /\bInstant\b/.test(front), isSorcery: /\bSorcery\b/.test(front),
     isArtifact: /\bArtifact\b/.test(front), isEnchantment: /\bEnchantment\b/.test(front), isPlaneswalker: /\bPlaneswalker\b/.test(front),
     isLegendary: /\bLegendary\b/.test(front),
-    power: parseInt(c.power) || (c.power === '*' ? 2 : 0), toughness: parseInt(c.toughness) || (c.toughness === '*' ? 2 : 0), kw: [...new Set(KW.filter(k => new RegExp('\\b' + k + '\\b').test(o)).concat((c.keywords || []).map(k => k.toLowerCase()).filter(k => KW.includes(k))))],
+    power: parseInt(c.power) || (c.power === '*' ? 2 : 0), toughness: parseInt(c.toughness) || (c.toughness === '*' ? 2 : 0),
+    kw: [...new Set(KW.filter(k => new RegExp('\\b' + k + '\\b').test(o)).concat((c.keywords || []).map(k => k.toLowerCase()).filter(k => KW.includes(k))))],
     roles: [], produces: [],
   };
+  card.colors = Object.entries(card.mana.pips).filter(([, n]) => n > 0).map(([k]) => k);
+  card.flash = card.isInstant || card.kw.includes('flash');
   if (isLand) {
     for (const col of 'WUBRG') if (new RegExp('add \\{' + col + '\\}|\\{t\\}: add \\{[^}]*' + col, 'i').test(o) || new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front)) card.produces.push(col);
-    if (/add one mana of any color|add .*mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|cavern of souls|path of ancestry|prismatic vista/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
-    if (!card.produces.length && /add \{c\}|\{t\}: add/i.test(o)) card.produces = ['C'];
-    if (!card.produces.length && /fetch|search your library for a .*land/i.test(o)) card.produces = ['W', 'U', 'B', 'R', 'G']; // fetchlands: treat as any colour
+    if (/add one mana of any color|mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|path of ancestry|prismatic vista/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
+    if (!card.produces.length && /search your library for a .*land/i.test(o)) card.produces = ['W', 'U', 'B', 'R', 'G'];
     if (!card.produces.length) card.produces = ['C'];
     card.etbTapped = /enters (the battlefield )?tapped/i.test(o) && !/unless/i.test(o);
     return card;
   }
-  // roles (coarse; mirrors the radar's heuristics)
   const r = card.roles;
   if (/add \{|add (one|two|three) mana|search your library for (up to \w+ )?(a )?basic land|lands? onto the battlefield|treasure token/.test(o)) r.push('ramp');
   if (/draw (a|two|three|x|\d+) cards?|draw cards|investigate|clue token/.test(o)) r.push('draw');
   if (/destroy all|exile all|each creature|all creatures|deals? \d+ damage to each/.test(o)) r.push('wipe');
-  else if (/destroy target|exile target (creature|permanent|nonland|artifact|enchantment)|deals? \d+ damage to (any target|target creature)|fight|-\d\/-\d|sacrifices? a creature/.test(o)) r.push('removal');
-  if (/counter target/.test(o)) r.push('counter');
+  else if (/destroy target|exile target (creature|permanent|nonland|artifact|enchantment)|deals? \d+ damage to (any target|target creature)|fight|-\d\/-\d|return target (creature|nonland permanent) to its owner/.test(o)) r.push('removal');
+  // counterspells: "counter target ... spell" (not abilities-only like Stifle)
+  const cm = o.match(/counter target ([a-z, ]*?)spell/);
+  if (cm) {
+    r.push('counter');
+    const q = cm[1];
+    card.counter = {
+      hits: /noncreature/.test(q) ? 'noncreature' : /creature/.test(q) ? 'creature' : /instant or sorcery/.test(q) ? 'instantsorcery' : /enchantment, instant, or sorcery/.test(q) ? 'eis' : /with mana value 1/.test(o) ? 'mv1' : 'any',
+      unless: (o.match(/unless its controller pays \{(\d+)\}/) || [])[1] ? +o.match(/unless its controller pays \{(\d+)\}/)[1] : /unless its controller pays \{x\}/.test(o) ? 3 : 0,
+      free: /exile a blue card from your hand rather than pay/.test(o) ? (/not your turn/.test(o) ? 'pitchNotTurn' : 'pitch') : /if you control a commander, you may cast this spell without paying/.test(o) ? 'commander' : null,
+    };
+  }
   if (/creatures you control get \+|each creature you control gets \+/.test(o)) r.push('pump');
   if (/create (a|an|two|three|x|\d+) .* tokens?/.test(o)) r.push('tokens');
   if (/extra combat|additional combat/.test(o)) r.push('extracombat');
@@ -58,16 +73,27 @@ function tagCard(c) {
   if (/gain \w+ life|lifelink/.test(o)) r.push('lifegain');
   if (/you win the game|loses the game|infinite/.test(o)) r.push('wincon');
   if (card.isCreature && /whenever|at the beginning/.test(o)) r.push('engine');
-  const tokN = o.match(/create (a|an|two|three|four|\d+)/); card.tokenCount = tokN ? ({ a: 1, an: 1, two: 2, three: 3, four: 4 }[tokN[1]] || parseInt(tokN[1]) || 1) : 0;
+  if (!card.isCreature && (card.isArtifact || card.isEnchantment) && /whenever|at the beginning/.test(o) && !r.includes('ramp')) r.push('engine');
+  const tokN = o.match(/create (a|an|two|three|four|\d+)/); card.tokenCount = tokN ? (NUM[tokN[1]] || parseInt(tokN[1]) || 1) : 0;
   const tokPT = o.match(/(\d+)\/(\d+) [a-z ]*creature token/); card.tokenPT = tokPT ? [+tokPT[1], +tokPT[2]] : [1, 1];
   const dmg = o.match(/deals? (\d+) damage/); card.dmg = dmg ? +dmg[1] : 0;
-  const drawN = o.match(/draw (a|two|three|four|\d+) cards?/); card.drawN = drawN ? ({ a: 1, two: 2, three: 3, four: 4 }[drawN[1]] || parseInt(drawN[1]) || 1) : 0;
+  const drawN = o.match(/draw (a|two|three|four|\d+) cards?/); card.drawN = drawN ? (NUM[drawN[1]] || parseInt(drawN[1]) || 1) : 0;
   const pump = o.match(/get \+(\d+)\/\+(\d+)/); card.pumpN = pump ? +pump[1] : 0;
   const gain = o.match(/gain (\d+) life/); card.gainN = gain ? +gain[1] : 0;
   return card;
 }
+function counterHits(counterCard, spell) {
+  const h = counterCard.counter && counterCard.counter.hits;
+  if (!h) return false;
+  if (h === 'any') return true;
+  if (h === 'creature') return spell.isCreature;
+  if (h === 'noncreature') return !spell.isCreature;
+  if (h === 'instantsorcery') return spell.isInstant || spell.isSorcery;
+  if (h === 'eis') return spell.isEnchantment || spell.isInstant || spell.isSorcery;
+  if (h === 'mv1') return spell.cmc === 1;
+  return false;
+}
 
-// ---------- deck building ----------
 function buildDeck(cards, commanderNames) {
   const cmd = new Set(commanderNames.map(n => n.toLowerCase()));
   const library = [], commanders = [];
@@ -76,256 +102,563 @@ function buildDeck(cards, commanderNames) {
 }
 function shuffle(a, rng) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function mulberry(seed) { return function () { let t = seed += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const clone = c => ({ ...c, uid: UID++ });
 
-// ---------- game ----------
+// ============================== GAME ==============================
 class Game {
   constructor(seats, opts = {}) {
-    // seats: [{name, deck:{library,commanders}, human:bool, ai:AI|null}]
-    this.rng = mulberry(opts.seed || Date.now() & 0xffffffff);
-    this.log = []; this.turn = 0; this.active = 0; this.winner = null; this.onLog = opts.onLog || (() => {});
+    this.rng = mulberry(opts.seed || (Date.now() & 0xffffffff));
+    this.hooks = opts.hooks || {};
+    this.log = []; this.turn = 0; this.round = 0; this.active = 0; this.winner = null; this.stack = []; this.phase = 'setup';
     this.players = seats.map((s, i) => ({
-      i, name: s.name, human: !!s.human, ai: s.ai || null, life: 40, poison: 0, dead: false,
-      library: shuffle([...s.deck.library], this.rng), hand: [], battlefield: [], graveyard: [], exile: [],
-      command: [...s.deck.commanders], cmdTax: 0, landsThisTurn: 0, cmdDamage: {}, mulligans: 0,
+      i, name: s.name, deckName: s.deckName || s.name, human: !!s.human, ai: s.ai || null, level: s.level || null, life: 40, dead: false,
+      library: shuffle(s.deck.library.map(clone), this.rng), hand: [], battlefield: [], graveyard: [], exile: [],
+      command: s.deck.commanders.map(c => ({ ...clone(c), isCommander: true })), cmdTax: 0, landsThisTurn: 0, cmdDamage: {}, mulligans: 0,
+      art: s.art || '',
     }));
-    for (const p of this.players) this.draw(p, 7);
+    for (const p of this.players) this.drawSilent(p, 7);
   }
-  say(msg, p) { const line = (p ? p.name + ': ' : '') + msg; this.log.push({ t: this.turn, m: line }); this.onLog(line); }
-  draw(p, n = 1) { for (let k = 0; k < n; k++) { if (!p.library.length) { p.deckedOut = true; this.kill(p, 'drew from an empty library'); return; } p.hand.push(p.library.pop()); } }
-  mulligan(p) { // London mulligan
-    p.library.push(...p.hand); p.hand = []; shuffle(p.library, this.rng); this.draw(p, 7); p.mulligans++;
-    if (p.mulligans > 0) { const bottom = p.hand.splice(0, 0); } // bottoming chosen by caller via bottomCards
-  }
-  bottomCards(p, cards) { for (const c of cards) { const i = p.hand.indexOf(c); if (i >= 0) { p.hand.splice(i, 1); p.library.unshift(c); } } }
+  // ---------- plumbing ----------
+  async emit(e) { if (this.hooks.emit) await this.hooks.emit(e, this); }
+  say(msg, p) { const line = (p ? p.name + ': ' : '') + msg; this.log.push({ t: this.turn, m: line }); if (this.hooks.log) this.hooks.log(line); }
   alive() { return this.players.filter(p => !p.dead); }
   opponentsOf(p) { return this.alive().filter(q => q !== p); }
-  kill(p, why) { if (p.dead) return; p.dead = true; this.say(`is out (${why})`, p); const a = this.alive(); if (a.length === 1) { this.winner = a[0]; this.say(`${a[0].name} wins on turn ${this.turn}`); } }
-  // --- mana (rules-lite: lands tap for one of their colours; rocks/dorks counted as permanents with 'ramp' producing one mana of any colour) ---
-  manaSources(p) { return p.battlefield.filter(b => !b.tapped && !b.summoning && (b.card.isLand || (b.card.roles.includes('ramp') && (b.card.isArtifact || b.card.isCreature)))); }
-  canPay(p, card) {
-    const srcs = this.manaSources(p); if (srcs.length < card.mana.total) return false;
-    // greedy colour assignment
-    const pool = srcs.map(s => s.card.isLand ? s.card.produces : ['W', 'U', 'B', 'R', 'G']);
-    const need = { ...card.mana.pips }; const used = new Set();
-    for (const col of 'WUBRG') while (need[col] > 0) { const i = pool.findIndex((pr, idx) => !used.has(idx) && pr.includes(col)); if (i < 0) return false; used.add(i); need[col]--; }
-    return pool.length - used.size >= card.mana.generic;
+  /** players in turn order starting after `p` */
+  after(p) { const out = []; const n = this.players.length; for (let k = 1; k < n; k++) { const q = this.players[(p.i + k) % n]; if (!q.dead) out.push(q); } return out; }
+  drawSilent(p, n) { for (let k = 0; k < n; k++) { if (!p.library.length) { p.deckedOut = true; return; } p.hand.push(p.library.pop()); } }
+  async draw(p, n = 1) { for (let k = 0; k < n; k++) { if (!p.library.length) { await this.kill(p, 'drew from an empty library'); return; } p.hand.push(p.library.pop()); } await this.emit({ type: 'draw', p, n }); }
+  mulligan(p) { p.library.push(...p.hand); p.hand = []; shuffle(p.library, this.rng); this.drawSilent(p, 7); p.mulligans++; }
+  bottomCards(p, cards) { for (const c of cards) { const i = p.hand.indexOf(c); if (i >= 0) { p.hand.splice(i, 1); p.library.unshift(c); } } }
+  async kill(p, why) {
+    if (p.dead) return; p.dead = true; this.say(`is out (${why})`, p);
+    // their permanents leave the game (multiplayer rule)
+    p.battlefield = [];
+    await this.emit({ type: 'dies', p, why });
+    const a = this.alive(); if (a.length === 1 && !this.winner) { this.winner = a[0]; this.say(`${a[0].name} wins on turn ${this.turn}`); await this.emit({ type: 'win', p: a[0] }); }
   }
-  pay(p, card) { const srcs = this.manaSources(p); let n = card.mana.total; // tap lands first that match colours, generic from the rest
-    const need = { ...card.mana.pips };
-    for (const s of srcs) { if (n <= 0) break; const pr = s.card.isLand ? s.card.produces : ['W', 'U', 'B', 'R', 'G']; const col = 'WUBRG'.split('').find(c => need[c] > 0 && pr.includes(c)); if (col) { need[col]--; s.tapped = true; n--; } }
-    for (const s of srcs) { if (n <= 0) break; if (!s.tapped) { s.tapped = true; n--; } } }
+  async changeLife(p, delta, source) {
+    if (!delta || p.dead) return; p.life += delta; await this.emit({ type: 'life', p, delta, source });
+    if (p.life <= 0) await this.kill(p, 'ran out of life');
+  }
+  // ---------- mana ----------
+  manaSources(p) { return p.battlefield.filter(b => !b.tapped && !b.summoning && (b.card.isLand || (b.card.roles.includes('ramp') && (b.card.isArtifact || b.card.isCreature)))); }
   availableMana(p) { return this.manaSources(p).length; }
-  // --- playing ---
-  playLand(p, card) { const i = p.hand.indexOf(card); if (i < 0 || p.landsThisTurn >= 1) return false; p.hand.splice(i, 1); p.battlefield.push({ card, tapped: !!card.etbTapped, summoning: false, damage: 0, counters: 0 }); p.landsThisTurn++; this.say(`plays ${card.name}`, p); return true; }
-  castFromHand(p, card, target) { const i = p.hand.indexOf(card); if (i < 0 || !this.canPay(p, card)) return false; p.hand.splice(i, 1); this.pay(p, card); this.resolve(p, card, target); return true; }
-  castCommander(p, card, target) { const i = p.command.indexOf(card); if (i < 0) return false; const taxed = { ...card, mana: { ...card.mana, total: card.mana.total + p.cmdTax, generic: card.mana.generic + p.cmdTax } }; if (!this.canPay(p, taxed)) return false; p.command.splice(i, 1); this.pay(p, taxed); p.cmdTax += 2; card.isCommander = true; this.resolve(p, card, target); return true; }
-  resolve(p, card, target) {
-    this.say(`casts ${card.name}${target ? ' → ' + (target.card ? target.card.name : target.name) : ''}`, p);
+  costOf(p, card, zone) { if (zone === 'cmd') return { ...card.mana, total: card.mana.total + p.cmdTax, generic: card.mana.generic + p.cmdTax }; return card.mana; }
+  canPayCost(p, cost, reserve = 0) {
+    const srcs = this.manaSources(p); if (srcs.length < cost.total + reserve) return false;
+    const pool = srcs.map(s => s.card.isLand ? s.card.produces : ['W', 'U', 'B', 'R', 'G']);
+    const need = { ...cost.pips }; const used = new Set();
+    for (const col of 'WUBRG') while (need[col] > 0) { const i = pool.findIndex((pr, idx) => !used.has(idx) && pr.includes(col)); if (i < 0) return false; used.add(i); need[col]--; }
+    return pool.length - used.size >= cost.generic + reserve;
+  }
+  payCost(p, cost) {
+    const srcs = this.manaSources(p); let n = cost.total; const need = { ...cost.pips };
+    // colour pips first, preferring sources that produce the fewest colours
+    const ordered = [...srcs].sort((a, b) => (a.card.isLand ? a.card.produces.length : 5) - (b.card.isLand ? b.card.produces.length : 5));
+    for (const s of ordered) { if (n <= 0) break; const pr = s.card.isLand ? s.card.produces : ['W', 'U', 'B', 'R', 'G']; const col = 'WUBRG'.split('').find(c => need[c] > 0 && pr.includes(c)); if (col) { need[col]--; s.tapped = true; n--; } }
+    for (const s of ordered) { if (n <= 0) break; if (!s.tapped) { s.tapped = true; n--; } }
+  }
+  /** can `p` cast `card` right now? returns 'mana' | 'free' | null. `instant` = outside own main phase */
+  castMode(p, card, zone = 'hand', { instant = false } = {}) {
+    if (card.isLand) return null;
+    if (instant && !card.flash) return null;
+    if (!instant && this.stack.length) return null;
+    if (this.canPayCost(p, this.costOf(p, card, zone))) return 'mana';
+    const f = card.counter && card.counter.free;
+    if (f === 'pitch' || (f === 'pitchNotTurn' && this.players[this.active] !== p)) { if (p.hand.some(c => c !== card && c.colors.includes('U'))) return 'free'; }
+    if (f === 'commander' && p.battlefield.some(b => b.card.isCommander)) return 'free';
+    return null;
+  }
+  // ---------- casting with priority ----------
+  async playLand(p, card) {
+    const i = p.hand.indexOf(card); if (i < 0 || p.landsThisTurn >= 1 || !card.isLand) return false;
+    p.hand.splice(i, 1); const perm = { id: UID++, card, tapped: !!card.etbTapped, summoning: false, counters: 0 }; p.battlefield.push(perm); p.landsThisTurn++;
+    this.say(`plays ${card.name}`, p); await this.emit({ type: 'land', p, card, perm }); return true;
+  }
+  /** cast a spell; returns true if it resolved. target: perm (with .owner) or player */
+  async cast(p, card, zone = 'hand', target = null, { instant = false, depth = 0 } = {}) {
+    const mode = this.castMode(p, card, zone, { instant }); if (!mode) return false;
+    const src = zone === 'cmd' ? p.command : p.hand; const i = src.indexOf(card); if (i < 0) return false;
+    src.splice(i, 1);
+    if (mode === 'mana') this.payCost(p, this.costOf(p, card, zone));
+    else if (card.counter.free.startsWith('pitch')) { // exile the least valuable other blue card, pay 1 life
+      const blues = p.hand.filter(c => c.colors.includes('U')).sort((a, b) => a.cmc - b.cmc); const ex = blues[0]; p.hand.splice(p.hand.indexOf(ex), 1); p.exile.push(ex); p.life -= 1;
+      this.say(`exiles ${ex.name} to cast ${card.name} for free`, p);
+    }
+    if (zone === 'cmd') p.cmdTax += 2;
+    const spell = { card, caster: p, target, zone }; this.stack.push(spell);
+    this.say(`casts ${card.name}${target ? ' → ' + (target.spell ? target.spell.card.name : target.card ? target.card.name : target.name) : ''}`, p);
+    await this.emit({ type: 'cast', p, card, target, depth });
+    // priority: everyone else in turn order may respond with a counterspell
+    let countered = false;
+    if (depth < 4) for (const q of this.after(p)) {
+      if (countered || this.winner) break;
+      const resp = await this.askCounter(q, spell, depth);
+      if (resp) { const ok = await this.cast(q, resp.card, 'hand', { spell }, { instant: true, depth: depth + 1 }); if (ok && spell.countered) countered = true; }
+    }
+    this.stack.splice(this.stack.indexOf(spell), 1);
+    if (spell.countered) {
+      await this.emit({ type: 'countered', p, card });
+      if (card.isCommander) { p.command.push(card); this.say(`— ${card.name} returns to the command zone`, p); } else p.graveyard.push(card);
+      return false;
+    }
+    await this.resolve(spell);
+    return true;
+  }
+  async askCounter(q, spell, depth) {
+    const options = q.hand.filter(c => c.roles.includes('counter') && counterHits(c, spell.card) && this.castMode(q, c, 'hand', { instant: true }));
+    if (!options.length) return null;
+    if (q.human) return this.hooks.humanRespond ? await this.hooks.humanRespond({ kind: 'counter', spell, options, depth }) : null;
+    if (q.ai) { const c = q.ai.chooseCounter(this, q, spell, options, depth); return c ? { card: c } : null; }
+    return null;
+  }
+  async resolve(spell) {
+    const { card, caster: p, target } = spell;
+    // counterspell resolving against a spell on the stack
+    if (card.roles.includes('counter') && target && target.spell) {
+      const victim = target.spell;
+      if (card.counter.unless && victim.caster && this.canPayCost(victim.caster, { generic: card.counter.unless, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: card.counter.unless })) {
+        this.payCost(victim.caster, { generic: card.counter.unless, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: card.counter.unless });
+        this.say(`pays {${card.counter.unless}} for ${card.name}`, victim.caster); await this.emit({ type: 'paid', p: victim.caster, n: card.counter.unless });
+      } else victim.countered = true;
+      p.graveyard.push(card); await this.emit({ type: 'resolve', p, card }); return;
+    }
     const perm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
-    // effects (coarse)
-    if (card.roles.includes('wipe')) { for (const q of this.alive()) { const dead = q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible')); for (const b of dead) this.destroy(q, b); } this.say(`— board wiped`, p); }
-    else if (card.roles.includes('removal') && target && target.card) { const owner = this.players[target.owner]; if (!target.card.kw.includes('indestructible') && !target.card.kw.includes('hexproof')) this.destroy(owner, target); else this.say(`— ${target.card.name} shrugs it off`, p); }
-    if (card.dmg && target && !target.card) { target.life -= card.dmg; this.say(`— ${target.name} takes ${card.dmg}`, p); if (target.life <= 0) this.kill(target, 'ran out of life'); }
-    if (card.drawN) this.draw(p, card.drawN);
-    if (card.gainN) p.life += card.gainN;
-    if (card.roles.includes('ramp') && (card.isSorcery || card.isInstant)) { const land = p.library.find(c => c.isLand && c.produces.length); if (land) { p.library.splice(p.library.indexOf(land), 1); p.battlefield.push({ card: land, tapped: true, summoning: false, damage: 0 }); this.say(`— fetches ${land.name}`, p); } }
-    if (card.tokenCount && card.roles.includes('tokens')) for (let k = 0; k < Math.min(card.tokenCount, 8); k++) p.battlefield.push({ card: { name: 'Token', type: 'Creature', isCreature: true, power: card.tokenPT[0], toughness: card.tokenPT[1], kw: [], roles: [], mana: { total: 0 }, cmc: 0, token: true }, tapped: false, summoning: true, damage: 0 });
+    if (card.roles.includes('wipe')) {
+      await this.emit({ type: 'wipe', p, card });
+      for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible'))) await this.destroy(q, b, true);
+      this.say(`— board wiped`, p);
+    } else if (card.roles.includes('removal') && target && target.card) {
+      const owner = this.players[target.owner];
+      if (!owner.battlefield.includes(target)) this.say(`— target is gone`, p);
+      else if (target.card.kw.includes('indestructible') && !/exile|return/.test(card.oracle.toLowerCase())) this.say(`— ${target.card.name} is indestructible`, p);
+      else await this.destroy(owner, target);
+    }
+    if (card.dmg && target && !target.card && !target.spell) { this.say(`— ${target.name} takes ${card.dmg}`, p); await this.changeLife(target, -card.dmg, card); }
+    if (card.drawN) await this.draw(p, card.drawN);
+    if (card.gainN) await this.changeLife(p, card.gainN, card);
+    if (card.roles.includes('ramp') && (card.isSorcery || card.isInstant)) {
+      const land = p.library.find(c => c.isLand && c.produces.length);
+      if (land) { p.library.splice(p.library.indexOf(land), 1); const pm = { id: UID++, card: land, tapped: true, summoning: false, counters: 0 }; p.battlefield.push(pm); this.say(`— fetches ${land.name}`, p); await this.emit({ type: 'land', p, card: land, perm: pm }); }
+    }
+    if (card.tokenCount && card.roles.includes('tokens')) {
+      const n = Math.min(card.tokenCount, 8);
+      for (let k = 0; k < n; k++) p.battlefield.push({ id: UID++, card: { uid: UID++, name: card.name + ' token', type: 'Token Creature', isCreature: true, power: card.tokenPT[0], toughness: card.tokenPT[1], kw: card.oracle.toLowerCase().includes('token with flying') ? ['flying'] : [], roles: [], mana: { total: 0, pips: {}, generic: 0 }, cmc: 0, token: true, colors: [], oracle: `${card.tokenPT[0]}/${card.tokenPT[1]} token created by ${card.name}` }, tapped: false, summoning: true, counters: 0 });
+      await this.emit({ type: 'tokens', p, n, card });
+    }
     if (card.roles.includes('pump')) p.pumpUntilEOT = (p.pumpUntilEOT || 0) + (card.pumpN || 1);
     if (card.roles.includes('extracombat')) p.extraCombat = true;
-    if (perm) p.battlefield.push({ card, tapped: false, summoning: card.isCreature, damage: 0, loyalty: card.isPlaneswalker ? 4 : 0 });
+    let pm = null;
+    if (perm) { pm = { id: UID++, card, tapped: false, summoning: card.isCreature, counters: 0, loyalty: card.isPlaneswalker ? 4 : 0 }; p.battlefield.push(pm); }
     else p.graveyard.push(card);
-    if (card.roles.includes('wincon') && this.rng() < 0.15 && this.turn >= 6) { this.say(`— ${card.name} goes off!`, p); for (const q of this.opponentsOf(p)) this.kill(q, `${p.name}'s ${card.name}`); }
-  }
-  destroy(owner, perm) { const i = owner.battlefield.indexOf(perm); if (i < 0) return; owner.battlefield.splice(i, 1); if (perm.card.isCommander) { owner.command.push(perm.card); this.say(`— ${perm.card.name} returns to the command zone`, owner); } else if (!perm.card.token) owner.graveyard.push(perm.card); }
-  // --- combat ---
-  attack(p, assignments) { // assignments: [{attacker, defender(player)}]
-    const results = []; const deaths = []; const kill0 = this.kill.bind(this); this.kill = (q, why) => { if (!q.dead) deaths.push([q, why]); q.dead = true; };
-    for (const { attacker, defender } of assignments) {
-      if (attacker.tapped || attacker.summoning && !attacker.card.kw.includes('haste')) continue;
-      if (!attacker.card.kw.includes('vigilance')) attacker.tapped = true;
-      const blockers = defender.battlefield.filter(b => b.card.isCreature && !b.tapped && this.canBlock(b, attacker));
-      const blocker = defender.human ? null : (defender.ai ? defender.ai.chooseBlocker(this, defender, attacker, blockers) : null);
-      const pw = attacker.card.power + (p.pumpUntilEOT || 0) + (attacker.counters || 0);
-      if (blocker) {
-        const bp = blocker.card.power + (blocker.counters || 0);
-        const aDies = bp >= attacker.card.toughness + (attacker.counters || 0) || blocker.card.kw.includes('deathtouch');
-        const bDies = pw >= blocker.card.toughness + (blocker.counters || 0) || attacker.card.kw.includes('deathtouch');
-        if (attacker.card.kw.includes('first strike') && bDies) { this.destroy(defender, blocker); results.push(`${attacker.card.name} kills ${blocker.card.name} first`); continue; }
-        if (bDies && !blocker.card.kw.includes('indestructible')) this.destroy(defender, blocker);
-        if (aDies && !attacker.card.kw.includes('indestructible')) this.destroy(p, attacker);
-        if (attacker.card.kw.includes('trample') && bDies) { const over = Math.max(0, pw - blocker.card.toughness); defender.life -= over; }
-        results.push(`${blocker.card.name} blocks ${attacker.card.name}${bDies ? ' and dies' : ''}${aDies ? ', attacker dies' : ''}`);
-      } else {
-        const dmg = attacker.card.kw.includes('double strike') ? pw * 2 : pw; defender.life -= dmg;
-        if (attacker.card.kw.includes('lifelink')) p.life += dmg;
-        if (attacker.card.isCommander) { defender.cmdDamage[p.i] = (defender.cmdDamage[p.i] || 0) + dmg; if (defender.cmdDamage[p.i] >= 21) this.kill(defender, `commander damage from ${attacker.card.name}`); }
-        results.push(`${attacker.card.name} hits ${defender.name} for ${dmg}`);
-      }
-      if (defender.life <= 0) this.kill(defender, 'ran out of life');
+    await this.emit({ type: 'resolve', p, card, perm: pm });
+    if (card.roles.includes('wincon') && this.rng() < 0.15 && this.round >= 6) {
+      this.say(`— ${card.name} goes off!`, p); await this.emit({ type: 'combo', p, card });
+      for (const q of this.opponentsOf(p)) await this.kill(q, `${p.name}'s ${card.name}`);
     }
-    this.kill = kill0; if (results.length) this.say(results.join('; '), p);
-    for (const [q, why] of deaths) { q.dead = false; this.kill(q, why); }
   }
-  canBlock(b, a) { const k = a.card.kw; if (k.includes('unblockable') || k.includes('shadow') || k.includes('horsemanship')) return false; if (k.includes('flying') && !(b.card.kw.includes('flying') || b.card.kw.includes('reach'))) return false; if (k.includes('fear') || k.includes('intimidate')) return false; if (k.includes('menace')) return false; /* simplification: menace needs 2 blockers; we don't double-block */ return true; }
-  // --- turn structure ---
-  beginTurn(p) { this.turn++; p.landsThisTurn = 0; p.pumpUntilEOT = 0; p.extraCombat = false; for (const b of p.battlefield) { b.tapped = false; b.summoning = false; } if (this.turn > 1 || this.active !== 0) this.draw(p, 1); this.say(`— turn ${this.turn} —`, p); }
-  endTurn(p) { // discard to 7
-    while (p.hand.length > 7) { const c = p.ai ? p.ai.chooseDiscard(this, p) : p.hand[0]; p.hand.splice(p.hand.indexOf(c), 1); p.graveyard.push(c); }
+  async destroy(owner, perm, quiet) {
+    if (!owner.battlefield.includes(perm)) return;
+    await this.emit({ type: 'destroy', owner, perm, quiet });
+    const i = owner.battlefield.indexOf(perm); if (i < 0) return; owner.battlefield.splice(i, 1);
+    if (perm.card.isCommander) { owner.command.push(perm.card); this.say(`— ${perm.card.name} returns to the command zone`, owner); }
+    else if (!perm.card.token) owner.graveyard.push(perm.card);
+  }
+  // ---------- combat ----------
+  canBlock(b, a) {
+    const k = a.card.kw;
+    if (k.includes('unblockable') || k.includes('shadow') || k.includes('horsemanship')) return false;
+    if (k.includes('flying') && !(b.card.kw.includes('flying') || b.card.kw.includes('reach'))) return false;
+    if (k.includes('fear') || k.includes('intimidate') || k.includes('skulk')) return b.card.kw.includes('flying') && false;
+    return true;
+  }
+  powerOf(p, b) { return b.card.power + (b.counters || 0) + (b.card.isCreature ? (p.pumpUntilEOT || 0) : 0); }
+  toughOf(p, b) { return b.card.toughness + (b.counters || 0) + (b.card.isCreature ? (p.pumpUntilEOT || 0) : 0); }
+  canAttackWith(p, b) { return b.card.isCreature && !b.tapped && (!b.summoning || b.card.kw.includes('haste')) && !b.card.kw.includes('defender'); }
+  /** assignments: [{attacker: perm, defender: player}] */
+  async declareAttack(p, assignments) {
+    const atk = assignments.filter(a => p.battlefield.includes(a.attacker) && this.canAttackWith(p, a.attacker) && !a.defender.dead);
+    if (!atk.length) return;
+    for (const a of atk) if (!a.attacker.card.kw.includes('vigilance')) a.attacker.tapped = true;
+    this.phase = 'combat';
+    await this.emit({ type: 'attack', p, assignments: atk });
+    this.say(`attacks: ${atk.map(a => `${a.attacker.card.name} → ${a.defender.name}`).join(', ')}`, p);
+    // response window: each attacked player may use instant-speed removal on an attacker
+    const defenders = [...new Set(atk.map(a => a.defender))];
+    for (const d of defenders) {
+      if (d.dead || this.winner) continue;
+      const onMe = atk.filter(a => a.defender === d && p.battlefield.includes(a.attacker));
+      const options = d.hand.filter(c => c.flash && c.roles.includes('removal') && this.castMode(d, c, 'hand', { instant: true }));
+      if (!options.length || !onMe.length) continue;
+      let resp = null;
+      if (d.human) resp = this.hooks.humanRespond ? await this.hooks.humanRespond({ kind: 'attack', attacker: p, attacks: onMe, options, targets: onMe.map(a => Object.assign(a.attacker, { owner: p.i })) }) : null;
+      else if (d.ai) resp = d.ai.combatResponse(this, d, p, onMe, options);
+      if (resp && resp.card) await this.cast(d, resp.card, 'hand', resp.target, { instant: true });
+    }
+    // blocks
+    const live = atk.filter(a => p.battlefield.includes(a.attacker) && !a.defender.dead);
+    const blocks = new Map(); // attacker perm -> blocker perm
+    for (const d of defenders) {
+      if (d.dead) continue;
+      const onMe = live.filter(a => a.defender === d);
+      if (!onMe.length) continue;
+      const myBlockers = d.battlefield.filter(b => b.card.isCreature && !b.tapped);
+      if (!myBlockers.length) continue;
+      let chosen = new Map();
+      if (d.human && this.hooks.humanBlocks) chosen = await this.hooks.humanBlocks({ defender: d, attacker: p, attacks: onMe, blockers: myBlockers, game: this }) || new Map();
+      else if (d.ai) chosen = d.ai.chooseBlocks(this, d, p, onMe, myBlockers);
+      for (const [a, b] of chosen) if (b && this.canBlock(b, a) && myBlockers.includes(b)) blocks.set(a, b);
+    }
+    // damage
+    const pending = []; const killQ = [];
+    for (const { attacker, defender } of live) {
+      if (!p.battlefield.includes(attacker)) continue;
+      const pw = this.powerOf(p, attacker); const blocker = blocks.get(attacker);
+      if (blocker && defender.battlefield.includes(blocker)) {
+        const bp = this.powerOf(defender, blocker), bt = this.toughOf(defender, blocker), at = this.toughOf(p, attacker);
+        const fs = attacker.card.kw.includes('first strike') || attacker.card.kw.includes('double strike');
+        const bDies = (pw >= bt || attacker.card.kw.includes('deathtouch')) && !blocker.card.kw.includes('indestructible');
+        const aDies = !(fs && bDies) && (bp >= at || blocker.card.kw.includes('deathtouch')) && !attacker.card.kw.includes('indestructible');
+        await this.emit({ type: 'block', p, attacker, blocker, defender });
+        this.say(`${blocker.card.name} blocks ${attacker.card.name}${bDies ? ' and dies' : ''}${aDies ? '; ' + attacker.card.name + ' dies' : ''}`, defender);
+        if (bDies) await this.destroy(defender, blocker);
+        if (aDies) await this.destroy(p, attacker);
+        if (attacker.card.kw.includes('trample') && bDies) { const over = Math.max(0, pw - bt); if (over) pending.push({ defender, dmg: over, attacker }); }
+        if (attacker.card.kw.includes('lifelink') && !aDies) await this.changeLife(p, Math.min(pw, bt), attacker.card);
+      } else {
+        const dmg = attacker.card.kw.includes('double strike') ? pw * 2 : pw;
+        if (dmg > 0) pending.push({ defender, dmg, attacker });
+      }
+    }
+    for (const h of pending) {
+      if (h.defender.dead) continue;
+      await this.emit({ type: 'hit', p, attacker: h.attacker, defender: h.defender, dmg: h.dmg });
+      this.say(`${h.attacker.card.name} hits ${h.defender.name} for ${h.dmg}`, p);
+      if (h.attacker.card.kw.includes('lifelink')) await this.changeLife(p, h.dmg, h.attacker.card);
+      if (h.attacker.card.isCommander) { h.defender.cmdDamage[p.i] = (h.defender.cmdDamage[p.i] || 0) + h.dmg; if (h.defender.cmdDamage[p.i] >= 21) killQ.push([h.defender, `21 commander damage from ${h.attacker.card.name}`]); }
+      await this.changeLife(h.defender, -h.dmg, h.attacker.card);
+    }
+    for (const [q, why] of killQ) await this.kill(q, why);
+    this.phase = 'main2';
+    await this.emit({ type: 'combatEnd', p });
+  }
+  // ---------- turn structure ----------
+  async beginTurn(p) {
+    this.turn++; if (p === this.alive()[0] || this.round === 0) this.round++;
+    p.landsThisTurn = 0; p.pumpUntilEOT = 0; p.extraCombat = false; this.phase = 'untap';
+    for (const b of p.battlefield) { b.tapped = false; b.summoning = false; }
+    this.say(`— turn ${this.turn} —`, p);
+    await this.emit({ type: 'turn', p });
+    if (this.turn > 1) await this.draw(p, 1);
+    this.phase = 'main1';
+  }
+  /** end step: every other player gets one instant-speed window (removal, draw, flash creatures) */
+  async endStep(p) {
+    this.phase = 'end';
+    for (const q of this.after(p)) {
+      if (this.winner || q.dead) continue;
+      const options = q.hand.filter(c => c.flash && !c.roles.includes('counter') && this.castMode(q, c, 'hand', { instant: true }));
+      if (!options.length) continue;
+      if (q.human) {
+        if (!this.hooks.humanRespond) continue;
+        const resp = await this.hooks.humanRespond({ kind: 'endstep', of: p, options });
+        if (resp && resp.card) await this.cast(q, resp.card, 'hand', resp.target, { instant: true });
+      } else if (q.ai) {
+        let guard = 3;
+        while (guard-- > 0 && !this.winner) {
+          const opt = q.hand.filter(c => c.flash && !c.roles.includes('counter') && this.castMode(q, c, 'hand', { instant: true }));
+          const pick = q.ai.endStepAction(this, q, p, opt); if (!pick) break;
+          const ok = await this.cast(q, pick.card, 'hand', pick.target, { instant: true }); if (!ok) break;
+        }
+      }
+    }
+  }
+  async cleanup(p) {
+    while (p.hand.length > 7) { const c = p.ai ? p.ai.chooseDiscard(this, p) : (this.hooks.humanDiscard ? await this.hooks.humanDiscard(p) : p.hand[0]); p.hand.splice(p.hand.indexOf(c), 1); p.graveyard.push(c); this.say(`discards ${c.name}`, p); }
     p.pumpUntilEOT = 0;
   }
-  nextPlayer() { let n = this.active; do { n = (n + 1) % this.players.length; } while (this.players[n].dead && this.alive().length); this.active = n; return this.players[n]; }
-  // run one AI turn end to end
-  aiTurn(p) { this.beginTurn(p); if (p.dead) return; p.ai.playTurn(this, p); this.endTurn(p); }
+  nextPlayer() { let n = this.active; do { n = (n + 1) % this.players.length; } while (this.players[n].dead && this.alive().length > 1); this.active = n; return this.players[n]; }
+  /** full game loop. Human turns are driven by hooks.humanTurn(p) which resolves when the player ends their turn. */
+  async run() {
+    let safety = 0;
+    while (!this.winner && safety++ < 600) {
+      const p = this.players[this.active];
+      if (!p.dead) {
+        await this.beginTurn(p);
+        if (!p.dead && !this.winner) {
+          if (p.human && this.hooks.humanTurn) await this.hooks.humanTurn(p, this);
+          else if (p.ai) await p.ai.playTurn(this, p);
+        }
+        if (!this.winner && !p.dead) await this.endStep(p);
+        if (!p.dead) await this.cleanup(p);
+      }
+      if (this.alive().length <= 1) { if (!this.winner && this.alive().length) { this.winner = this.alive()[0]; await this.emit({ type: 'win', p: this.winner }); } break; }
+      this.nextPlayer();
+    }
+    return this.winner;
+  }
 }
 
-// ---------- AI ----------
+// ============================== AI ==============================
 // difficulty: 'casual' | 'focused' | 'cutthroat'
 class AI {
   constructor(level = 'focused', rng = Math.random) { this.level = level; this.rng = rng; }
-  // --- threat assessment: how dangerous is each opponent right now? ---
+  W() { return { casual: { power: 1, evasive: 0.3, engines: 0.5, mana: 0, cmd: 0.5, lethal: 1, life: 0, cmddmg: 0.3 },
+                 focused: { power: 1, evasive: 0.8, engines: 1.5, mana: 0.3, cmd: 1, lethal: 2, life: 0.5, cmddmg: 0.6 },
+                 cutthroat: { power: 1, evasive: 1.2, engines: 2.5, mana: 0.6, cmd: 1.5, lethal: 3, life: 1, cmddmg: 1 } }[this.level]; }
+  boardPower(game, q) { return q.battlefield.filter(b => b.card.isCreature).reduce((s, b) => s + game.powerOf(q, b), 0); }
+  boardValue(game, q) { return q.battlefield.filter(b => !b.card.isLand).reduce((s, b) => s + this.permBase(b), 0); }
+  /** how dangerous is opponent q right now, from my seat */
   threatOf(game, me, q) {
-    const board = q.battlefield;
-    const creatures = board.filter(b => b.card.isCreature);
-    const power = creatures.reduce((s, b) => s + b.card.power + (b.counters || 0), 0);
-    const evasive = creatures.filter(b => b.card.kw.some(k => ['flying', 'unblockable', 'menace', 'trample', 'shadow'].includes(k))).reduce((s, b) => s + b.card.power, 0);
+    const board = q.battlefield, creatures = board.filter(b => b.card.isCreature);
+    const power = creatures.reduce((s, b) => s + game.powerOf(q, b), 0);
+    const evasive = creatures.filter(b => b.card.kw.some(k => EVASIVE.includes(k))).reduce((s, b) => s + game.powerOf(q, b), 0);
     const engines = board.filter(b => b.card.roles.includes('engine') || b.card.roles.includes('draw') || b.card.isPlaneswalker).length;
     const mana = board.filter(b => b.card.isLand || b.card.roles.includes('ramp')).length;
     const cmdOut = board.some(b => b.card.isCommander) ? 1 : 0;
-    const cmdDmgOnMe = (me.cmdDamage[q.i] || 0);
+    const cmdDmgOnMe = me.cmdDamage[q.i] || 0;
     const lethalSoon = power >= me.life ? 3 : power >= me.life / 2 ? 1.5 : 0;
     const lifeLead = (q.life - 40) / 20;
-    // weights by difficulty: casual looks only at raw power; cutthroat weights engines, evasion and tempo
-    const w = { casual: { power: 1, evasive: 0.3, engines: 0.5, mana: 0, cmd: 0.5, lethal: 1, life: 0, cmddmg: 0.3 },
-                focused: { power: 1, evasive: 0.8, engines: 1.5, mana: 0.3, cmd: 1, lethal: 2, life: 0.5, cmddmg: 0.6 },
-                cutthroat: { power: 1, evasive: 1.2, engines: 2.5, mana: 0.6, cmd: 1.5, lethal: 3, life: 1, cmddmg: 1 } }[this.level];
-    return power * w.power + evasive * w.evasive + engines * 4 * w.engines + mana * w.mana + cmdOut * 3 * w.cmd + lethalSoon * 4 * w.lethal + lifeLead * 2 * w.life + cmdDmgOnMe / 3 * w.cmddmg;
+    const handSize = q.hand.length;
+    const w = this.W();
+    return power * w.power + evasive * w.evasive + engines * 4 * w.engines + mana * w.mana + cmdOut * 3 * w.cmd + lethalSoon * 4 * w.lethal + lifeLead * 2 * w.life + cmdDmgOnMe / 3 * w.cmddmg + (this.level === 'cutthroat' ? handSize * 0.4 : 0);
   }
-  // --- how valuable is a permanent as a removal target? ---
-  permValue(b, owner, game, me) {
+  permBase(b) {
     const c = b.card; let v = 0;
-    if (c.isCreature) v += c.power * 1.2 + c.toughness * 0.3 + (c.kw.length) * 1.5 + (c.roles.includes('engine') ? 5 : 0) + (c.kw.some(k => ['flying', 'unblockable', 'menace'].includes(k)) ? 2 : 0);
+    if (c.isCreature) v += c.power * 1.2 + c.toughness * 0.3 + c.kw.length * 1.5 + (c.kw.some(k => EVASIVE.includes(k)) ? 2 : 0);
+    if (c.roles.includes('engine')) v += 5;
     if (c.isPlaneswalker) v += 7;
-    if (c.roles.includes('draw') || c.roles.includes('engine')) v += this.level === 'casual' ? 1 : 5;
-    if (c.roles.includes('ramp') && !c.isLand) v += this.level === 'cutthroat' ? 2.5 : 0.5;
-    if (c.isCommander) v += this.level === 'casual' ? 2 : 5;
+    if (c.roles.includes('draw')) v += 3;
+    if (c.roles.includes('ramp') && !c.isLand) v += 1.5;
+    if (c.isCommander) v += 4;
     if (c.roles.includes('wincon')) v += 8;
-    v *= 1 + this.threatOf(game, me, owner) / 40; // scale by how scary the owner is
     return v;
   }
-  bestTarget(game, me, kind) {
+  permValue(b, owner, game, me) {
+    const c = b.card; let v = this.permBase(b);
+    if (this.level === 'casual') v = c.isCreature ? c.power * 1.5 + 1 : 2;      // casual just sees big bodies
+    if (this.level === 'cutthroat' && (c.roles.includes('engine') || c.roles.includes('draw'))) v += 4;
+    if (this.level === 'cutthroat' && c.isCommander) v += 3;
+    return v * (1 + this.threatOf(game, me, owner) / 40);
+  }
+  bestTarget(game, me, filter = () => true) {
     let best = null, bv = -1;
     for (const q of game.opponentsOf(me)) for (const b of q.battlefield) {
-      if (kind === 'creature' && !b.card.isCreature) continue;
-      if (b.card.kw.includes('hexproof') || b.card.kw.includes('indestructible')) continue;
-      const v = this.permValue(b, q, game, me); if (v > bv) { bv = v; best = { ...b, owner: q.i, _ref: b }; }
+      if (b.card.isLand || !filter(b)) continue;
+      if (b.card.kw.includes('hexproof')) continue;
+      const v = this.permValue(b, q, game, me); if (v > bv) { bv = v; best = b; best.owner = q.i; }
     }
-    return best ? Object.assign(best._ref, { owner: best.owner }) : null;
+    return best ? { perm: best, value: bv } : null;
   }
-  // --- card priority in hand ---
+
+  // ---------- counterspell judgement ----------
+  /** how bad is it for me if `spell` resolves? positive = counter-worthy */
+  spellThreat(game, me, spell) {
+    const c = spell.card, caster = spell.caster, t = spell.target;
+    const casterThreat = this.threatOf(game, me, caster);
+    let v = c.cmc * 0.6;
+    if (c.isCreature) v += game.powerOf(caster, { card: c, counters: 0 }) * 0.8 + c.kw.length * 0.8 + (c.kw.some(k => EVASIVE.includes(k)) ? 2 : 0);
+    if (c.roles.includes('engine')) v += this.level === 'casual' ? 2 : 6;
+    if (c.roles.includes('draw') && !c.isInstant && !c.isSorcery) v += this.level === 'casual' ? 1 : 4;
+    if (c.isPlaneswalker) v += 7;
+    if (c.isCommander) v += this.level === 'casual' ? 2 : 3 + caster.cmdTax * 0.75; // re-casts get pricier, so countering a commander costs them more
+    if (c.roles.includes('wincon')) v += 25;
+    if (c.roles.includes('extracombat')) v += this.boardPower(game, caster) >= me.life / 2 ? 12 : 4;
+    if (c.roles.includes('pump')) v += this.boardPower(game, caster) + (c.pumpN || 1) * caster.battlefield.filter(b => b.card.isCreature).length >= me.life ? 15 : 2;
+    if (c.roles.includes('tokens')) v += (c.tokenCount || 1) * c.tokenPT[0] * 0.8;
+    if (c.roles.includes('ramp')) v += game.round <= 3 ? (this.level === 'cutthroat' ? 3 : 1) : 0;
+    if (c.roles.includes('wipe')) {
+      // a wipe is bad for me only if I lose more than the table does
+      const mine = this.boardValue(game, me), others = game.opponentsOf(me).filter(q => q !== caster).reduce((s, q) => s + this.boardValue(game, q), 0) / Math.max(1, game.opponentsOf(me).length - 1), theirs = this.boardValue(game, caster);
+      v += (mine - Math.max(others, theirs)) * 1.3;
+    }
+    if (c.roles.includes('removal') && t && t.card) v += t.owner === me.i ? this.permBase(t) * 1.4 + 3 : -4; // removal on someone else is fine by me
+    if (c.dmg && t && t.i === me.i) v += c.dmg >= me.life ? 40 : c.dmg * 0.6;
+    if (c.roles.includes('counter')) v += 0; // handled via depth
+    // the leader's spells matter more; the player furthest behind is worth letting through
+    v *= 1 + (casterThreat - this.avgThreat(game, me)) / (this.level === 'cutthroat' ? 25 : 40);
+    return v;
+  }
+  avgThreat(game, me) { const o = game.opponentsOf(me); return o.reduce((s, q) => s + this.threatOf(game, me, q), 0) / Math.max(1, o.length); }
+  chooseCounter(game, me, spell, options, depth) {
+    // counter-wars: only fight back over a counter if the original spell was mine and mattered
+    if (spell.card.roles.includes('counter') && spell.target && spell.target.spell) {
+      const original = spell.target.spell; if (original.caster !== me) return null;
+      const myVal = this.castValueRaw(game, me, original.card);
+      if (this.level === 'casual' || myVal < 8) return null;
+      return this.cheapestCounter(game, me, options, myVal >= 14);
+    }
+    if (spell.caster === me) return null;
+    const threat = this.spellThreat(game, me, spell);
+    const counters = me.hand.filter(c => c.roles.includes('counter')).length;
+    let threshold = { casual: 6, focused: 9, cutthroat: 11 }[this.level];
+    if (this.level === 'cutthroat') { threshold -= (counters - 1) * 2; if (game.round <= 2) threshold += 4; }
+    if (this.level === 'focused' && counters >= 3) threshold -= 2;
+    if (this.level === 'casual') { if (this.rng() < 0.35) return null; threshold += (this.rng() - 0.5) * 6; } // casual misses things and occasionally counters junk
+    if (threat < threshold) return null;
+    // cutthroat saves free counters (Force etc.) for big threats or when tapped out
+    return this.cheapestCounter(game, me, options, threat >= 16 || this.level !== 'cutthroat');
+  }
+  cheapestCounter(game, me, options, allowFree) {
+    const sorted = [...options].sort((a, b) => { const fa = game.castMode(me, a, 'hand', { instant: true }) === 'free' ? 1 : 0, fb = game.castMode(me, b, 'hand', { instant: true }) === 'free' ? 1 : 0; if (fa !== fb) return fa - fb; return a.mana.total - b.mana.total; });
+    for (const c of sorted) { const mode = game.castMode(me, c, 'hand', { instant: true }); if (mode === 'mana' || (mode === 'free' && allowFree)) return c; }
+    return null;
+  }
+  /** mana I want to keep open on my own turn for counters */
+  reserveFor(game, me) {
+    if (this.level === 'casual') return 0;
+    const counters = me.hand.filter(c => c.roles.includes('counter') && !(c.counter.free && game.castMode(me, c) === 'free'));
+    if (!counters.length) return 0;
+    const cheapest = Math.min(...counters.map(c => c.mana.total));
+    const maxT = Math.max(0, ...game.opponentsOf(me).map(q => this.threatOf(game, me, q)));
+    if (this.level === 'focused') return game.round >= 3 ? cheapest : 0;
+    return (game.round >= 2 || maxT > 10) ? cheapest : 0; // cutthroat holds up earlier
+  }
+  // ---------- instant-speed outside counters ----------
+  combatResponse(game, me, attacker, onMe, options) {
+    const incoming = onMe.reduce((s, a) => s + game.powerOf(attacker, a.attacker), 0);
+    let best = null, bv = 0;
+    for (const a of onMe) {
+      const b = a.attacker; if (b.card.kw.includes('hexproof')) continue;
+      const p = game.powerOf(attacker, b);
+      let v = p + (b.card.isCommander ? (me.cmdDamage[attacker.i] || 0) / 3 + 3 : 0) + this.permBase(b) * 0.5;
+      if (incoming >= me.life && incoming - p < me.life) v += 30; // removing this one saves my life
+      if (b.card.isCommander && (me.cmdDamage[attacker.i] || 0) + p >= 21) v += 30;
+      if (v > bv) { bv = v; best = b; }
+    }
+    const need = { casual: 12, focused: 7, cutthroat: 6 }[this.level];
+    if (!best || bv < need) return null;
+    const card = [...options].sort((x, y) => x.mana.total - y.mana.total)[0];
+    best.owner = attacker.i; return { card, target: best };
+  }
+  endStepAction(game, me, activeP, options) {
+    if (!options.length) return null;
+    const nextIsMe = game.after(activeP)[0] === me; // I untap next: spend freely
+    const keep = nextIsMe ? 0 : this.reserveFor(game, me);
+    const spare = game.availableMana(me) - keep;
+    if (spare <= 0) return null;
+    const fits = options.filter(c => c.mana.total <= spare);
+    const removal = fits.filter(c => c.roles.includes('removal'));
+    if (removal.length) { const t = this.bestTarget(game, me, b => b.card.isCreature || /permanent|artifact|enchantment/.test(removal[0].oracle.toLowerCase())); if (t && t.value >= { casual: 99, focused: 7, cutthroat: 5 }[this.level]) return { card: removal[0], target: t.perm }; }
+    const draw = fits.filter(c => c.roles.includes('draw')); if (draw.length && (nextIsMe || this.level === 'cutthroat')) return { card: draw[0] };
+    const flashC = fits.filter(c => c.isCreature); if (flashC.length && nextIsMe) return { card: flashC.sort((a, b) => b.cmc - a.cmc)[0] };
+    return null;
+  }
+  // ---------- main phase ----------
+  castValueRaw(game, me, c) {
+    let v = c.cmc;
+    if (c.isCreature) v += 2 + c.power * 0.5 + c.kw.length * 0.5;
+    if (c.roles.includes('engine')) v += 4; if (c.roles.includes('wincon')) v += 8; if (c.isCommander) v += 4;
+    return v;
+  }
   castValue(game, me, c) {
     const opps = game.opponentsOf(me); const myCreatures = me.battlefield.filter(b => b.card.isCreature).length;
-    const oppCreatures = opps.reduce((s, q) => s + q.battlefield.filter(b => b.card.isCreature).length, 0);
     const maxThreat = Math.max(0, ...opps.map(q => this.threatOf(game, me, q)));
-    let v = c.cmc * 1.0; // bigger spells are generally better when castable
-    if (c.roles.includes('ramp')) v += game.turn <= 4 ? 6 : 1;
+    let v = c.cmc;
+    if (c.roles.includes('counter')) return -99; // never main-phase a counterspell
+    if (c.roles.includes('ramp')) v += game.round <= 4 ? 6 : 1;
     if (c.roles.includes('draw')) v += me.hand.length <= 3 ? 5 : 2;
-    if (c.roles.includes('wipe')) { const oppPower = opps.reduce((s, q) => s + q.battlefield.filter(b => b.card.isCreature).reduce((t, b) => t + b.card.power, 0), 0); const myPower = me.battlefield.filter(b => b.card.isCreature).reduce((t, b) => t + b.card.power, 0); v += (oppPower >= myPower * 2 + 6 || oppPower >= me.life) ? 10 : -12; }
-    if (c.roles.includes('removal')) v += this.bestTarget(game, me, 'creature') ? 3 + maxThreat / 8 : -8;
+    if (c.roles.includes('wipe')) { const oppPower = opps.reduce((s, q) => s + this.boardPower(game, q), 0); const myPower = this.boardPower(game, me); v += (oppPower >= myPower * 2 + 6 || opps.some(q => this.boardPower(game, q) >= me.life)) ? 10 : -12; }
+    if (c.roles.includes('removal')) { const t = this.bestTarget(game, me, b => b.card.isCreature); v += t ? 3 + maxThreat / 8 : -8; if (c.flash && this.level !== 'casual') v -= 3; } // flash removal: prefer holding it
     if (c.isCreature) v += 2 + c.power * 0.5 + c.kw.length * 0.5 + (c.roles.includes('engine') ? 2 : 0);
     if (c.roles.includes('pump')) v += myCreatures >= 3 ? 4 : -5;
     if (c.roles.includes('tokens')) v += 2;
-    if (c.roles.includes('wincon')) v += game.turn >= 5 ? 6 : -3;
-    if (c.isInstant && !c.roles.length) v -= 3; // tricks we can't model: hold them
-    if (this.level === 'casual') v += (this.rng() - 0.5) * 6; // casual plays loosely
+    if (c.roles.includes('wincon')) v += game.round >= 5 ? 6 : -3;
+    if (c.isInstant && !c.roles.length) v -= 3;
+    if (c.isInstant && c.roles.includes('draw') && this.level === 'cutthroat') v -= 2; // cast at end of opponent's turn instead
+    if (this.level === 'casual') v += (this.rng() - 0.5) * 6;
     if (this.level === 'cutthroat' && c.roles.includes('engine')) v += 3;
     return v;
   }
   chooseDiscard(game, p) { return [...p.hand].sort((a, b) => this.castValue(game, p, a) - this.castValue(game, p, b))[0]; }
-  chooseBlocker(game, me, attacker, blockers) {
-    if (!blockers.length) return null;
-    const incoming = attacker.card.power; const lethal = incoming >= me.life;
-    const safe = blockers.filter(b => b.card.toughness > incoming && !attacker.card.kw.includes('deathtouch'));
-    const trades = blockers.filter(b => b.card.power >= attacker.card.toughness);
-    if (this.level === 'casual') { if (lethal) return blockers.sort((a, b) => b.card.toughness - a.card.toughness)[0]; return safe[0] || null; }
-    if (safe.length) return safe.sort((a, b) => a.card.power - b.card.power)[0]; // cheapest safe block
-    if (lethal) return blockers.sort((a, b) => b.card.toughness - a.card.toughness)[0];
-    const goodTrade = trades.filter(b => this.permValue(b, me, game, me) <= this.permValue(attacker, game.players[attacker.ownerIdx] || me, game, me));
-    if (goodTrade.length) return goodTrade[0];
-    // cutthroat chump-blocks only to stay out of lethal range next turn
-    if (this.level === 'cutthroat' && me.life - incoming <= 8) return blockers.sort((a, b) => a.card.power - b.card.power)[0];
-    return null;
-  }
-  chooseLand(me) { // prefer untapped lands that fix colours we lack
+  chooseLand(me) {
     const lands = me.hand.filter(c => c.isLand); if (!lands.length) return null;
     const have = new Set(me.battlefield.filter(b => b.card.isLand).flatMap(b => b.card.produces));
-    const need = new Set(me.hand.filter(c => !c.isLand).flatMap(c => Object.entries(c.mana.pips).filter(([, n]) => n > 0).map(([k]) => k)).concat(me.command.flatMap(c => Object.entries(c.mana.pips).filter(([, n]) => n > 0).map(([k]) => k))));
+    const need = new Set([...me.hand, ...me.command].filter(c => !c.isLand).flatMap(c => c.colors));
     return lands.sort((a, b) => { const fa = a.produces.filter(x => need.has(x) && !have.has(x)).length, fb = b.produces.filter(x => need.has(x) && !have.has(x)).length; if (fb !== fa) return fb - fa; return (a.etbTapped ? 1 : 0) - (b.etbTapped ? 1 : 0); })[0];
   }
-  playTurn(game, me) {
-    // 1. land
-    const land = this.chooseLand(me); if (land) game.playLand(me, land);
-    // 2. main phase: spend mana greedily by value; commander when affordable and valuable
-    let guard = 12;
-    while (guard-- > 0) {
+  async playTurn(game, me) {
+    const land = this.chooseLand(me); if (land) await game.playLand(me, land);
+    let guard = 12; const skip = new Set();
+    while (guard-- > 0 && !game.winner && !me.dead) {
+      const reserve = this.reserveFor(game, me);
       const options = [];
-      for (const c of me.hand) if (!c.isLand && game.canPay(me, c)) options.push({ c, v: this.castValue(game, me, c), zone: 'hand' });
-      for (const c of me.command) { const taxed = { ...c, mana: { ...c.mana, total: c.mana.total + me.cmdTax, generic: c.mana.generic + me.cmdTax } }; if (game.canPay(me, taxed)) options.push({ c, v: this.castValue(game, me, c) + (this.level === 'casual' ? 6 : 4) - me.cmdTax, zone: 'cmd' }); }
+      for (const c of me.hand) if (!skip.has(c) && game.castMode(me, c, 'hand')) options.push({ c, v: this.castValue(game, me, c), zone: 'hand' });
+      for (const c of me.command) if (game.castMode(me, c, 'cmd')) options.push({ c, v: this.castValue(game, me, c) + (this.level === 'casual' ? 6 : 4) - me.cmdTax, zone: 'cmd' });
       if (!options.length) break;
-      options.sort((a, b) => b.v - a.v); const pick = options[0];
-      if (pick.v < (this.level === 'cutthroat' ? -2 : -4)) break; // nothing worth casting
+      options.sort((a, b) => b.v - a.v);
+      // respect counter reserve unless the play is clearly worth tapping out for
+      const pick = options.find(o => o.v >= 12 || !reserve || game.canPayCost(me, game.costOf(me, o.c, o.zone), reserve));
+      if (!pick || pick.v < (this.level === 'cutthroat' ? -2 : -4)) break;
       let target = null;
-      if (pick.c.roles.includes('removal')) target = this.bestTarget(game, me, 'creature');
-      if (pick.c.dmg && !pick.c.roles.includes('removal')) target = this.pickFace(game, me);
-      if (pick.c.roles.includes('removal') && !target) { // nothing to remove: skip this card for now
-        pick.c._skip = true; const i = me.hand.indexOf(pick.c); if (i >= 0) { me.hand.splice(i, 1); me.hand.push(pick.c); } if (options.length === 1) break; continue;
-      }
-      if (pick.zone === 'cmd') game.castCommander(me, pick.c, target); else game.castFromHand(me, pick.c, target);
-      if (game.winner) return;
+      if (pick.c.roles.includes('removal')) { const t = this.bestTarget(game, me, b => b.card.isCreature); target = t && t.perm; }
+      if (pick.c.dmg && !pick.c.roles.includes('removal') && !pick.c.roles.includes('wipe')) target = this.pickFace(game, me);
+      if (pick.c.roles.includes('removal') && !target) { skip.add(pick.c); continue; }
+      const ok = await game.cast(me, pick.c, pick.zone, target);
+      if (!ok && game.castMode(me, pick.c, pick.zone)) skip.add(pick.c); // countered or failed; avoid loops
     }
-    // 3. combat
-    this.combat(game, me);
-    if (me.extraCombat && !game.winner) { for (const b of me.battlefield) if (b.card.isCreature) b.tapped = false; this.combat(game, me); }
+    if (!game.winner && !me.dead) await this.combat(game, me);
+    if (me.extraCombat && !game.winner && !me.dead) { for (const b of me.battlefield) if (b.card.isCreature) b.tapped = false; await this.combat(game, me); }
   }
-  pickFace(game, me) { const opps = game.opponentsOf(me); return opps.sort((a, b) => this.threatOf(game, me, b) - this.threatOf(game, me, a))[0]; }
-  combat(game, me) {
-    const attackers = me.battlefield.filter(b => b.card.isCreature && !b.tapped && (!b.summoning || b.card.kw.includes('haste')) && !b.card.kw.includes('defender') && b.card.power > 0);
+  pickFace(game, me) { return [...game.opponentsOf(me)].sort((a, b) => this.threatOf(game, me, b) - this.threatOf(game, me, a))[0]; }
+  async combat(game, me) {
+    const attackers = me.battlefield.filter(b => game.canAttackWith(me, b) && game.powerOf(me, b) > 0);
     if (!attackers.length) return;
-    const myPower = attackers.reduce((s, a) => s + a.card.power, 0);
-    const oppsPower = game.opponentsOf(me).map(q => q.battlefield.filter(b => b.card.isCreature).reduce((s, b) => s + b.card.power, 0));
-    const ahead = myPower >= Math.max(1, ...oppsPower) * 1.5; // clearly the biggest board: race
-    const lateGame = game.turn > 10 * game.alive().length || (ahead && this.level !== 'casual');
+    const myPower = attackers.reduce((s, a) => s + game.powerOf(me, a), 0);
+    const oppsPower = game.opponentsOf(me).map(q => this.boardPower(game, q));
+    const ahead = myPower >= Math.max(1, ...oppsPower) * 1.5;
+    const lateGame = game.round > 10 || (ahead && this.level !== 'casual');
     const opps = game.opponentsOf(me).map(q => ({ q, threat: this.threatOf(game, me, q), blockers: q.battlefield.filter(b => b.card.isCreature && !b.tapped) }));
-    // who do we attack? casual: random-ish / lowest life. focused: highest threat unless someone is at lethal. cutthroat: lethal first, then highest threat, spreading to avoid opening ourselves.
-    const totalPower = attackers.reduce((s, a) => s + a.card.power, 0);
-    const lethalOn = opps.filter(o => totalPower >= o.q.life && o.blockers.length === 0);
+    const lethalOn = opps.filter(o => myPower >= o.q.life && o.blockers.length === 0);
     let primary;
     if (lethalOn.length) primary = lethalOn.sort((a, b) => b.threat - a.threat)[0];
     else if (this.level === 'casual') primary = opps.sort((a, b) => a.q.life - b.q.life)[0];
     else primary = opps.sort((a, b) => b.threat - a.threat)[0];
-    // how many to keep home? casual keeps none; focused keeps enough to not die to the biggest board; cutthroat computes exact
-    const biggestOppPower = Math.max(0, ...opps.map(o => o.blockers.reduce((s, b) => s + b.card.power, 0)));
+    const biggestOppPower = Math.max(0, ...opps.map(o => o.blockers.reduce((s, b) => s + game.powerOf(o.q, b), 0)));
     let keepHome = 0;
-    if (this.level !== 'casual') { let myLife = me.life; const sortedDef = [...attackers].sort((a, b) => b.card.toughness - a.card.toughness); while (biggestOppPower - keepHome * 3 >= myLife * (this.level === 'cutthroat' ? 0.9 : 0.75) && keepHome < Math.floor(attackers.length / 2)) keepHome++; if (lethalOn.length) keepHome = 0; }
-    const sorted = [...attackers].sort((a, b) => { const ea = a.card.kw.some(k => ['flying', 'unblockable', 'menace', 'trample'].includes(k)) ? 1 : 0, eb = b.card.kw.some(k => ['flying', 'unblockable', 'menace', 'trample'].includes(k)) ? 1 : 0; if (eb !== ea) return eb - ea; return b.card.power - a.card.power; });
-    let going_count = 0;
+    if (this.level !== 'casual' && !lethalOn.length) while (biggestOppPower - keepHome * 3 >= me.life * (this.level === 'cutthroat' ? 0.9 : 0.75) && keepHome < Math.floor(attackers.length / 2)) keepHome++;
+    const sorted = [...attackers].sort((a, b) => { const ea = a.card.kw.some(k => EVASIVE.includes(k)) ? 1 : 0, eb = b.card.kw.some(k => EVASIVE.includes(k)) ? 1 : 0; if (eb !== ea) return eb - ea; return game.powerOf(me, b) - game.powerOf(me, a); });
+    let n = 0;
     const going = sorted.slice(0, sorted.length - keepHome).filter(a => {
-      // don't suicide into a bigger untapped blocker unless evasive or we're casual/lethal
       if (this.level === 'casual' || lethalOn.length || lateGame) return true;
-      const evasive = a.card.kw.some(k => ['flying', 'unblockable', 'menace', 'shadow', 'trample'].includes(k));
-      const eats = primary.blockers.filter(b => game.canBlock(b, a) && b.card.power >= a.card.toughness && b.card.toughness > a.card.power).length;
-      // blockers are a shared resource: once more attackers go in than there are good blockers, the rest connect
-      return evasive || a.card.kw.includes('indestructible') || eats === 0 || going_count++ >= primary.blockers.length;
+      const evasive = a.card.kw.some(k => EVASIVE.includes(k));
+      const eats = primary.blockers.filter(b => game.canBlock(b, a) && game.powerOf(primary.q, b) >= game.toughOf(me, a) && game.toughOf(primary.q, b) > game.powerOf(me, a)).length;
+      return evasive || a.card.kw.includes('indestructible') || eats === 0 || n++ >= primary.blockers.length;
     });
     if (!going.length) return;
     const assignments = going.map(a => ({ attacker: a, defender: primary.q }));
-    // cutthroat spreads evasive damage onto whoever is closest to dying if primary has blockers
-    if (this.level === 'cutthroat' && primary.blockers.length) { const weakest = opps.filter(o => o !== primary).sort((a, b) => a.q.life - b.q.life)[0]; if (weakest && weakest.blockers.length === 0) for (const as of assignments) if (as.attacker.card.kw.some(k => ['flying', 'unblockable'].includes(k)) && weakest.q.life <= as.attacker.card.power * 3) as.defender = weakest.q; }
-    game.attack(me, assignments);
+    if (this.level === 'cutthroat' && primary.blockers.length) { const weakest = opps.filter(o => o !== primary).sort((a, b) => a.q.life - b.q.life)[0]; if (weakest && !weakest.blockers.length) for (const as of assignments) if (as.attacker.card.kw.some(k => ['flying', 'unblockable'].includes(k)) && weakest.q.life <= game.powerOf(me, as.attacker) * 3) as.defender = weakest.q; }
+    await game.declareAttack(me, assignments);
   }
-  // mulligan decision
-  keep(hand, commander) { const lands = hand.filter(c => c.isLand).length; const cheap = hand.filter(c => !c.isLand && c.cmc <= 3).length; if (this.level === 'casual') return lands >= 2 && lands <= 5; return lands >= 2 && lands <= 5 && cheap >= 1; }
-  bottomChoice(hand, n) { return [...hand].sort((a, b) => (b.cmc || 0) - (a.cmc || 0)).filter(c => !c.isLand).slice(0, n); }
+  chooseBlocks(game, me, attackerP, attacks, blockers) {
+    const out = new Map(); const free = [...blockers];
+    const incoming = attacks.reduce((s, a) => s + game.powerOf(attackerP, a.attacker), 0);
+    let lifeAfter = me.life - incoming;
+    // biggest attackers first
+    for (const { attacker } of [...attacks].sort((a, b) => game.powerOf(attackerP, b.attacker) - game.powerOf(attackerP, a.attacker))) {
+      const can = free.filter(b => game.canBlock(b, attacker)); if (!can.length) continue;
+      const ap = game.powerOf(attackerP, attacker), at = game.toughOf(attackerP, attacker);
+      const safe = can.filter(b => game.toughOf(me, b) > ap && !attacker.card.kw.includes('deathtouch'));
+      const trade = can.filter(b => game.powerOf(me, b) >= at || b.card.kw.includes('deathtouch'));
+      const cmdLethal = attacker.card.isCommander && (me.cmdDamage[attackerP.i] || 0) + ap >= 21;
+      let pick = null;
+      if (this.level === 'casual') { if (lifeAfter <= 0) pick = can.sort((a, b) => game.toughOf(me, b) - game.toughOf(me, a))[0]; else pick = safe[0] || null; }
+      else {
+        if (safe.length) pick = safe.sort((a, b) => game.powerOf(me, a) - game.powerOf(me, b))[0];
+        else if (trade.length && this.permValue(trade[0], me, game, me) <= this.permValue(attacker, attackerP, game, me)) pick = trade.sort((a, b) => this.permBase(a) - this.permBase(b))[0];
+        else if (lifeAfter <= 0 || cmdLethal) pick = can.sort((a, b) => this.permBase(a) - this.permBase(b))[0]; // chump to survive
+        else if (this.level === 'cutthroat' && lifeAfter <= 8) pick = can.sort((a, b) => this.permBase(a) - this.permBase(b))[0];
+      }
+      if (pick) { out.set(attacker, pick); free.splice(free.indexOf(pick), 1); if (!attacker.card.kw.includes('trample')) lifeAfter += ap; }
+    }
+    return out;
+  }
+  keep(hand) { const lands = hand.filter(c => c.isLand).length; const cheap = hand.filter(c => !c.isLand && c.cmc <= 3).length; if (this.level === 'casual') return lands >= 2 && lands <= 5; return lands >= 2 && lands <= 5 && cheap >= 1; }
+  bottomChoice(hand, n) {
+    const lands = hand.filter(c => c.isLand), spells = hand.filter(c => !c.isLand).sort((a, b) => b.cmc - a.cmc);
+    const out = []; while (out.length < n) { if (lands.length > 4) out.push(lands.pop()); else if (spells.length) out.push(spells.shift()); else out.push(lands.pop()); } return out;
+  }
 }
 
-root.Goldfish = { Game, AI, buildDeck, tagCard, manaInfo, shuffle, mulberry };
+root.Goldfish = { Game, AI, buildDeck, tagCard, manaInfo, counterHits, shuffle, mulberry, EVASIVE };
 })(typeof window !== 'undefined' ? window : globalThis);

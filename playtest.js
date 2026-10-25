@@ -41,6 +41,30 @@ function tagLandEntry(card, o) {
     : ck && !/\blands?$/.test(ck[2]) ? { kind: 'control', words: words(ck[2]) } : null;
   card.etbTapped = !card.shock && !card.reveal && !card.etbCond && /enters (the battlefield )?tapped/.test(o) && !/unless/.test(o);
 }
+const COLORW = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' };
+/** graveyard hate: "exile target player's graveyard" (spells and Bojuka Bog-style lands) */
+function tagGyHate(card, o) {
+  card.gyHate = /exile all graveyards|exile all cards from all graveyards|exile each graveyard/.test(o) ? 'all'
+    : /exile each opponent's graveyard|exile all cards from each opponent's graveyard/.test(o) ? 'opps'
+    : /exile (all cards from )?target player's graveyard|exile target player's graveyard/.test(o) ? 'target' : null;
+}
+/** tutors: "search your library for a [creature] card, put it into your hand / graveyard / on top / onto the battlefield" */
+function tagTutor(card, o) {
+  const m = o.match(/search your library for (a|an|up to (one|two|three|four|five)) ([a-z ,-]*?)cards?\b([^.]*?)[.,] (?:reveal (?:it|them|that card|those cards)[^,.]*, )?(?:then )?(?:shuffle(?: and|,)? )?(?:then )?put (?:it|that card|the card|them|those cards) (into your hand|into your graveyard|on top( of your library)?|onto the battlefield)/);
+  if (!m || /\bland\b/.test(m[3])) return;
+  const n = m[2] ? (NUM[m[2]] || { four: 4, five: 5 }[m[2]] || 1) : 1;
+  const alts = m[3].trim() ? m[3].trim().split(/,? or |, /).map(s => s.trim().split(/\s+/).filter(w => w && w !== 'card')).filter(a => a.length) : [];
+  const mv = (m[4] + ' ' + o).match(/mana value (x|\d+) or less|mana value less than or equal to (x|\d+)/);
+  card.tutor = { n, alts, dest: /hand/.test(m[5]) ? 'hand' : /graveyard/.test(m[5]) ? 'graveyard' : /battlefield/.test(m[5]) ? 'battlefield' : 'top', max: mv ? ((v => v === 'x' ? 3 : +v)(mv[1] || mv[2])) : null, upTo: !!m[2] };
+  card.roles.push('tutor');
+}
+/** reanimation: return / put a creature card from a graveyard onto the battlefield */
+function tagReanimate(card, o) {
+  const m = o.match(/(?:return|put) target creature card (?:with mana value (\d+) or less )?from (a|your|an opponent's) graveyard (?:to|onto) the battlefield|return enchanted creature card to the battlefield/);
+  if (!m) return;
+  card.reanimate = { scope: m[2] === 'your' ? 'mine' : m[2] === "an opponent's" ? 'opps' : 'any', max: m[1] ? +m[1] : null, lifeLoss: /you lose life equal to its mana value/.test(o) };
+  card.roles.push('reanimate');
+}
 function tagCard(c) {
   const t = c.type || '', o = (c.oracle || '').toLowerCase();
   const front = t.split(' // ')[0];
@@ -73,13 +97,15 @@ function tagCard(c) {
     for (const col of 'WUBRG') if (new RegExp('add \\{' + col + '\\}|\\{t\\}: add \\{[^}]*' + col, 'i').test(o) || new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front)) card.produces.push(col);
     if (/add one mana of any color|mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|path of ancestry/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
     if (!card.produces.length) card.produces = ['C'];
-    tagLandEntry(card, o);
+    tagLandEntry(card, o); tagGyHate(card, o);
     return card;
   }
   const r = card.roles;
+  tagTutor(card, o); tagReanimate(card, o); tagGyHate(card, o);
   if (/add \{|add (one|two|three) mana|search your library for (up to \w+ )?(a )?basic land|lands? onto the battlefield|treasure token/.test(o)) r.push('ramp');
   if (/draw (a|two|three|x|\d+) cards?|draw cards|investigate|clue token/.test(o)) r.push('draw');
-  if (/destroy all|exile all|each creature|all creatures|deals? \d+ damage to each/.test(o)) r.push('wipe');
+  const ow = o.replace(/exile all (cards from )?(all )?graveyards?|exile all cards from [a-z' ]*graveyards?/g, '');
+  if (/destroy all|exile all|each creature|all creatures|deals? \d+ damage to each/.test(ow)) r.push('wipe');
   else if (/destroy target|exile target (creature|permanent|nonland|artifact|enchantment)|deals? \d+ damage to (any target|target creature)|fight|-\d\/-\d|return target (creature|nonland permanent) to its owner/.test(o)) r.push('removal');
   // counterspells: "counter target ... spell" (not abilities-only like Stifle)
   const cm = o.match(/counter target ([a-z, ]*?)spell/);
@@ -92,6 +118,7 @@ function tagCard(c) {
       free: /exile a blue card from your hand rather than pay/.test(o) ? (/not your turn/.test(o) ? 'pitchNotTurn' : 'pitch') : /if you control a commander, you may cast this spell without paying/.test(o) ? 'commander' : null,
     };
   }
+  if (card.reanimate && r.includes('removal')) r.splice(r.indexOf('removal'), 1);
   if (/creatures you control get \+|each creature you control gets \+/.test(o)) r.push('pump');
   if (/create (a|an|two|three|x|\d+) .* tokens?/.test(o)) r.push('tokens');
   if (/extra combat|additional combat/.test(o)) r.push('extracombat');
@@ -245,7 +272,9 @@ class Game {
     const i = p.hand.indexOf(card); if (i < 0 || p.landsThisTurn >= 1 || !card.isLand) return false;
     p.hand.splice(i, 1); p.landsThisTurn++;
     const [perm, notes] = await this.landEnters(p, card);
-    this.say(`plays ${card.name}${notes.length ? ' (' + notes.join(', ') + ')' : card.etbTapped ? ' (tapped)' : ''}`, p); await this.emit({ type: 'land', p, card, perm }); return true;
+    this.say(`plays ${card.name}${notes.length ? ' (' + notes.join(', ') + ')' : card.etbTapped ? ' (tapped)' : ''}`, p); await this.emit({ type: 'land', p, card, perm });
+    if (card.gyHate) await this.doGyHate(p, card); // Bojuka Bog-style enter trigger
+    return true;
   }
   /** cast a spell; returns true if it resolved. target: perm (with .owner) or player */
   async cast(p, card, zone = 'hand', target = null, { instant = false, depth = 0 } = {}) {
@@ -323,6 +352,9 @@ class Game {
       for (let k = 0; k < n; k++) p.battlefield.push({ id: UID++, card: { uid: UID++, name: card.name + ' token', type: 'Token Creature', isCreature: true, power: card.tokenPT[0], toughness: card.tokenPT[1], kw: card.oracle.toLowerCase().includes('token with flying') ? ['flying'] : [], roles: [], mana: { total: 0, pips: {}, generic: 0 }, cmc: 0, token: true, colors: [], oracle: `${card.tokenPT[0]}/${card.tokenPT[1]} token created by ${card.name}` }, tapped: false, summoning: true, counters: 0 });
       await this.emit({ type: 'tokens', p, n, card });
     }
+    if (card.tutor) await this.doTutor(p, card);
+    if (card.gyHate) await this.doGyHate(p, card);
+    if (card.reanimate) await this.doReanimate(p, card);
     if (card.roles.includes('pump')) p.pumpUntilEOT = (p.pumpUntilEOT || 0) + (card.pumpN || 1);
     if (card.roles.includes('extracombat')) p.extraCombat = true;
     let pm = null;
@@ -333,6 +365,60 @@ class Game {
       this.say(`— ${card.name} goes off!`, p); await this.emit({ type: 'combo', p, card });
       for (const q of this.opponentsOf(p)) await this.kill(q, `${p.name}'s ${card.name}`);
     }
+  }
+  tutorMatch(c, t) {
+    if (t.max != null && (c.isLand || c.cmc > t.max)) return false;
+    if (!t.alts.length) return true;
+    const ty = c.type.toLowerCase();
+    return t.alts.some(ws => ws.every(w => COLORW[w] ? c.colors.includes(COLORW[w]) : w.startsWith('non') ? !ty.includes(w.slice(3)) : ty.includes(w)));
+  }
+  async doTutor(p, card) {
+    const t = card.tutor; const pool = p.library.filter(c => this.tutorMatch(c, t));
+    let picks = [];
+    if (pool.length) picks = p.human ? [].concat((this.hooks.humanSearch ? await this.hooks.humanSearch({ p, card, pool, n: t.n, dest: t.dest, upTo: true }) : null) || []) : p.ai ? [].concat(p.ai.chooseTutor(this, p, pool, t) || []) : [];
+    picks = picks.filter(c => p.library.includes(c)).slice(0, t.n);
+    for (const c of picks) p.library.splice(p.library.indexOf(c), 1);
+    shuffle(p.library, this.rng);
+    const names = picks.map(c => c.name).join(', ');
+    for (const c of picks) {
+      if (t.dest === 'hand') p.hand.push(c);
+      else if (t.dest === 'graveyard') p.graveyard.push(c);
+      else if (t.dest === 'top') p.library.push(c); // top of library = end of the array
+      else if (c.isLand) await this.landEnters(p, c);
+      else p.battlefield.push({ id: UID++, card: c, tapped: false, summoning: c.isCreature, counters: 0, loyalty: c.isPlaneswalker ? 4 : 0 });
+    }
+    const hidden = !p.human && (t.dest === 'hand' || (t.dest === 'top' && !/reveal/.test(card.oracle.toLowerCase())));
+    const where = { hand: 'into hand', graveyard: 'into the graveyard', top: 'on top of library', battlefield: 'onto the battlefield' }[t.dest];
+    this.say(picks.length ? `— searches for ${hidden ? (picks.length > 1 ? picks.length + ' cards' : 'a card') : names} (${where})` : `— searches and finds nothing`, p);
+    await this.emit({ type: 'tutor', p, card, picks, dest: t.dest });
+  }
+  graveCreatures(p, scope, max) {
+    const owners = scope === 'mine' ? [p] : scope === 'opps' ? this.opponentsOf(p) : this.players;
+    const out = [];
+    for (const q of owners) for (const c of q.graveyard) if (c.isCreature && !/token/i.test(c.type) && (max == null || c.cmc <= max)) out.push(c);
+    return out;
+  }
+  ownerOfGrave(c) { return this.players.find(q => q.graveyard.includes(c)); }
+  async doReanimate(p, card) {
+    const r = card.reanimate; const pool = this.graveCreatures(p, r.scope, r.max);
+    if (!pool.length) { this.say(`— no creature card to return`, p); return; }
+    const pick = p.human ? [].concat((this.hooks.humanSearch ? await this.hooks.humanSearch({ p, card, pool, n: 1, dest: 'reanimate' }) : null) || [])[0] : p.ai ? p.ai.chooseReanimate(this, p, pool) : pool[0];
+    const owner = pick && this.ownerOfGrave(pick); if (!owner) return;
+    owner.graveyard.splice(owner.graveyard.indexOf(pick), 1);
+    const pm = { id: UID++, card: pick, tapped: false, summoning: true, counters: 0 }; p.battlefield.push(pm);
+    this.say(`— returns ${pick.name}${owner !== p ? ' from ' + owner.name + "'s graveyard" : ''} to the battlefield`, p);
+    await this.emit({ type: 'reanimate', p, card: pick, perm: pm, from: owner });
+    if (r.lifeLoss && pick.cmc) await this.changeLife(p, -pick.cmc, card);
+  }
+  async doGyHate(p, card) {
+    let victims = card.gyHate === 'all' ? this.alive() : card.gyHate === 'opps' ? this.opponentsOf(p) : null;
+    if (!victims) {
+      const withCards = this.alive().filter(q => q.graveyard.length);
+      if (!withCards.length) return;
+      const v = p.human ? (this.hooks.humanChoosePlayer ? await this.hooks.humanChoosePlayer({ p, card, players: withCards, why: `${card.name}: exile which graveyard?` }) : null) : p.ai ? p.ai.chooseGyHate(this, p, withCards) : null;
+      victims = v ? [v] : [];
+    }
+    for (const q of victims) { if (!q.graveyard.length) continue; const n = q.graveyard.length; q.exile.push(...q.graveyard); q.graveyard = []; this.say(`— exiles ${q.name}'s graveyard (${n} card${n > 1 ? 's' : ''})`, p); await this.emit({ type: 'gyhate', p, victim: q, card }); }
   }
   async destroy(owner, perm, quiet) {
     if (!owner.battlefield.includes(perm)) return;
@@ -367,6 +453,7 @@ class Game {
       const [pm, notes] = await this.landEnters(p, land, f.tapped && !(f.untapIf4 && landsNow + 1 >= 4));
       this.say(`cracks ${perm.card.name} → ${land.name}${notes.length ? ' (' + notes.join(', ') + ')' : pm.tapped ? ' (tapped)' : ''}`, p);
       await this.emit({ type: 'land', p, card: land, perm: pm, fetched: true });
+      if (land.gyHate) await this.doGyHate(p, land);
     }
     if (!picks.length) this.say(`cracks ${perm.card.name} and finds nothing`, p);
     shuffle(p.library, this.rng);
@@ -671,6 +758,7 @@ class AI {
     const removal = fits.filter(c => c.roles.includes('removal'));
     if (removal.length) { const t = this.bestTarget(game, me, b => b.card.isCreature || /permanent|artifact|enchantment/.test(removal[0].oracle.toLowerCase())); if (t && t.value >= { casual: 99, focused: 7, cutthroat: 5 }[this.level]) return { card: removal[0], target: t.perm }; }
     const draw = fits.filter(c => c.roles.includes('draw')); if (draw.length && (nextIsMe || this.level === 'cutthroat')) return { card: draw[0] };
+    const tut = fits.filter(c => c.tutor && this.castValue(game, me, c) > 0); if (tut.length && nextIsMe) return { card: tut[0] };
     const flashC = fits.filter(c => c.isCreature); if (flashC.length && nextIsMe) return { card: flashC.sort((a, b) => b.cmc - a.cmc)[0] };
     return null;
   }
@@ -692,6 +780,9 @@ class AI {
     if (c.roles.includes('removal')) { const t = this.bestTarget(game, me, b => b.card.isCreature); v += t ? 3 + maxThreat / 8 : -8; if (c.flash && this.level !== 'casual') v -= 3; } // flash removal: prefer holding it
     if (c.isCreature) v += 2 + c.power * 0.5 + c.kw.length * 0.5 + (c.roles.includes('engine') ? 2 : 0);
     if (c.roles.includes('pump')) v += myCreatures >= 3 ? 4 : -5;
+    if (c.tutor) v += c.tutor.dest === 'graveyard' ? (me.hand.some(x => x.reanimate) ? 7 : -3) : c.tutor.dest === 'hand' ? 4 : 3;
+    if (c.reanimate) { const pool = game.graveCreatures(me, c.reanimate.scope, c.reanimate.max); const best = pool.length ? Math.max(...pool.map(x => this.castValueRaw(game, me, x))) : -99; v += best >= 5 ? best : -20; }
+    if (c.gyHate && !c.isLand) v += game.opponentsOf(me).some(q => this.graveValue(game, q) >= 10) ? 5 : -6;
     if (c.roles.includes('tokens')) v += 2;
     if (c.roles.includes('wincon')) v += game.round >= 5 ? 6 : -3;
     if (c.isInstant && !c.roles.length) v -= 3;
@@ -757,6 +848,25 @@ class AI {
     const r = this.reserveFor(game, me);
     if (r && !game.canPayCost(me, { generic: n, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: n }, r) && this.castValueRaw(game, me, spell.card) < 6) return false;
     return true;
+  }
+  graveValue(game, q) { return q.graveyard.filter(c => c.isCreature).reduce((s, c) => s + this.castValueRaw(game, q, c), 0); }
+  chooseGyHate(game, me, players) {
+    const opps = players.filter(q => q !== me); if (!opps.length) return null;
+    return opps.sort((a, b) => this.graveValue(game, b) - this.graveValue(game, a))[0];
+  }
+  chooseReanimate(game, me, pool) { return [...pool].sort((a, b) => this.castValueRaw(game, me, b) - this.castValueRaw(game, me, a))[0]; }
+  chooseTutor(game, me, pool, t) {
+    const avail = game.availableMana(me) + 1;
+    const score = c => {
+      let v = this.castValueRaw(game, me, c);
+      if (t.dest === 'graveyard') return c.isCreature ? v + c.cmc : -5; // something worth reanimating
+      if (c.roles.includes('wincon')) v += 6;
+      if (c.roles.includes('reanimate') && me.graveyard.some(x => x.isCreature && x.cmc >= 5)) v += 8;
+      if (t.dest !== 'battlefield' && !c.isLand && c.mana.total <= avail + 1) v += 3; // castable soon
+      if (c.roles.includes('counter') && this.level !== 'casual') v += 2;
+      return v;
+    };
+    return [...pool].sort((a, b) => score(b) - score(a)).slice(0, t.n);
   }
   needManaNow(game, me) {
     if (this.level === 'casual') return true;

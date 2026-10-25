@@ -165,6 +165,20 @@ const STYLE = `
 .pv .ty{font-size:.78rem;color:var(--muted)}
 .pv .rl{font-size:.72rem;color:var(--accent)}
 .gl{font-family:var(--mono);font-size:.72rem;color:var(--muted);max-height:260px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;white-space:pre-wrap}
+.gl .ll{padding:1px 4px;border-radius:4px;white-space:pre-wrap}
+.gl .ll.has{cursor:pointer;color:var(--fg)}
+.gl .ll.has:hover{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.gl .ll.on{background:color-mix(in srgb,var(--accent) 26%,transparent)}
+.lgx{border:1px solid var(--accent);border-radius:8px;padding:8px;display:grid;gap:6px;background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.lgx-who{font:600 .66rem var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.lgx-m{font-size:.86rem}
+.lgx-cards{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.lgx-c{display:flex;gap:6px;align-items:center;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:6px;padding:2px 6px 2px 2px;font-size:.72rem;cursor:pointer}
+.lgx-c img{width:22px;height:30px;object-fit:cover;border-radius:3px}
+.lgx-c.on{border-color:var(--accent)}
+.lgx-arrow{color:var(--muted);font-size:.8rem}
+.gc.ping{animation:gtping 1.2s ease-out}
+@keyframes gtping{0%,60%{box-shadow:0 0 0 3px var(--warn),0 0 22px var(--warn)}100%{box-shadow:none}}
 .float{position:fixed;font:800 1.6rem var(--mono);pointer-events:none;z-index:50;text-shadow:0 2px 8px rgba(0,0,0,.6)}
 .ghost{position:fixed;z-index:40;pointer-events:none;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45);object-fit:cover}
 .set{position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:60;padding:16px}
@@ -191,6 +205,7 @@ class Table {
     this.wire();
     const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c) };
     this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
+    this.buildCardIndex();
     this.me = this.game.players.find(p => p.human) || null;
     for (const p of this.game.players) if (p.ai) { let t = 0; while (!p.ai.keep(p.hand, t) && t < 3) { this.game.mulligan(p); t++; } if (t) this.game.bottomCards(p, p.ai.bottomChoice(p.hand, t)); }
     if (this.me) await this.mulligan();
@@ -207,7 +222,39 @@ class Table {
   uidEl(uid) { return this.q(`[data-uid="${uid}"]`); }
   rect(el) { return el ? el.getBoundingClientRect() : null; }
   srcRect(p, card) { const h = p === this.me && this.uidEl(card.uid); return this.rect(h || (this.seatEl(p) && this.seatEl(p).querySelector('.av'))); }
-  addLog(l) { this.logLines.push(l); if (this.logLines.length > 400) this.logLines.shift(); if (this.logEl) { this.logEl.textContent = this.logLines.slice(-200).join('\n'); this.logEl.scrollTop = this.logEl.scrollHeight; } }
+  addLog(l) {
+    this.logLines.push(l); if (this.logLines.length > 400) this.logLines.shift();
+    if (!this.logEl) return;
+    const atBottom = this.logEl.scrollTop + this.logEl.clientHeight >= this.logEl.scrollHeight - 30;
+    const start = Math.max(0, this.logLines.length - 200);
+    this.logEl.innerHTML = this.logLines.slice(start).map((x, i) => `<div class="ll ${this.lineHas(x) ? 'has' : ''} ${this.logSel === start + i ? 'on' : ''}" data-log="${start + i}">${esc(x)}</div>`).join('');
+    if (atBottom) this.logEl.scrollTop = this.logEl.scrollHeight;
+  }
+  lineHas(x) { this.lhCache = this.lhCache || new Map(); if (!this.lhCache.has(x)) { if (this.lhCache.size > 2000) this.lhCache.clear(); this.lhCache.set(x, this.cardsInLine(x).length > 0); } return this.lhCache.get(x); }
+  buildCardIndex() {
+    this.cardIndex = new Map(); this.cardByUid = new Map();
+    for (const p of this.game.players) for (const z of [p.library, p.hand, p.command]) for (const c of z) if (!this.cardIndex.has(c.name)) { this.cardIndex.set(c.name, c); this.cardByUid.set(c.uid, c); }
+    this.cardNames = [...this.cardIndex.keys()].filter(n => n.length > 2).sort((a, b) => b.length - a.length);
+  }
+  /** cards named in a log line, in the order they appear (the acting player's name is skipped) */
+  cardsInLine(line) {
+    if (!this.cardNames) return [];
+    const k = line.indexOf(': '); let rest = k >= 0 ? line.slice(k + 2) : line;
+    const found = [];
+    for (const n of this.cardNames) { let i = rest.indexOf(n); while (i >= 0) { found.push({ i, c: this.cardIndex.get(n) }); rest = rest.slice(0, i) + '\u0000'.repeat(n.length) + rest.slice(i + n.length); i = rest.indexOf(n); } }
+    const seen = new Set(); return found.sort((a, b) => a.i - b.i).map(f => f.c).filter(c => !seen.has(c.name) && seen.add(c.name));
+  }
+  showLogLine(idx) {
+    const line = this.logLines[idx]; if (line == null) return;
+    this.logSel = idx; for (const el of this.logEl.querySelectorAll('.ll.on')) el.classList.remove('on'); const row = this.logEl.querySelector(`[data-log="${idx}"]`); if (row) row.classList.add('on');
+    const cards = this.cardsInLine(line);
+    const k = line.indexOf(': '); const who = k >= 0 ? line.slice(0, k) : '';
+    const ctx = `<div class="lgx"><div class="lgx-who">${esc(who || 'Table')}</div><div class="lgx-m">${esc(k >= 0 ? line.slice(k + 2) : line)}</div>${cards.length > 1 ? `<div class="lgx-cards">${cards.map((c, i) => `<button class="lgx-c ${i === 0 ? 'on' : ''}" data-lgc="${c.uid}" data-uid="${c.uid}">${c.img ? `<img src="${esc(c.img)}" alt="">` : ''}<span>${esc(c.name)}</span></button>`).join('<span class="lgx-arrow">→</span>')}</div>` : ''}</div>`;
+    this.pinnedCtx = ctx; this.pvUid = null;
+    if (cards.length) this.preview(cards[0].uid, true); else this.pv.innerHTML = ctx;
+    // point at the cards on the table if they're still there
+    for (const c of cards) for (const el of this.board.querySelectorAll(`.gc[title="${CSS.escape(c.name)}"], .gc[title="${CSS.escape(c.name)} (tapped)"]`)) { el.classList.remove('ping'); void el.offsetWidth; el.classList.add('ping'); }
+  }
   async flyTo(from, toEl, card, { dur = 420, scaleFrom = 1 } = {}) {
     if (!from || !toEl || !this.dur(dur) || !card.img) return;
     const to = toEl.getBoundingClientRect(); const g = document.createElement('img'); g.className = 'ghost'; g.src = big(card.img);
@@ -323,21 +370,27 @@ class Table {
   }
   // ---------- input ----------
   wire() {
-    this.el.addEventListener('mouseover', e => { const t = e.target.closest('[data-uid]'); if (t) this.preview(+t.dataset.uid); });
+    this.el.addEventListener('mouseover', e => { const t = e.target.closest('[data-uid]'); if (t) this.preview(+t.dataset.uid, !!t.closest('.lgx')); });
     this.el.addEventListener('click', e => this.onClick(e));
     document.addEventListener('keydown', this.onKey = e => { if (e.key === 'Escape' && this.mode) { this.mode = null; this.render(); } });
   }
   findCard(uid) {
     const g = this.game; if (!g) return null;
     for (const p of g.players) { for (const z of [p.hand, p.command, p.graveyard, p.exile]) { const c = z.find(c => c.uid === uid); if (c) return c; } const b = p.battlefield.find(b => b.card.uid === uid); if (b) return b.card; }
-    const s = this.stackView.find(s => s.card.uid === uid); return s ? s.card : (this.prompt && this.prompt.spell && this.prompt.spell.card.uid === uid ? this.prompt.spell.card : null);
+    const s = this.stackView.find(s => s.card.uid === uid); if (s) return s.card;
+    if (this.prompt && this.prompt.spell && this.prompt.spell.card.uid === uid) return this.prompt.spell.card;
+    for (const p of g.players) { const c = p.library.find(c => c.uid === uid); if (c) return c; }
+    return this.cardByUid ? this.cardByUid.get(uid) || null : null;
   }
-  preview(uid) {
+  preview(uid, keepCtx = false) {
     const c = this.findCard(uid); if (!c || this.pvUid === uid) return; this.pvUid = uid;
-    this.pv.innerHTML = `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}`;
+    if (!keepCtx) this.pinnedCtx = null;
+    this.pv.innerHTML = (this.pinnedCtx || '') + `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}`;
   }
   onClick(e) {
     const t = e.target; const g = this.game, me = this.me; if (!g) return;
+    const ll = t.closest('[data-log]'); if (ll) { this.showLogLine(+ll.dataset.log); return; }
+    const lc = t.closest('[data-lgc]'); if (lc) { for (const b of this.pv.querySelectorAll('.lgx-c')) b.classList.toggle('on', b === lc); this.pinnedCtx = this.pv.querySelector('.lgx').outerHTML; this.pvUid = null; this.preview(+lc.dataset.lgc, true); return; }
     const u = t.closest('[data-uid]'); if (u) this.preview(+u.dataset.uid);
     const btn = t.closest('[data-act]'); if (btn) { this.sfx.play('click'); return this.action(btn.dataset.act, btn); }
     const P = this.prompt;
@@ -474,7 +527,7 @@ class Table {
     let prm = '';
     if (P) {
       const opts = (P.options || []).map(o => o.card || o).map(c => `<div class="opt" data-opt="${c.uid}" data-uid="${c.uid}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`).join('');
-      if (P.kind === 'counter') prm = `<div class="prm"><h4>${esc(short(P.spell.caster.name))} casts ${esc(P.spell.card.name)}${P.spell.target && P.spell.target.spell ? ' targeting ' + esc(P.spell.target.spell.card.name) : ''}. Respond?</h4><div class="opts">${opts}</div><div class="gt-ctl"><button class="chip" data-act="pass">Let it resolve</button><span class="msg">Click a counterspell to cast it.</span></div></div>`;
+      if (P.kind === 'counter') prm = `<div class="prm"><h4>${esc(short(P.spell.caster.name))} casts ${esc(P.spell.card.name)}${P.spell.target && P.spell.target.spell ? ' targeting ' + esc(P.spell.target.spell.card.name) : ''}. Respond?</h4><div class="opts">${opts}</div><div class="gt-ctl"><button class="chip" data-act="pass">Let it resolve</button><span class="msg">${P.threatened && P.threatened.length ? `It hits ${P.threatened.length} of your permanent${P.threatened.length > 1 ? "s" : ""}. ` : ""}Click a card to respond with it.</span></div></div>`;
       else if (P.kind === 'attack') prm = `<div class="prm"><h4>${esc(short(P.attacker.name))} attacks you with ${P.attacks.length} creature${P.attacks.length > 1 ? 's' : ''} (${P.attacks.reduce((s, a) => s + g.powerOf(P.attacker, a.attacker), 0)} damage). Respond before blocks?</h4><div class="opts">${opts}</div><div class="gt-ctl"><button class="chip" data-act="pass">No response</button></div></div>`;
       else if (P.kind === 'endstep') prm = `<div class="prm"><h4>End of ${esc(short(P.of.name))}'s turn. Cast anything at instant speed?</h4><div class="opts">${opts}</div><div class="gt-ctl"><button class="chip" data-act="pass">Pass</button><span class="msg">Turn this stop off in settings.</span></div></div>`;
       else if (P.kind === 'block') { const incoming = P.attacks.filter(a => !P.map.has(a.attacker) || a.attacker.card.kw.includes('trample')).reduce((s, a) => s + g.powerOf(P.attacker, a.attacker), 0);

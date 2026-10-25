@@ -300,7 +300,7 @@ class Game {
     if (depth < 4) for (const q of this.after(p)) {
       if (countered || this.winner) break;
       const resp = await this.askCounter(q, spell, depth);
-      if (resp) { const ok = await this.cast(q, resp.card, 'hand', { spell }, { instant: true, depth: depth + 1 }); if (ok && spell.countered) countered = true; }
+      if (resp) { const isCounter = resp.card.roles.includes('counter'); const ok = await this.cast(q, resp.card, 'hand', isCounter ? { spell } : null, { instant: true, depth: depth + 1 }); if (ok && spell.countered) countered = true; }
     }
     this.stack.splice(this.stack.indexOf(spell), 1);
     if (spell.countered) {
@@ -312,10 +312,16 @@ class Game {
     return true;
   }
   async askCounter(q, spell, depth) {
-    const options = q.hand.filter(c => c.roles.includes('counter') && counterHits(c, spell.card) && this.castMode(q, c, 'hand', { instant: true }));
+    const counters = q.hand.filter(c => c.roles.includes('counter') && counterHits(c, spell.card) && this.castMode(q, c, 'hand', { instant: true }));
+    const threatened = this.threatTo(q, spell);
+    const protects = threatened.length ? q.hand.filter(c => c.roles.includes('protect') && c.isInstant && this.castMode(q, c, 'hand', { instant: true })) : [];
+    const options = [...counters, ...protects];
     if (!options.length) return null;
-    if (q.human) return this.hooks.humanRespond ? await this.hooks.humanRespond({ kind: 'counter', spell, options, depth }) : null;
-    if (q.ai) { const c = q.ai.chooseCounter(this, q, spell, options, depth); return c ? { card: c } : null; }
+    if (q.human) return this.hooks.humanRespond ? await this.hooks.humanRespond({ kind: 'counter', spell, options, depth, threatened }) : null;
+    if (q.ai) {
+      const c = counters.length ? q.ai.chooseCounter(this, q, spell, counters, depth) : null; if (c) return { card: c };
+      const pr = protects.length ? q.ai.chooseProtect(this, q, spell, protects, threatened) : null; return pr ? { card: pr, protect: true } : null;
+    }
     return null;
   }
   async resolve(spell) {
@@ -332,11 +338,13 @@ class Game {
     const perm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
     if (card.roles.includes('wipe')) {
       await this.emit({ type: 'wipe', p, card });
-      for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible'))) await this.destroy(q, b, true);
+      for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn)) await this.destroy(q, b, true);
       this.say(`— board wiped`, p);
+      for (const q of this.alive()) if (q.battlefield.some(x => x.card.isCreature && x.protTurn === this.turn)) this.say(`— ${q.name}'s creatures survive (protected)`, p);
     } else if (card.roles.includes('removal') && target && target.card) {
       const owner = this.players[target.owner];
       if (!owner.battlefield.includes(target)) this.say(`— target is gone`, p);
+      else if (target.protTurn === this.turn) this.say(`— ${target.card.name} is protected`, p);
       else if (target.card.kw.includes('indestructible') && !/exile|return/.test(card.oracle.toLowerCase())) this.say(`— ${target.card.name} is indestructible`, p);
       else await this.destroy(owner, target);
     }
@@ -352,6 +360,7 @@ class Game {
       for (let k = 0; k < n; k++) p.battlefield.push({ id: UID++, card: { uid: UID++, name: card.name + ' token', type: 'Token Creature', isCreature: true, power: card.tokenPT[0], toughness: card.tokenPT[1], kw: card.oracle.toLowerCase().includes('token with flying') ? ['flying'] : [], roles: [], mana: { total: 0, pips: {}, generic: 0 }, cmc: 0, token: true, colors: [], oracle: `${card.tokenPT[0]}/${card.tokenPT[1]} token created by ${card.name}` }, tapped: false, summoning: true, counters: 0 });
       await this.emit({ type: 'tokens', p, n, card });
     }
+    if (card.roles.includes('protect') && card.isInstant) this.doProtect(p, card);
     if (card.tutor) await this.doTutor(p, card);
     if (card.gyHate) await this.doGyHate(p, card);
     if (card.reanimate) await this.doReanimate(p, card);
@@ -365,6 +374,22 @@ class Game {
       this.say(`— ${card.name} goes off!`, p); await this.emit({ type: 'combo', p, card });
       for (const q of this.opponentsOf(p)) await this.kill(q, `${p.name}'s ${card.name}`);
     }
+  }
+  /** protection instants (Heroic Intervention, Tamiyo's Safekeeping...): until end of turn */
+  doProtect(p, card) {
+    const o = card.oracle.toLowerCase();
+    let perms;
+    if (/permanents you control|creatures you control|each creature you control/.test(o)) perms = p.battlefield.filter(b => /permanents/.test(o) || b.card.isCreature);
+    else { const threat = [...this.stack].reverse().find(s => s.target && s.target.card && p.battlefield.includes(s.target)); perms = threat ? [threat.target] : p.battlefield.filter(b => b.card.isCreature).sort((a, b) => b.card.power - a.card.power).slice(0, 1); }
+    for (const b of perms) b.protTurn = this.turn;
+    this.say(`— protects ${perms.length === 1 ? perms[0].card.name : perms.length + ' permanents'} this turn`, p);
+  }
+  /** does `spell` threaten q's board? (for protection responses) */
+  threatTo(q, spell) {
+    const c = spell.card;
+    if (c.roles.includes('wipe')) return q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn);
+    if (c.roles.includes('removal') && spell.target && spell.target.card && q.battlefield.includes(spell.target) && spell.target.protTurn !== this.turn) return [spell.target];
+    return [];
   }
   tutorMatch(c, t) {
     if (t.max != null && (c.isLand || c.cmc > t.max)) return false;
@@ -774,6 +799,9 @@ class AI {
     const maxThreat = Math.max(0, ...opps.map(q => this.threatOf(game, me, q)));
     let v = c.cmc;
     if (c.roles.includes('counter')) return -99; // never main-phase a counterspell
+    if (c.roles.includes('protect') && c.isInstant) return -99; // protection is held for a wipe or removal
+    const nonPerm = c.isInstant || c.isSorcery;
+    if (nonPerm && !c.roles.length && !c.dmg && !c.drawN && !c.gainN && !c.tokenCount && !c.tutor && !c.reanimate && !c.gyHate) return -50; // no effect we model: don't cast it blindly
     if (c.roles.includes('ramp')) v += game.round <= 4 ? 6 : 1;
     if (c.roles.includes('draw')) v += me.hand.length <= 3 ? 5 : 2;
     if (c.roles.includes('wipe')) { const oppPower = opps.reduce((s, q) => s + this.boardPower(game, q), 0); const myPower = this.boardPower(game, me); v += (oppPower >= myPower * 2 + 6 || opps.some(q => this.boardPower(game, q) >= me.life)) ? 10 : -12; }
@@ -848,6 +876,11 @@ class AI {
     const r = this.reserveFor(game, me);
     if (r && !game.canPayCost(me, { generic: n, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: n }, r) && this.castValueRaw(game, me, spell.card) < 6) return false;
     return true;
+  }
+  chooseProtect(game, me, spell, options, threatened) {
+    const v = threatened.reduce((s, b) => s + this.permBase(b), 0);
+    const need = { casual: 10, focused: 6, cutthroat: 5 }[this.level];
+    return v >= need ? [...options].sort((a, b) => a.mana.total - b.mana.total)[0] : null;
   }
   graveValue(game, q) { return q.graveyard.filter(c => c.isCreature).reduce((s, c) => s + this.castValueRaw(game, q, c), 0); }
   chooseGyHate(game, me, players) {

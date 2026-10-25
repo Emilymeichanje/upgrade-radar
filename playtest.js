@@ -51,8 +51,8 @@ function parseOps(t) {
   else if ((m = t.match(/\bmills? (a|one|two|three|four|five|\d+) cards?/))) ops.push({ op: 'mill', n: numOf(m[1]) });
   if ((m = t.match(/\bdraws? (a|one|two|three|\d+) cards?/)) && !/each player draws|target player draws|each opponent draws/.test(t)) ops.push({ op: 'draw', n: numOf(m[1]) });
   if ((m = t.match(/(each opponent|each other player|target opponent|target player) loses (\d+|x) life/))) ops.push({ op: 'drain', n: numOf(m[2]), each: m[1].startsWith('each') });
-  if ((m = t.match(/you gain (\d+|x) life/))) ops.push({ op: 'gain', n: numOf(m[1]) });
-  if ((m = t.match(/you lose (\d+) life/))) ops.push({ op: 'lose', n: numOf(m[1]) });
+  if ((m = t.match(/(?:you|and|,) gain (\d+|x) life/))) ops.push({ op: 'gain', n: numOf(m[1]) });
+  if ((m = t.match(/(?:you|and) lose (\d+) life/))) ops.push({ op: 'lose', n: numOf(m[1]) });
   if ((m = t.match(/deals? (\d+|x) damage to (any target|each opponent|target opponent|target player|target creature or planeswalker|target creature|each creature)/))) ops.push({ op: 'damage', n: numOf(m[1]), to: m[2] });
   if ((m = t.match(/create (a|an|one|two|three|four|five|x|\d+) (?:tapped )?(\d+)\/(\d+)[^.]*?creature tokens?/))) ops.push({ op: 'tokens', n: numOf(m[1]), pt: [+m[2], +m[3]], kw: ['flying', 'haste', 'lifelink', 'deathtouch', 'vigilance', 'trample'].filter(k => new RegExp('with [^.]*' + k).test(t)) });
   else if ((m = t.match(/create (a|an|one|two|three|\d+) (treasure|clue|food|blood) tokens?/))) ops.push({ op: 'note', text: `creates ${m[1]} ${m[2]} token${numOf(m[1]) > 1 ? 's' : ''}` });
@@ -61,6 +61,7 @@ function parseOps(t) {
   if (/return this card from your graveyard to the battlefield|return this card to the battlefield/.test(t)) ops.push({ op: 'selfToBf', tapped: /to the battlefield tapped/.test(t) });
   if (/return this card from your graveyard to your hand|return this card to its owner's hand|return this card to your hand/.test(t)) ops.push({ op: 'selfToHand' });
   if ((m = t.match(/put (a|one|two|three|x|\d+) \+1\/\+1 counters? on (this card|each creature you control|each other creature you control|target creature)/))) ops.push({ op: 'counters', n: numOf(m[1]), to: m[2] });
+  if ((m = t.match(/(?:reveal|look at) the top (\w+) cards of your library\. (?:you may )?put (?:an? |up to one )?([a-z ]*?)card (?:from among them )?into your hand(?: and the rest| and put the rest|\. put the rest) into your graveyard/))) ops.push({ op: 'dig', n: numOf(m[1]), filter: m[2].trim(), rest: 'graveyard' });
   if ((m = t.match(/\bscry (\d+)/))) ops.push({ op: 'scry', n: +m[1] });
   if ((m = t.match(/\bsurveil (\d+)/))) ops.push({ op: 'surveil', n: +m[1] });
   if ((m = t.match(/search your library for an? (basic )?([a-z ]*?)\bland card[^.]*?put it into your hand/))) ops.push({ op: 'landToHand', basic: !!m[1], types: ['plains', 'island', 'swamp', 'mountain', 'forest'].filter(x => m[2].includes(x)) });
@@ -220,6 +221,8 @@ function tagCard(c) {
   // numbers applied when the card resolves: spells use their text minus triggered/activated lines; permanents use etbOps instead
   const isPerm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
   const res = isPerm ? '' : o.split('\n').filter(l => !/^(at the beginning|whenever|when )/.test(l) && !/^[^:"]+: /.test(l) && !/^(flashback|cycling|escape|jump-start)/.test(l)).join('\n');
+  card.spellOps = isPerm ? null : parseOps(res).filter(op => ['dig', 'mill', 'millOpp', 'scry', 'surveil', 'gyToHand', 'drain', 'landToHand', 'counters'].includes(op.op));
+  if (card.spellOps && !card.spellOps.length) card.spellOps = null;
   const tokN = res.match(/create (a|an|two|three|four|\d+)/); card.tokenCount = tokN ? (NUM[tokN[1]] || parseInt(tokN[1]) || 1) : 0;
   const tokPT = o.match(/(\d+)\/(\d+) [a-z ]*creature token/); card.tokenPT = tokPT ? [+tokPT[1], +tokPT[2]] : [1, 1];
   const dmg = res.match(/deals? (\d+) damage/); card.dmg = dmg ? +dmg[1] : 0;
@@ -462,6 +465,7 @@ class Game {
     }
     if (card.roles.includes('protect') && card.isInstant) this.doProtect(p, card);
     if (card.tutor) await this.doTutor(p, card);
+    if (card.spellOps) await this.runOps(p, card.spellOps, card, {});
     if (card.gyHate) await this.doGyHate(p, card);
     if (card.reanimate) await this.doReanimate(p, card);
     if (card.roles.includes('pump')) p.pumpUntilEOT = (p.pumpUntilEOT || 0) + (card.pumpN || 1);
@@ -567,6 +571,14 @@ class Game {
         case 'tokens': { const n = Math.min(op.n, 8); for (let k = 0; k < n; k++) p.battlefield.push({ id: UID++, card: { uid: UID++, name: src.name + ' token', type: 'Token Creature', isCreature: true, power: op.pt[0], toughness: op.pt[1], kw: op.kw || [], roles: [], colors: [], mana: manaInfo(''), cmc: 0, token: true, oracle: '' }, tapped: false, summoning: true, counters: 0 }); await this.emit({ type: 'tokens', p, n, card: src }); break; }
         case 'tokenCopy': { p.battlefield.push({ id: UID++, card: { ...src, uid: UID++, name: src.name + ' token', token: true, power: op.pt ? op.pt[0] : src.power, toughness: op.pt ? op.pt[1] : src.toughness, isCommander: false }, tapped: false, summoning: true, counters: 0 }); this.say(`— creates a token copy of ${src.name}`, p); await this.emit({ type: 'tokens', p, n: 1, card: src }); break; }
         case 'note': this.say(`— ${op.text}`, p); break;
+        case 'dig': {
+          const top = p.library.splice(-Math.min(op.n, p.library.length)).reverse();
+          const ty = op.filter; const pool = top.filter(c => !ty || ty.split(/ or /).some(w => c.type.toLowerCase().includes(w.trim())));
+          const pick = (await this.chooseFromList(p, src, pool, 1, 'dig'))[0];
+          if (pick) p.hand.push(pick);
+          const rest = top.filter(c => c !== pick); p.graveyard.push(...rest);
+          this.say(`— reveals ${top.map(c => c.name).join(', ')}${pick ? `; takes ${pick.name}` : ''}; the rest go to the graveyard`, p); await this.emit({ type: 'mill', p, cards: rest }); break;
+        }
         case 'gyToHand': {
           const ty = op.filter.replace(/\bcard\b/, '').trim(); const pool = p.graveyard.filter(c => c !== src && (!ty || ty.split(' ').every(w => w.startsWith('non') ? !c.type.toLowerCase().includes(w.slice(3)) : c.type.toLowerCase().includes(w))));
           const picks = await this.chooseFromList(p, src, pool, op.n, 'gyhand');
@@ -1075,7 +1087,8 @@ class AI {
     if (c.roles.includes('counter')) return -99; // never main-phase a counterspell
     if (c.roles.includes('protect') && c.isInstant) return -99; // protection is held for a wipe or removal
     const nonPerm = c.isInstant || c.isSorcery;
-    if (nonPerm && !c.roles.length && !c.dmg && !c.drawN && !c.gainN && !c.tokenCount && !c.tutor && !c.reanimate && !c.gyHate) return -50; // no effect we model: don't cast it blindly
+    if (nonPerm && !c.roles.length && !c.dmg && !c.drawN && !c.gainN && !c.tokenCount && !c.tutor && !c.reanimate && !c.gyHate && !c.spellOps) return -50;
+    if (c.spellOps) for (const op of c.spellOps) v += op.op === 'gyToHand' ? (me.graveyard.length ? Math.max(...me.graveyard.map(x => this.castValueRaw(game, me, x))) * 0.6 : -10) : op.op === 'dig' ? 2 : op.op === 'drain' ? op.n * 1.2 : op.op === 'landToHand' ? 1.5 : 0.5; // no effect we model: don't cast it blindly
     if (c.roles.includes('ramp')) v += game.round <= 4 ? 6 : 1;
     if (c.roles.includes('draw')) v += me.hand.length <= 3 ? 5 : 2;
     if (c.roles.includes('wipe')) { const oppPower = opps.reduce((s, q) => s + this.boardPower(game, q), 0); const myPower = this.boardPower(game, me); v += (oppPower >= myPower * 2 + 6 || opps.some(q => this.boardPower(game, q) >= me.life)) ? 10 : -12; }

@@ -653,7 +653,13 @@ class AI {
     }
     return out;
   }
-  keep(hand) { const lands = hand.filter(c => c.isLand).length; const cheap = hand.filter(c => !c.isLand && c.cmc <= 3).length; if (this.level === 'casual') return lands >= 2 && lands <= 5; return lands >= 2 && lands <= 5 && cheap >= 1; }
+  keep(hand, mulls = 0) {
+    const lands = hand.filter(c => c.isLand).length; const cheap = hand.filter(c => !c.isLand && c.cmc <= 3).length;
+    if (mulls >= 2) return lands >= 1 && lands <= 6;            // going to 5 or fewer is worse than a mediocre 7
+    if (mulls === 1) return lands >= 2 && lands <= 5 || (lands === 6 && cheap >= 1);
+    if (this.level === 'casual') return lands >= 2 && lands <= 5;
+    return lands >= 2 && lands <= 5 && cheap >= 1;
+  }
   bottomChoice(hand, n) {
     const lands = hand.filter(c => c.isLand), spells = hand.filter(c => !c.isLand).sort((a, b) => b.cmc - a.cmc);
     const out = []; while (out.length < n) { if (lands.length > 4) out.push(lands.pop()); else if (spells.length) out.push(spells.shift()); else out.push(lands.pop()); } return out;

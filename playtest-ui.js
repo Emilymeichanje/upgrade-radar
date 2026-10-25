@@ -164,7 +164,7 @@ class Table {
     const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: p => this.humanTurn(p), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p) };
     this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
     this.me = this.game.players.find(p => p.human) || null;
-    for (const p of this.game.players) if (p.ai) { let t = 0; while (!p.ai.keep(p.hand) && t < 3) { this.game.mulligan(p); t++; } if (t) this.game.bottomCards(p, p.ai.bottomChoice(p.hand, t)); }
+    for (const p of this.game.players) if (p.ai) { let t = 0; while (!p.ai.keep(p.hand, t) && t < 3) { this.game.mulligan(p); t++; } if (t) this.game.bottomCards(p, p.ai.bottomChoice(p.hand, t)); }
     if (this.me) await this.mulligan();
     this.render();
     try { await this.game.run(); } catch (e) { if (e.message !== 'abort') { console.error(e); this.addLog('Engine error: ' + e.message); } return; }

@@ -148,6 +148,11 @@ const STYLE = `
 .cz-cost{font:.68rem var(--mono);color:var(--muted)}
 .cz-empty{font-size:.72rem;color:var(--muted);text-align:center;padding:24px 0}
 .cmdz{display:flex;gap:6px;align-items:flex-end}
+.popt{position:relative}
+.olab{position:absolute;left:50%;bottom:4px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--accent);border-radius:4px;padding:0 5px;font:600 .62rem var(--mono);white-space:nowrap;max-width:96%;overflow:hidden;text-overflow:ellipsis}
+.abil-row{flex-wrap:wrap}
+.chip.abil{border-color:var(--accent)}
+.chip.abil small{color:var(--muted)}
 .sfind{width:min(320px,100%);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;margin:4px 0}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;max-height:340px;overflow-y:auto;padding:4px}
 .sopt{aspect-ratio:.716;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--soft);display:grid;place-items:center;font-size:.7rem;text-align:center;transition:transform .15s,box-shadow .15s}
@@ -203,7 +208,7 @@ class Table {
     this.el.innerHTML = `<div class="gt"><div class="gt-main"><div class="gt-board" id="gtb"></div><aside class="gt-side"><div class="pv" id="gtpv"><div class="ty">Hover a card to read it.</div></div><div class="gl" id="gtlog"></div></aside></div></div>`;
     this.board = this.el.querySelector('#gtb'); this.pv = this.el.querySelector('#gtpv'); this.logEl = this.el.querySelector('#gtlog');
     this.wire();
-    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c) };
+    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c) };
     this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
     this.buildCardIndex();
     this.me = this.game.players.find(p => p.human) || null;
@@ -293,6 +298,8 @@ class Table {
       case 'hit': { S('hit'); await this.anim(this.seatEl(e.defender), [{ translate: '0 0' }, { translate: '-6px 0' }, { translate: '6px 0' }, { translate: '0 0' }], 260); break; }
       case 'life': { this.render(); if (e.delta > 0) S('gain'); await this.floatText(this.q(`[data-life="${e.p.i}"]`), (e.delta > 0 ? '+' : '') + e.delta, e.delta > 0 ? 'var(--good)' : 'var(--bad)'); break; }
       case 'step': this.render(); break;
+      case 'trigger': { this.render(); S('cast'); const el = e.perm ? this.permEl(e.perm.id) : null; if (el) { el.classList.remove('ping'); void el.offsetWidth; el.classList.add('ping'); } await this.wait(e.p === me ? 250 : 350); break; }
+      case 'mill': this.render(); S('draw'); await this.wait(200); break;
       case 'tutor': this.render(); S('draw'); await this.wait(e.p === me ? 80 : 300); break;
       case 'reanimate': { this.render(); S('cast'); const el = this.q(`[data-uid="${e.card.uid}"]`); await this.anim(el, [{ opacity: 0, filter: 'brightness(3)', scale: 1.3 }, { opacity: 1, filter: 'none', scale: 1 }], 500); break; }
       case 'gyhate': this.render(); S('destroy'); await this.wait(250); break;
@@ -315,7 +322,7 @@ class Table {
     if (this.passUntilTurn && ctx.active !== me) return false;
     if (this.s.stops === 'minimal') return false;
     if (this.s.stops === 'all') return true;
-    const hasCast = ctx.options.some(o => o.kind === 'cast'), hasFetch = ctx.options.some(o => o.kind === 'fetch');
+    const hasCast = ctx.options.some(o => o.kind === 'cast'), hasFetch = ctx.options.some(o => o.kind === 'fetch' || o.kind === 'ability');
     const inCombat = ctx.attacks && (ctx.active === me || ctx.attacks.some(a => a.defender === me));
     if (hasCast && ((ctx.step === 'end' && ctx.active !== me) || ((ctx.step === 'declareAttackers' || ctx.step === 'declareBlockers') && inCombat))) return true;
     if (hasFetch && ((ctx.step === 'end' && g.after(ctx.active)[0] === me) || (ctx.active === me && ctx.step === 'upkeep'))) return true;
@@ -331,6 +338,22 @@ class Table {
     this.ff = false; this.sfx.play('prompt');
     const prev = this.prompt;
     return new Promise(res => { this.prompt = { kind, ...ctx, options: kind === 'alt' ? ctx.blues : kind === 'search' ? ctx.pool : [], res: v => { this.prompt = prev && prev.kind !== 'priority' ? prev : null; this.render(); res(v); } }; this.render(); });
+  }
+  engineNotes(c) {
+    const bits = [];
+    for (const t of c.triggers || []) bits.push(({ upkeep: 'upkeep', end: 'end step', landfall: 'landfall', dies: 'death' })[t.when] + ' trigger' + (t.zone === 'graveyard' ? ' (from graveyard)' : '') + ': ' + t.ops.map(o => o.op).join(', '));
+    if (c.etbOps) bits.push('enters: ' + c.etbOps.map(o => o.op).join(', '));
+    for (const a of c.abilities || []) bits.push((a.zone === 'battlefield' ? 'ability' : a.zone + ' ability') + ': ' + this.optLabel({ kind: 'ability', ab: a }));
+    if (c.gyCast) bits.push('castable from graveyard: ' + c.gyCast.kind);
+    if (c.doublesDeath) bits.push('doubles death triggers');
+    return bits.length ? `<div class="rl">Engine also runs: ${esc(bits.join(' · '))}</div>` : '';
+  }
+  costStr(c) { if (!c) return ''; let s = c.generic ? `{${c.generic}}` : ''; for (const k of 'WUBRG') s += `{${k}}`.repeat(c.pips[k] || 0); return s || '{0}'; }
+  optLabel(o) {
+    if (o.kind === 'fetch') return 'crack';
+    if (o.kind === 'cast') return o.zone === 'gy' ? (o.card.gyCast.kind + ' ' + this.costStr(o.card.gyCast.cost)) : 'cast';
+    if (o.kind === 'ability') { const ab = o.ab; const what = ab.label || ({ gyToHand: 'return a card to hand', draw: 'draw', landToHand: 'find a land', selfToBf: 'return to battlefield', selfToHand: 'return to hand', tokens: 'make tokens', gain: 'gain life', drain: 'drain', damage: 'deal damage', counters: '+1/+1 counters', destroy: 'destroy', gyToBf: 'reanimate', mill: 'mill', scry: 'scry', surveil: 'surveil', tokenCopy: 'token copy' }[ab.ops[0].op] || 'activate'); return `${what} ${this.costStr(ab.cost)}${ab.tap ? ' {T}' : ''}`; }
+    return '';
   }
   filterSearch(v) { const s = v.trim().toLowerCase(); for (const el of this.board.querySelectorAll('.sgrid .sopt')) el.style.display = !s || el.dataset.name.includes(s) ? '' : 'none'; }
   humanChooseFetch(p, card, pool, n) {
@@ -385,7 +408,7 @@ class Table {
   preview(uid, keepCtx = false) {
     const c = this.findCard(uid); if (!c || this.pvUid === uid) return; this.pvUid = uid;
     if (!keepCtx) this.pinnedCtx = null;
-    this.pv.innerHTML = (this.pinnedCtx || '') + `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}`;
+    this.pv.innerHTML = (this.pinnedCtx || '') + `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}${this.engineNotes(c)}`;
   }
   onClick(e) {
     const t = e.target; const g = this.game, me = this.me; if (!g) return;
@@ -395,6 +418,11 @@ class Table {
     const btn = t.closest('[data-act]'); if (btn) { this.sfx.play('click'); return this.action(btn.dataset.act, btn); }
     const P = this.prompt;
     // prompt option cards
+    const po = t.closest('[data-popt]'); if (po && P && P.kind === 'priority') {
+      const o = P.options[+po.dataset.popt]; if (!o) return;
+      if (o.kind === 'cast' && this.needsTarget(o.card)) { this.mode = { kind: 'target', card: o.card, zone: o.zone || 'hand', respond: true, players: !!o.card.dmg && !o.card.roles.includes('removal') }; this.render(); return; }
+      return P.res(o);
+    }
     const opt = t.closest('[data-opt]'); if (opt && P) {
       const card = (P.options || []).map(o => o.card || o).find(c => c.uid === +opt.dataset.opt); if (!card) return;
       if (P.kind === 'counter') return P.res({ card });
@@ -439,7 +467,7 @@ class Table {
   }
   finishTarget(target) {
     const m = this.mode; this.mode = null;
-    if (m.respond && this.prompt) return this.prompt.res(this.prompt.kind === 'priority' ? { kind: 'cast', card: m.card, target } : { card: m.card, target });
+    if (m.respond && this.prompt) return this.prompt.res(this.prompt.kind === 'priority' ? { kind: 'cast', card: m.card, target, zone: m.zone } : { card: m.card, target });
     this.act(() => this.game.cast(this.me, m.card, m.zone, target));
   }
   action(a, btn) {
@@ -457,6 +485,8 @@ class Table {
     if (a === 'atk-go' && this.mode && this.mode.kind === 'attack') { const asg = [...this.mode.map].map(([attacker, defender]) => ({ attacker, defender })); this.mode = null; if (this.endTurn) this.endTurn({ action: 'attack', assignments: asg }); return; }
     if (P && P.kind === 'etb' && (a === 'etb-pay' || a === 'etb-tap')) { P.res(a === 'etb-pay'); return; }
     if (P && P.kind === 'unless' && (a === 'unless-pay' || a === 'unless-no')) { P.res(a === 'unless-pay'); return; }
+    if (P && P.kind === 'may' && (a === 'may-yes' || a === 'may-no')) { P.res(a === 'may-yes'); return; }
+    if (a === 'abil' && this.myTurn && !this.busy && !P) { const o = (this.mainOpts || [])[+btn.dataset.i]; if (!o) return; if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => g.doAction(me, { ...o, instant: false })); }
     if (P && P.kind === 'search' && a === 'search-go') { P.res(P.sel.slice()); return; }
     if (P && P.kind === 'search' && a === 'search-none') { P.res([]); return; }
     if (P && P.kind === 'player' && a === 'pick-player') { P.res(g.players[+btn.dataset.p]); return; }
@@ -533,21 +563,23 @@ class Table {
       else if (P.kind === 'block') { const incoming = P.attacks.filter(a => !P.map.has(a.attacker) || a.attacker.card.kw.includes('trample')).reduce((s, a) => s + g.powerOf(P.attacker, a.attacker), 0);
         prm = `<div class="prm"><h4>Declare blockers — ${esc(short(P.attacker.name))} is attacking you</h4><div class="gt-ctl"><span class="msg">Click one of your untapped creatures, then the attacker it blocks. Unblocked damage: <b>${incoming}</b> (you're at ${me.life}).</span><button class="chip pri" data-act="block-go">Confirm blocks</button></div></div>`; }
       else if (P.kind === 'priority') { const stepN = { upkeep: 'upkeep', draw: 'draw step', beginCombat: 'beginning of combat', declareAttackers: 'declare attackers', declareBlockers: 'declare blockers', end: 'end step' }[P.step] || P.step; const whose = P.active === me ? 'your' : esc(short(P.active.name)) + "'s";
-        prm = `<div class="prm"><h4>Priority — ${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}. Use an effect?</h4><div class="opts">${opts}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass</button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn</button>` : ''}<span class="msg">Fetchlands crack here; instants and flash cards cast here.</span></div></div>`; }
+        prm = `<div class="prm"><h4>Priority — ${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}. Use an effect?</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass</button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn</button>` : ''}<span class="msg">Fetchlands, instants, flash cards, abilities and graveyard spells are used here.</span></div></div>`; }
       else if (P.kind === 'fetch') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a land to put onto the battlefield</h4><div class="opts">${opts}</div></div>`;
       else if (P.kind === 'etb') { const en = P.enables || []; const thumbs = en.map(c => `<div class="opt" data-uid="${c.uid}" style="cursor:default">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`).join('');
         prm = `<div class="prm"><h4>${esc(P.card.name)}: pay ${P.life} life so it enters untapped? (you're at ${me.life})</h4>${en.length ? `<div class="opts">${thumbs}</div>` : ''}<div class="gt-ctl"><button class="chip ${en.length ? 'pri' : ''}" data-act="etb-pay">Pay ${P.life} life</button><button class="chip ${en.length ? '' : 'pri'}" data-act="etb-tap">Enter tapped</button><span class="msg">${en.length ? `Untapped, it lets you cast ${en.map(c => esc(c.name)).join(', ')} this turn.` : `The extra mana doesn't make anything castable ${this.game.players[this.game.active] === me ? 'this turn' : 'right now'}; it untaps on your turn anyway.`}</span></div></div>`; }
       else if (P.kind === 'unless') prm = `<div class="prm"><h4>${esc(P.counter.name)} will counter your ${esc(P.spell.card.name)} unless you pay {${P.n}}.</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Let it be countered</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
       else if (P.kind === 'alt') prm = `<div class="prm"><h4>Cast ${esc(P.card.name)}: ${P.canMana ? 'pay its mana cost, or ' : ''}exile a blue card from your hand and pay 1 life (click the card to exile)</h4><div class="opts">${opts}</div><div class="gt-ctl">${P.canMana ? `<button class="chip pri" data-act="alt-mana">Pay mana</button>` : ''}<button class="chip" data-act="alt-cancel">Cancel</button></div></div>`;
       else if (P.kind === 'search') {
-        const dest = { hand: 'put into your hand', graveyard: 'put into your graveyard', top: 'put on top of your library', battlefield: 'put onto the battlefield', reanimate: 'return to the battlefield' }[P.dest];
+        const dest = { hand: 'put into your hand', graveyard: 'put into your graveyard', top: 'put on top of your library', battlefield: 'put onto the battlefield', reanimate: 'return to the battlefield', gyhand: 'return from your graveyard to your hand', land: 'put into your hand', scry: 'put on the bottom (the rest stay on top)', surveil: 'put into your graveyard (the rest stay on top)', damage: 'deal damage to', destroy: 'destroy', counters: 'get the counters' }[P.dest] || P.dest;
+        const fromLib = ['hand', 'graveyard', 'top', 'battlefield', 'land'].includes(P.dest), peek = P.dest === 'scry' || P.dest === 'surveil';
         const list = [...P.pool].sort((a, b) => a.name.localeCompare(b.name));
-        const seen = new Set(); const uniq = list.filter(c => P.n > 1 || (!seen.has(c.name) && seen.add(c.name)));
+        const seen = new Set(); const uniq = (peek ? [...P.pool] : list).filter(c => P.n > 1 || !fromLib || (!seen.has(c.name) && seen.add(c.name)));
         const grid = uniq.map(c => `<div class="sopt ${P.sel.includes(c) ? 'sel' : ''}" data-opt="${c.uid}" data-uid="${c.uid}" data-name="${esc(c.name.toLowerCase())}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}</div>`).join('');
-        prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.n > 1 ? 'up to ' + P.n + ' cards' : 'a card'} to ${dest}${P.dest === 'reanimate' ? '' : ` (${P.pool.length} match${P.pool.length === 1 ? '' : 'es'} in your library)`}</h4>
+        prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.n > 1 ? 'up to ' + P.n + ' cards' : 'a card'} to ${dest}${fromLib ? ` (${P.pool.length} match${P.pool.length === 1 ? '' : 'es'} in your library)` : ''}</h4>
           <input class="sfind" placeholder="Filter by name…" oninput="GoldfishUI.current.filterSearch(this.value)" autocomplete="off">
           <div class="sgrid">${grid}</div>
-          <div class="gt-ctl">${P.n > 1 ? `<button class="chip pri" data-act="search-go">Done (${P.sel.length}/${P.n})</button>` : ''}${P.dest !== 'reanimate' ? `<button class="chip" data-act="search-none">Find nothing</button>` : ''}<span class="msg">Hover a card to read it${P.n > 1 ? '; click to select or unselect' : '; click to choose'}.</span></div></div>`; }
+          <div class="gt-ctl">${P.n > 1 ? `<button class="chip pri" data-act="search-go">Done (${P.sel.length}/${P.n})</button>` : ''}${fromLib ? `<button class="chip" data-act="search-none">Find nothing</button>` : peek ? '' : `<button class="chip" data-act="search-none">Skip</button>`}<span class="msg">Hover a card to read it${P.n > 1 ? '; click to select or unselect' : '; click to choose'}.</span></div></div>`; }
+      else if (P.kind === 'may') prm = `<div class="prm"><h4>${esc(P.card.name)}: use this optional trigger?</h4><div class="gt-ctl"><button class="chip pri" data-act="may-yes">Yes</button><button class="chip" data-act="may-no">No</button></div></div>`;
       else if (P.kind === 'player') prm = `<div class="prm"><h4>${esc(P.why)}</h4><div class="gt-ctl">${P.players.map(q => `<button class="chip ${q === me ? '' : 'pri'}" data-act="pick-player" data-p="${q.i}">${esc(short(q.name))} (${q.graveyard.length} card${q.graveyard.length === 1 ? '' : 's'}${q.graveyard.filter(c => c.isCreature).length ? ', ' + q.graveyard.filter(c => c.isCreature).length + ' creatures' : ''})</button>`).join('')}</div></div>`;
       else if (P.kind === 'discard') prm = `<div class="prm"><h4>Discard down to 7: click a card in your hand.</h4></div>`;
       else if (P.kind === 'mull') { const lands = me.hand.filter(c => c.isLand).length; prm = `<div class="prm"><h4>Opening hand: ${me.hand.length} cards, ${lands} land${lands === 1 ? '' : 's'}${P.n ? ` — you'll bottom ${P.n}` : ''}</h4>${P.confirm ? `<div class="gt-ctl"><span class="msg">Shuffle this hand away and draw ${7} new cards? You'll put ${P.n + 1} on the bottom.</span><button class="chip warn" data-act="mull-yes">Yes, mulligan</button><button class="chip pri" data-act="mull-back">Back to this hand</button></div>` : `<div class="gt-ctl"><button class="chip pri" data-act="keep">Keep</button><button class="chip" data-act="mull">Mulligan</button></div>`}</div>`; }
@@ -561,7 +593,9 @@ class Table {
       const combatPhase = this.turnPhase === 'main1' || this.turnPhase === 'combat2';
       const canAtk = combatPhase && me.battlefield.some(b => g.canAttackWith(me, b));
       const fetchHint = me.battlefield.some(b => b.card.fetch && g.canActivate(me, b)) ? ' · click a glowing fetchland to crack it' : '';
-      ctl = `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint}</span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>`; }
+      this.mainOpts = this.busy ? [] : [...g.gyCastOptions(me), ...g.abilityOptions(me)];
+      const abil = this.mainOpts.length ? `<div class="gt-ctl abil-row"><span class="msg">Abilities:</span>${this.mainOpts.map((o, i) => `<button class="chip abil" data-act="abil" data-i="${i}" data-uid="${o.card.uid}">${esc(short(o.card.name))} · ${esc(this.optLabel(o))}${o.card.abilities && o.ab && o.ab.zone !== 'battlefield' ? ` <small>(${o.ab.zone})</small>` : o.zone === 'gy' ? ' <small>(graveyard)</small>' : ''}</button>`).join('')}</div>` : '';
+      ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint}</span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>`; }
     // hand
     let handBar = '';
     if (me) {

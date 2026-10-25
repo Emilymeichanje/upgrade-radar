@@ -136,7 +136,20 @@ const STYLE = `
 .hcd.can{cursor:pointer;box-shadow:0 0 0 2px var(--accent),0 0 10px color-mix(in srgb,var(--accent) 60%,transparent)}
 .hcd:hover{transform:translateY(-22px) scale(1.18);z-index:5}
 .hcd.sel{transform:translateY(-14px);box-shadow:0 0 0 3px var(--warn)}
+.gs-body{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start}
+.gs-main{display:grid;gap:6px;min-width:0}
+.cz{width:calc(var(--hand) * .9);display:grid;gap:4px;justify-items:center;padding:6px;border:1px dashed var(--line);border-radius:8px;background:color-mix(in srgb,var(--bg) 60%,transparent)}
+.cz-l{font:600 .62rem var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.czc{width:100%;aspect-ratio:.716;border-radius:7px;overflow:hidden;cursor:not-allowed;transition:transform .18s,box-shadow .18s}
+.czc img{width:100%;height:100%;object-fit:cover;pointer-events:none}
+.czc.can{cursor:pointer;box-shadow:0 0 0 2px var(--accent),0 0 10px color-mix(in srgb,var(--accent) 60%,transparent)}
+.czc:hover{transform:scale(1.06)}
+.cz-cost{font:.68rem var(--mono);color:var(--muted)}
+.cz-empty{font-size:.72rem;color:var(--muted);text-align:center;padding:24px 0}
 .cmdz{display:flex;gap:6px;align-items:flex-end}
+.gt-ctl .chip.pri{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.gt-ctl .chip.warn{background:var(--warn);color:#111;border-color:var(--warn)}
+.gt-ctl .chip:disabled{opacity:.45;cursor:not-allowed}
 .cmdz .hcd{margin-left:0}
 .gt-side{display:grid;gap:10px;position:sticky;top:calc(env(safe-area-inset-top,0px) + 130px)}
 .pv{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;display:grid;gap:8px}
@@ -384,8 +397,11 @@ class Table {
     if (a === 'pass-turn' && P) { this.passUntilTurn = true; P.res(null); return; }
     if (a === 'pass' && P) { P.res(null); return; }
     if (a === 'block-go' && P && P.kind === 'block') { P.res(P.map); return; }
-    if (a === 'keep' && P && P.kind === 'mull') { if (P.n) { this.prompt = { kind: 'mull-bottom', n: P.n, sel: [], done: P.res }; this.render(); } else P.res(); return; }
-    if (a === 'mull' && P && P.kind === 'mull') { g.mulligan(me); P.n++; this.render(); return; }
+    if (a === 'keep' && P && P.kind === 'mull') { if (P.n) { this.prompt = { kind: 'mull-bottom', n: P.n, sel: [], done: P.res, from: P }; this.render(); } else P.res(); return; }
+    if (a === 'mull' && P && P.kind === 'mull') { P.confirm = true; this.render(); return; }
+    if (a === 'mull-back' && P && P.kind === 'mull') { P.confirm = false; this.render(); return; }
+    if (a === 'mull-yes' && P && P.kind === 'mull' && P.confirm) { P.confirm = false; g.mulligan(me); P.n++; this.render(); return; }
+    if (a === 'bottom-back' && P && P.kind === 'mull-bottom') { this.prompt = P.from; this.render(); return; }
     if (a === 'bottom-go' && P && P.kind === 'mull-bottom' && P.sel.length === P.n) { g.bottomCards(me, P.sel); const done = P.done; this.prompt = null; done(); return; }
     if (a === 'rematch') { this.opts.onRematch && this.opts.onRematch(); return; }
     if (a === 'setup') { this.opts.onExit && this.opts.onExit(); return; }
@@ -422,9 +438,15 @@ class Table {
       <div class="gs-h"><div class="av" style="background-image:url('${esc(p.art || '')}')"></div><div class="nm"><b>${esc(short(p.name))}</b><small>${esc(p.deckName)}${p.level ? ' · ' + esc(p.level) : ''}</small></div><div class="lf ${p.life <= 10 ? 'low' : ''} ${tgtLife ? 'tgt' : ''}" data-life="${p.i}">${p.life}</div></div>
       <div class="gs-meta"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><span>gy ${p.graveyard.length}</span>${p.command.length ? `<span>cmd zone: ${esc(p.command.map(c => c.name.split(',')[0]).join(', '))}${p.cmdTax ? ' +' + p.cmdTax : ''}</span>` : ''}${cmdDmg}</div>
       ${threat !== null ? `<div class="thr" title="Threat to you: ${threat.toFixed(0)}"><i style="width:${Math.min(100, threat / maxT * 100)}%"></i></div>` : ''}
-      <div class="gs-bf">${nonl.map(b => this.tile(b, p)).join('') || '<span class="gs-meta">no permanents</span>'}</div>
+      ${isMe ? '<div class="gs-body"><div class="gs-main">' : ''}<div class="gs-bf">${nonl.map(b => this.tile(b, p)).join('') || '<span class="gs-meta">no permanents</span>'}</div>
       <div class="gs-lands">${[...groups].map(([name, bs]) => { const un = bs.filter(b => !b.tapped).length; const c = bs[0].card; const canAct = isMe && bs.some(b => b.card.fetch && g.canActivate(p, b)) && ((this.myTurn && !this.busy && !this.prompt) || (this.prompt && this.prompt.kind === 'priority')); return `<div class="gc lg ${un === 0 ? 't' : ''} ${canAct ? 'act' : ''}" data-lg="${p.i}:${esc(name)}" data-uid="${c.uid}" title="${esc(name)}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(name)}" loading="lazy">` : `<span>${esc(name)}</span>`}<span class="cnt">${c.fetch ? (canAct ? 'crack' : bs.length > 1 ? '×' + bs.length : 'fetch') : un + '/' + bs.length}</span></div>`; }).join('')}</div>
-    </section>`;
+    ${isMe ? `</div>${this.cmdZone(p)}</div>` : ''}</section>`;
+  }
+  cmdZone(p) {
+    const g = this.game, P = this.prompt;
+    const cards = p.command.map(c => { const can = this.myTurn && !this.busy && !P && g.castMode(p, c, 'cmd'); const cost = g.costOf(p, c, 'cmd');
+      return `<div class="czc ${can ? 'can' : ''}" data-cmd="${c.uid}" data-uid="${c.uid}" title="${esc(c.name)} — click to cast">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<span>${esc(c.name)}</span>`}</div><div class="cz-cost">${cost.total} mana${p.cmdTax ? ` (tax +${p.cmdTax})` : ''}</div>`; }).join('');
+    return `<aside class="cz"><div class="cz-l">Command zone</div>${cards || `<div class="cz-empty">${p.battlefield.some(b => b.card.isCommander) ? 'Commander on the battlefield' : 'Empty'}</div>`}</aside>`;
   }
   phaseLabel() { const g = this.game; return { untap: 'untap', main1: 'main phase', combat: 'combat', main2: 'second main', end: 'end step', setup: 'setup' }[g.phase] || g.phase; }
   render() {
@@ -450,8 +472,8 @@ class Table {
       else if (P.kind === 'unless') prm = `<div class="prm"><h4>${esc(P.counter.name)} will counter your ${esc(P.spell.card.name)} unless you pay {${P.n}}.</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Let it be countered</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
       else if (P.kind === 'alt') prm = `<div class="prm"><h4>Cast ${esc(P.card.name)}: ${P.canMana ? 'pay its mana cost, or ' : ''}exile a blue card from your hand and pay 1 life (click the card to exile)</h4><div class="opts">${opts}</div><div class="gt-ctl">${P.canMana ? `<button class="chip pri" data-act="alt-mana">Pay mana</button>` : ''}<button class="chip" data-act="alt-cancel">Cancel</button></div></div>`;
       else if (P.kind === 'discard') prm = `<div class="prm"><h4>Discard down to 7: click a card in your hand.</h4></div>`;
-      else if (P.kind === 'mull') { const lands = me.hand.filter(c => c.isLand).length; prm = `<div class="prm"><h4>Opening hand: ${me.hand.length} cards, ${lands} land${lands === 1 ? '' : 's'}${P.n ? ` — you'll bottom ${P.n}` : ''}</h4><div class="gt-ctl"><button class="chip pri" data-act="keep">Keep</button><button class="chip" data-act="mull">Mulligan</button></div></div>`; }
-      else if (P.kind === 'mull-bottom') prm = `<div class="prm"><h4>Choose ${P.n} card${P.n > 1 ? 's' : ''} to put on the bottom (${P.sel.length}/${P.n})</h4><div class="gt-ctl"><button class="chip pri" data-act="bottom-go" ${P.sel.length === P.n ? '' : 'disabled'}>Done</button></div></div>`;
+      else if (P.kind === 'mull') { const lands = me.hand.filter(c => c.isLand).length; prm = `<div class="prm"><h4>Opening hand: ${me.hand.length} cards, ${lands} land${lands === 1 ? '' : 's'}${P.n ? ` — you'll bottom ${P.n}` : ''}</h4>${P.confirm ? `<div class="gt-ctl"><span class="msg">Shuffle this hand away and draw ${7} new cards? You'll put ${P.n + 1} on the bottom.</span><button class="chip warn" data-act="mull-yes">Yes, mulligan</button><button class="chip pri" data-act="mull-back">Back to this hand</button></div>` : `<div class="gt-ctl"><button class="chip pri" data-act="keep">Keep</button><button class="chip" data-act="mull">Mulligan</button></div>`}</div>`; }
+      else if (P.kind === 'mull-bottom') prm = `<div class="prm"><h4>Choose ${P.n} card${P.n > 1 ? 's' : ''} to put on the bottom (${P.sel.length}/${P.n})</h4><div class="gt-ctl"><button class="chip pri" data-act="bottom-go" ${P.sel.length === P.n ? '' : 'disabled'}>Done</button><button class="chip" data-act="bottom-back">Back</button><span class="msg">Click a selected card again to unselect it.</span></div></div>`;
     }
     // controls
     let ctl = '';
@@ -467,8 +489,8 @@ class Table {
     if (me) {
       const sel = P && P.kind === 'mull-bottom' ? P.sel : [];
       const hand = me.hand.map(c => { const can = (this.myTurn && !this.busy && !P && (c.isLand ? me.landsThisTurn < 1 : !c.roles.includes('counter') && g.castMode(me, c, 'hand'))) || (P && (P.kind === 'discard' || P.kind === 'mull-bottom')); return `<div class="hcd ${can ? 'can' : ''} ${sel.includes(c) ? 'sel' : ''}" data-hand="${c.uid}" data-uid="${c.uid}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(c.name)}</div>`}</div>`; }).join('');
-      const cmd = me.command.map(c => { const can = this.myTurn && !this.busy && !P && g.castMode(me, c, 'cmd'); return `<div class="hcd ${can ? 'can' : ''}" data-cmd="${c.uid}" data-uid="${c.uid}" title="Commander${me.cmdTax ? ' (tax ' + me.cmdTax + ')' : ''}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`; }).join('');
-      handBar = `<div class="gt-hand">${cmd ? `<div class="cmdz">${cmd}</div><div style="width:18px;flex:none"></div>` : ''}${hand}</div>`;
+      const cmdUnused = me.command.map(c => { const can = this.myTurn && !this.busy && !P && g.castMode(me, c, 'cmd'); return `<div class="hcd ${can ? 'can' : ''}" data-cmd="${c.uid}" data-uid="${c.uid}" title="Commander${me.cmdTax ? ' (tax ' + me.cmdTax + ')' : ''}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`; }).join('');
+      handBar = `<div class="gt-hand">${hand}</div>`;
     }
     // overlays
     let over = '';

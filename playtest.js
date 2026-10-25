@@ -27,6 +27,20 @@ function manaInfo(cost) {
 }
 const NUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, x: 3 };
 
+const words = s => s.split(/,? or an? |, an? |, | or /).map(w => w.replace(/^an? /, '').trim()).filter(Boolean);
+/** how a land enters: optional choices (pay life, reveal) and conditions (check / fast / slow lands) */
+function tagLandEntry(card, o) {
+  const lm = o.match(/you may pay (\d+) life\. if you don't, (it|this land) enters tapped/);
+  card.etbLife = lm ? +lm[1] : 0; card.shock = !!lm;
+  const rv = o.match(/you may reveal an? ([a-z ,]+?) card from your hand\. if you don't, (it|this land) enters tapped/);
+  card.reveal = rv ? words(rv[1]) : null;
+  const ck = o.match(/enters (the battlefield )?tapped unless you control an? ([a-z ,]+?)(\.|\n|$)/);
+  card.etbCond = /unless you control two or fewer other lands/.test(o) ? { kind: 'fewLands' }
+    : /unless you control two or more other lands/.test(o) ? { kind: 'manyLands' }
+    : /unless you have two or more opponents/.test(o) ? { kind: 'opps' }
+    : ck && !/\blands?$/.test(ck[2]) ? { kind: 'control', words: words(ck[2]) } : null;
+  card.etbTapped = !card.shock && !card.reveal && !card.etbCond && /enters (the battlefield )?tapped/.test(o) && !/unless/.test(o);
+}
 function tagCard(c) {
   const t = c.type || '', o = (c.oracle || '').toLowerCase();
   const front = t.split(' // ')[0];
@@ -59,8 +73,7 @@ function tagCard(c) {
     for (const col of 'WUBRG') if (new RegExp('add \\{' + col + '\\}|\\{t\\}: add \\{[^}]*' + col, 'i').test(o) || new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front)) card.produces.push(col);
     if (/add one mana of any color|mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|path of ancestry/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
     if (!card.produces.length) card.produces = ['C'];
-    card.shock = /you may pay 2 life\. if you don't, it enters tapped/i.test(o);
-    card.etbTapped = !card.shock && /enters (the battlefield )?tapped/i.test(o) && !/unless/i.test(o);
+    tagLandEntry(card, o);
     return card;
   }
   const r = card.roles;
@@ -176,27 +189,77 @@ class Game {
     if (card.isLand) return null;
     if (instant && !card.flash) return null;
     if (!instant && this.stack.length) return null;
+    const free = this.freeMode(p, card);
+    if (free && card.counter.free === 'commander') return 'free'; // no downside: never pay mana for it
     if (this.canPayCost(p, this.costOf(p, card, zone))) return 'mana';
+    return free;
+  }
+  freeMode(p, card) {
     const f = card.counter && card.counter.free;
     if (f === 'pitch' || (f === 'pitchNotTurn' && this.players[this.active] !== p)) { if (p.hand.some(c => c !== card && c.colors.includes('U'))) return 'free'; }
     if (f === 'commander' && p.battlefield.some(b => b.card.isCommander)) return 'free';
     return null;
   }
+  /** cards that become castable this turn only if `perm` is untapped */
+  enabledBy(p, perm) {
+    const myTurn = this.players[this.active] === p && this.phase !== 'end';
+    const pool = [...p.hand.filter(c => !c.isLand).map(c => [c, 'hand']), ...p.command.map(c => [c, 'cmd'])];
+    const can = () => new Set(pool.filter(([c, z]) => (myTurn || c.flash) && this.canPayCost(p, this.costOf(p, c, z))).map(([c]) => c));
+    const was = perm.tapped; perm.tapped = true; const before = can(); perm.tapped = false; const after = can(); perm.tapped = was;
+    return [...after].filter(c => !before.has(c));
+  }
+  wouldEnterTapped(p, card) {
+    if (card.etbTapped) return true;
+    if (card.etbCond && !this.condMet(p, card.etbCond)) return true;
+    if (card.reveal && !p.hand.some(c => c !== card && card.reveal.some(w => c.type.toLowerCase().includes(w)))) return true;
+    return false;
+  }
+  condMet(p, cond) {
+    const lands = p.battlefield.filter(b => b.card.isLand).length;
+    if (cond.kind === 'fewLands') return lands <= 2;
+    if (cond.kind === 'manyLands') return lands >= 2;
+    if (cond.kind === 'opps') return this.opponentsOf(p).length >= 2;
+    if (cond.kind === 'control') return p.battlefield.some(b => cond.words.some(w => b.card.type.toLowerCase().includes(w)));
+    return true;
+  }
+  /** a land enters the battlefield, resolving its optional / conditional "enters tapped" text. returns [perm, notes] */
+  async landEnters(p, card, tapped = false) {
+    const perm = { id: UID++, card, tapped: tapped || !!card.etbTapped, summoning: false, counters: 0 }; const notes = [];
+    if (!perm.tapped && card.etbCond && !this.condMet(p, card.etbCond)) { perm.tapped = true; notes.push('tapped'); }
+    if (!perm.tapped && card.reveal) { const r = p.hand.find(c => c !== card && card.reveal.some(w => c.type.toLowerCase().includes(w))); if (r) notes.push('reveals ' + r.name); else { perm.tapped = true; notes.push('tapped, nothing to reveal'); } }
+    p.battlefield.push(perm);
+    if (!perm.tapped && card.shock) {
+      perm.tapped = true; const n = card.etbLife;
+      let pay = false;
+      if (p.life > n) pay = p.human ? (this.hooks.humanETB ? !!(await this.hooks.humanETB({ p, card, perm, life: n, enables: this.enabledBy(p, perm) })) : false) : p.ai ? p.ai.payLifeForLand(this, p, card, perm) : false;
+      if (pay) { perm.tapped = false; await this.changeLife(p, -n, card); notes.push(`paid ${n} life`); } else notes.push('tapped');
+    }
+    return [perm, notes];
+  }
+  async choosePayUnless(payer, victim, counterCard, n) {
+    if (payer.human) return this.hooks.humanPayUnless ? !!(await this.hooks.humanPayUnless({ p: payer, spell: victim, counter: counterCard, n })) : true;
+    return payer.ai ? payer.ai.payUnless(this, payer, victim, n) : true;
+  }
   // ---------- casting with priority ----------
   async playLand(p, card) {
     const i = p.hand.indexOf(card); if (i < 0 || p.landsThisTurn >= 1 || !card.isLand) return false;
-    p.hand.splice(i, 1); const perm = { id: UID++, card, tapped: !!card.etbTapped, summoning: false, counters: 0 }; p.battlefield.push(perm); p.landsThisTurn++;
-    if (card.shock) { if (p.life > 6) { p.life -= 2; this.say(`pays 2 life for ${card.name}`, p); } else perm.tapped = true; }
-    this.say(`plays ${card.name}`, p); await this.emit({ type: 'land', p, card, perm }); return true;
+    p.hand.splice(i, 1); p.landsThisTurn++;
+    const [perm, notes] = await this.landEnters(p, card);
+    this.say(`plays ${card.name}${notes.length ? ' (' + notes.join(', ') + ')' : card.etbTapped ? ' (tapped)' : ''}`, p); await this.emit({ type: 'land', p, card, perm }); return true;
   }
   /** cast a spell; returns true if it resolved. target: perm (with .owner) or player */
   async cast(p, card, zone = 'hand', target = null, { instant = false, depth = 0 } = {}) {
-    const mode = this.castMode(p, card, zone, { instant }); if (!mode) return false;
+    let mode = this.castMode(p, card, zone, { instant }); if (!mode) return false;
+    let exile = null;
+    if (p.human && card.counter && card.counter.free && card.counter.free.startsWith('pitch') && this.freeMode(p, card) && this.hooks.humanAltCost) {
+      const canMana = this.canPayCost(p, this.costOf(p, card, zone)), blues = p.hand.filter(c => c !== card && c.colors.includes('U'));
+      if (canMana || blues.length > 1) { const r = await this.hooks.humanAltCost({ p, card, canMana, blues }); if (!r) return false; mode = r.mode; exile = r.exile || null; }
+    }
     const src = zone === 'cmd' ? p.command : p.hand; const i = src.indexOf(card); if (i < 0) return false;
     src.splice(i, 1);
     if (mode === 'mana') this.payCost(p, this.costOf(p, card, zone));
     else if (card.counter.free.startsWith('pitch')) { // exile the least valuable other blue card, pay 1 life
-      const blues = p.hand.filter(c => c.colors.includes('U')).sort((a, b) => a.cmc - b.cmc); const ex = blues[0]; p.hand.splice(p.hand.indexOf(ex), 1); p.exile.push(ex); p.life -= 1;
+      const blues = p.hand.filter(c => c.colors.includes('U')).sort((a, b) => a.cmc - b.cmc); const ex = exile && p.hand.includes(exile) ? exile : blues[0]; p.hand.splice(p.hand.indexOf(ex), 1); p.exile.push(ex); p.life -= 1;
       this.say(`exiles ${ex.name} to cast ${card.name} for free`, p);
     }
     if (zone === 'cmd') p.cmdTax += 2;
@@ -231,7 +294,7 @@ class Game {
     // counterspell resolving against a spell on the stack
     if (card.roles.includes('counter') && target && target.spell) {
       const victim = target.spell;
-      if (card.counter.unless && victim.caster && this.canPayCost(victim.caster, { generic: card.counter.unless, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: card.counter.unless })) {
+      if (card.counter.unless && victim.caster && this.canPayCost(victim.caster, { generic: card.counter.unless, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: card.counter.unless }) && await this.choosePayUnless(victim.caster, victim, card, card.counter.unless)) {
         this.payCost(victim.caster, { generic: card.counter.unless, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: card.counter.unless });
         this.say(`pays {${card.counter.unless}} for ${card.name}`, victim.caster); await this.emit({ type: 'paid', p: victim.caster, n: card.counter.unless });
       } else victim.countered = true;
@@ -301,10 +364,8 @@ class Game {
     const landsNow = p.battlefield.filter(b => b.card.isLand).length;
     for (const land of picks.slice(0, f.count)) {
       const i = p.library.indexOf(land); if (i < 0) continue; p.library.splice(i, 1);
-      const pm = { id: UID++, card: land, tapped: (f.tapped && !(f.untapIf4 && landsNow + 1 >= 4)) || !!land.etbTapped, summoning: false, counters: 0 };
-      p.battlefield.push(pm);
-      if (land.shock && !pm.tapped) { if (p.life > 6) { p.life -= 2; this.say(`pays 2 life for ${land.name}`, p); } else pm.tapped = true; }
-      this.say(`cracks ${perm.card.name} → ${land.name}${pm.tapped ? ' (tapped)' : ''}`, p);
+      const [pm, notes] = await this.landEnters(p, land, f.tapped && !(f.untapIf4 && landsNow + 1 >= 4));
+      this.say(`cracks ${perm.card.name} → ${land.name}${notes.length ? ' (' + notes.join(', ') + ')' : pm.tapped ? ' (tapped)' : ''}`, p);
       await this.emit({ type: 'land', p, card: land, perm: pm, fetched: true });
     }
     if (!picks.length) this.say(`cracks ${perm.card.name} and finds nothing`, p);
@@ -640,16 +701,21 @@ class AI {
     return v;
   }
   chooseDiscard(game, p) { return [...p.hand].sort((a, b) => this.castValue(game, p, a) - this.castValue(game, p, b))[0]; }
-  chooseLand(me) {
+  chooseLand(me, game) {
     const lands = me.hand.filter(c => c.isLand); if (!lands.length) return null;
     const have = new Set(me.battlefield.filter(b => b.card.isLand).flatMap(b => b.card.produces));
     const need = new Set([...me.hand, ...me.command].filter(c => !c.isLand).flatMap(c => c.colors));
-    return lands.sort((a, b) => { const fa = a.produces.filter(x => need.has(x) && !have.has(x)).length, fb = b.produces.filter(x => need.has(x) && !have.has(x)).length; if (fb !== fa) return fb - fa; return (a.etbTapped ? 1 : 0) - (b.etbTapped ? 1 : 0); })[0];
+    return lands.sort((a, b) => { const fa = a.produces.filter(x => need.has(x) && !have.has(x)).length, fb = b.produces.filter(x => need.has(x) && !have.has(x)).length; if (fb !== fa) return fb - fa; const ta = game ? game.wouldEnterTapped(me, a) : a.etbTapped, tb = game ? game.wouldEnterTapped(me, b) : b.etbTapped;
+      if (ta !== tb && (game ? game.round <= 2 || this.needManaNow(game, me) : true)) return (ta ? 1 : 0) - (tb ? 1 : 0);
+      // nothing to cast this turn: get the tapped land / slow land out of the way now
+      if (ta !== tb) return (tb ? 1 : 0) - (ta ? 1 : 0);
+      if (a.etbCond && a.etbCond.kind === 'fewLands' && !(b.etbCond && b.etbCond.kind === 'fewLands')) return -1; // fast lands: play early
+      return 0; })[0];
   }
   /** main phase: (main1) crack fetches, land drop; then spend mana by value */
   async mainPhase(game, me, second) {
     if (!second) {
-      const land = this.chooseLand(me); if (land) await game.playLand(me, land);
+      const land = this.chooseLand(me, game); if (land) await game.playLand(me, land);
       // crack fetches now only if the mana matters this turn; otherwise hold them for the end step before my turn
       for (const b of [...me.battlefield]) if (b.card.fetch && game.canActivate(me, b) && me.life > b.card.fetch.life + 2 && game.fetchTargets(me, b).length && this.needManaNow(game, me)) await game.activateFetch(me, b);
     }
@@ -671,6 +737,26 @@ class AI {
       const ok = await game.cast(me, pick.c, pick.zone, target);
       if (!ok && game.castMode(me, pick.c, pick.zone)) skip.add(pick.c); // countered or failed; avoid loops
     }
+  }
+  /** shockland-style "pay N life or it enters tapped": pay only when the untapped mana does something this turn */
+  payLifeForLand(game, me, card, perm) {
+    const n = card.etbLife; if (me.life - n <= (this.level === 'cutthroat' ? 4 : 8)) return false;
+    const myTurn = game.players[game.active] === me && game.phase !== 'end';
+    const en = game.enabledBy(me, perm);
+    if (myTurn) {
+      if (en.some(c => !c.roles.includes('counter') && this.castValue(game, me, c) > 0)) return true;
+      if (this.reserveFor(game, me) && en.some(c => c.roles.includes('counter'))) return true; // holding up a counter this turn cycle
+      return this.level === 'casual' ? this.rng() < 0.35 : false; // casual players pay out of habit sometimes
+    }
+    // off-turn (e.g. fetched at someone's end step): it untaps in my untap step anyway, so only pay to respond right now
+    return this.level !== 'casual' && en.some(c => c.roles.includes('counter') || (c.flash && c.roles.includes('removal')));
+  }
+  /** "counter unless its controller pays {N}": decline only when paying strips my counter backup for a minor spell */
+  payUnless(game, me, spell, n) {
+    if (this.level === 'casual') return true;
+    const r = this.reserveFor(game, me);
+    if (r && !game.canPayCost(me, { generic: n, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: n }, r) && this.castValueRaw(game, me, spell.card) < 6) return false;
+    return true;
   }
   needManaNow(game, me) {
     if (this.level === 'casual') return true;

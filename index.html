@@ -198,6 +198,7 @@ body.playing main .wrap,body.playing header.top .wrap{max-width:1680px}
     <button class="chip" id="bc" aria-pressed="true" data-b="cEDH">cEDH</button>
     <button class="chip" id="addbtn">+ Add deck</button>
     <button class="chip" id="syncbtn" title="Keep your decks in step across devices with a private GitHub Gist">Sync: off</button>
+    <button class="chip" id="checkbtn" title="Check every card in your saved lists against the game engine">Rules check</button>
     <button class="chip" id="bulkbtn" title="Paste several deck exports at once">Bulk lists</button>
     <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
     <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
@@ -207,6 +208,7 @@ body.playing main .wrap,body.playing header.top .wrap{max-width:1680px}
   <div id="addpanel" class="panel" hidden></div>
   <div id="bulkpanel" class="panel" hidden></div>
   <div id="syncpanel" class="panel" hidden></div>
+  <div id="checkpanel" class="panel" hidden></div>
 </div></header>
 
 <main><div class="wrap">
@@ -508,6 +510,33 @@ function toggleBulk(open){const p=$('#bulkpanel');p.hidden=!open;if(!open)return
       buildIndex();const d=S.index.find(y=>y.slug===slug);if(d){d.ci=card.ci;d.img=card.img.replace('/small/','/normal/');d.art=card.img.replace('/small/','/art_crop/');S.cmdr[slug]=card}saved++}
     buildIndex();renderHome();$('#bulkmsg').textContent=`Saved ${saved} list${saved===1?'':'s'}.`+(errs.length?' Skipped: '+errs.join('; '):'')};
 }
+// ---------- rules check: every card in your saved lists, line by line, against the playtest engine ----------
+function toggleCheck(open){const p=$('#checkpanel');p.hidden=!open;if(!open)return;
+  const ds=S.index.filter(d=>!d.retired&&S.decks[d.slug]?.list?.length);
+  p.innerHTML=`<h3>Rules check</h3><p class="note">Checks every card in your ${ds.length} saved list${ds.length===1?'':'s'} against the Playtest engine, line by line. <b>Not modelled</b>: the engine ignores that text. <b>Condition unverified</b>: the engine does something with the line, but it carries a condition or qualifier ("if", "that entered this turn", "with power 4 or greater"…) and no test proves the condition is respected — the kind of line where Force of Despair went wrong.</p>
+   <div class="row"><button class="chip pri" id="chkgo" ${ds.length?'':'disabled'}>Run check</button><button class="chip" id="chkclose">Close</button><span class="note" id="chkmsg"></span></div><div id="chkres"></div>`;
+  $('#chkclose').onclick=()=>toggleCheck(false);
+  $('#chkgo').onclick=async()=>{const msg=$('#chkmsg');$('#chkgo').disabled=true;
+    try{msg.textContent='Loading the engine…';await loadPlaytest();
+      const where=new Map();for(const d of ds){for(const n of new Set([d.name,...S.decks[d.slug].list])){const k=norm(n);if(!where.has(k))where.set(k,{name:n,decks:new Set()});where.get(k).decks.add(d.display||d.name)}}
+      const names=[...where.values()].map(x=>x.name);msg.textContent=`Fetching ${names.length} cards from Scryfall…`;
+      const cards=await cardsNamed(names);const found=new Set();
+      const rows=[];for(const c of cards){const k=norm(c.name);found.add(k);const w=where.get(k)||{decks:new Set()};if(/^(Basic )?Land — (Plains|Island|Swamp|Mountain|Forest)$|^Basic Land/.test(c.type))continue;
+        let a;try{a=Goldfish.auditCard(c)}catch(e){a={lines:[{line:'(engine error: '+e.message+')',status:'missing'}],missing:1,generic:0}}
+        rows.push({c,a,decks:[...w.decks]})}
+      const missing=rows.filter(r=>r.a.missing),cond=rows.filter(r=>!r.a.missing&&r.a.generic),fine=rows.length-missing.length-cond.length;
+      const notFound=[...where.entries()].filter(([k])=>!found.has(k)).map(([,v])=>v.name);
+      const li=r=>`<li><b>${esc(r.c.name)}</b> <span class="note">· ${esc(r.decks.join(', '))}</span><ul style="margin:2px 0 6px;padding-left:16px">${r.a.lines.filter(x=>x.status==='missing'||x.status==='generic').map(x=>`<li class="note">${x.status==='missing'?'✗':'?'} ${esc(x.line)}</li>`).join('')}</ul></li>`;
+      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v33',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
+      $('#chkres').innerHTML=`<p><b>${rows.length}</b> cards checked: <b>${fine}</b> fully covered, <b>${cond.length}</b> with a condition unverified, <b>${missing.length}</b> with text not modelled.${notFound.length?` <span class="err">${notFound.length} name${notFound.length===1?'':'s'} not found on Scryfall: ${esc(notFound.join(', '))}</span>`:''}</p>
+        ${flagged.length?`<div class="row"><button class="chip pri" id="chkcopy">Copy report for Claude</button><button class="chip" id="chkdl">Download report</button><span class="note" id="chkcopied"></span></div>`:''}
+        ${missing.length?`<h4>Not modelled</h4><ul style="padding-left:18px">${missing.map(li).join('')}</ul>`:''}
+        ${cond.length?`<h4>Condition unverified</h4><ul style="padding-left:18px">${cond.map(li).join('')}</ul>`:''}`;
+      if(flagged.length){$('#chkcopy').onclick=async()=>{try{await navigator.clipboard.writeText(S.checkReport);$('#chkcopied').textContent='Copied — paste it into the chat.'}catch(e){$('#chkcopied').textContent='Copy blocked by the browser — use Download.'}};
+        $('#chkdl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([S.checkReport],{type:'application/json'}));a.download='rules-check.json';a.click()}}
+      msg.textContent='';
+    }catch(e){msg.textContent='Check failed: '+e.message}finally{$('#chkgo').disabled=false}};
+}
 async function retireDeck(slug){await saveDeck(slug,{retired:true,retiredAt:new Date().toISOString()});buildIndex();$('#back').click()}
 async function rebuildDeck(slug){if(active().length>=cap()){$('#addpanel').hidden=false;toggleAdd(true);$('#newname').value=S.index.find(d=>d.slug===slug).name;window.scrollTo(0,0);return}
   await saveDeck(slug,{retired:false,rebuiltAt:new Date().toISOString()});buildIndex();$('#back').click()}
@@ -598,7 +627,7 @@ function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detai
   if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=32').then(()=>loadScript('playtest-ui.js?v=32'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=33').then(()=>loadScript('playtest-ui.js?v=33'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();
@@ -678,7 +707,7 @@ function wire(){
   $('#since').onchange=()=>{S.since=$('#since').value||dflt;try{localStorage.setItem('since',S.since)}catch(e){}if(S.cur)renderTab()};
   document.querySelectorAll('.chip[data-b]').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);if(on)S.brackets.add(b.dataset.b);else S.brackets.delete(b.dataset.b);renderHome()});
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#checkbtn').onclick=()=>toggleCheck($('#checkpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};

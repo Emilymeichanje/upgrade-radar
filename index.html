@@ -190,13 +190,14 @@ body.playing main .wrap,body.playing header.top .wrap{max-width:1680px}
 <header class="top"><div class="wrap">
   <h1>Upgrade Radar <small id="count"></small></h1>
   <nav class="topnav" aria-label="Sections"><button id="nav-decks" aria-current="page">Decks</button><button id="nav-play">Playtest</button></nav>
-  <button class="chip" id="filtbtn" aria-expanded="false" aria-controls="ctlbox">Filters</button>
+  <button class="chip" id="filtbtn" aria-expanded="false" aria-controls="ctlbox">Menu</button>
   <div class="ctl" id="ctlbox">
     <label for="since">New since</label><input type="date" id="since">
     <button class="chip" id="b2" aria-pressed="true" data-b="2">Bracket 2</button>
     <button class="chip" id="b3" aria-pressed="true" data-b="3">Bracket 3</button>
     <button class="chip" id="bc" aria-pressed="true" data-b="cEDH">cEDH</button>
     <button class="chip" id="addbtn">+ Add deck</button>
+    <button class="chip" id="syncbtn" title="Keep your decks in step across devices with a private GitHub Gist">Sync: off</button>
     <button class="chip" id="bulkbtn" title="Paste several deck exports at once">Bulk lists</button>
     <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
     <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
@@ -205,6 +206,7 @@ body.playing main .wrap,body.playing header.top .wrap{max-width:1680px}
   <div class="search"><input type="search" id="q" placeholder="Search decks: name, colors (e.g. WUB), bracket, tag" aria-label="Search decks" autocomplete="off"><label class="note" for="sort">Sort</label><select id="sort"><option value="name">Name A–Z</option><option value="updated">Last updated</option><option value="decks">EDHREC popularity</option></select><span class="note" id="cap"></span></div>
   <div id="addpanel" class="panel" hidden></div>
   <div id="bulkpanel" class="panel" hidden></div>
+  <div id="syncpanel" class="panel" hidden></div>
 </div></header>
 
 <main><div class="wrap">
@@ -339,9 +341,56 @@ function swapFor(card,sc,deck,list){ // list: [{name,oracle,type,roles}] with ed
 
 // ---------- db ----------
 async function initDb(){try{const raw=localStorage.getItem('decks');if(raw)S.decks=JSON.parse(raw);const c=localStorage.getItem('cfg');if(c)S.cfg=JSON.parse(c)}catch(e){}S.db=true;buildIndex()}
-async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={...cur,...patch,updatedAt:new Date().toISOString()};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}}
+async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={...cur,...patch,updatedAt:new Date().toISOString()};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}syncSoon()}
+
+// ---------- sync: one private GitHub Gist holds your decks; every device merges with it, newest edit of each deck wins ----------
+const SYNC_FILE='upgrade-radar.json';
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+const lsSet=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
+const syncTok=()=>lsGet('sync-token');
+function syncStatus(t,err){S.syncMsg=t;S.syncErr=!!err;const b=$('#syncbtn');if(b){b.textContent='Sync: '+(syncTok()?(err?'error':'on'):'off');b.style.color=err?'var(--bad, #e66)':''}const m=$('#syncstate');if(m)m.textContent=t||''}
+function cleanDecks(ds){const o={};for(const [k,v] of Object.entries(ds||{})){const c={};for(const [kk,vv] of Object.entries(v||{}))if(kk[0]!=='_')c[kk]=vv;o[k]=c}return o}
+function mergeDecks(local,remote){const out={...remote};for(const [k,v] of Object.entries(local)){const r=remote[k];if(!r||String(v.updatedAt||'')>String(r.updatedAt||''))out[k]=v}return out}
+async function gh(path,opt={}){const r=await fetch('https://api.github.com'+path,{cache:'no-store',...opt,headers:{Accept:'application/vnd.github+json',Authorization:'Bearer '+syncTok(),...(opt.body?{'Content-Type':'application/json'}:{})}});
+  if(r.status===401)throw new Error('GitHub rejected the token (expired or revoked?)');if(r.status===403||r.status===404&&!opt.soft)throw new Error('GitHub refused ('+r.status+') — does the token have the gist scope?');if(!r.ok&&!opt.soft)throw new Error('GitHub error '+r.status);return r}
+async function findGist(){let id=lsGet('sync-gist');if(id){const r=await gh('/gists/'+id,{soft:true});if(r.ok)return {id,gist:await r.json()};}
+  for(let page=1;page<=5;page++){const list=await (await gh('/gists?per_page=100&page='+page)).json();const g=list.find(x=>x.files&&x.files[SYNC_FILE]);if(g){lsSet('sync-gist',g.id);return {id:g.id,gist:await (await gh('/gists/'+g.id)).json()}}if(list.length<100)break}
+  return null}
+let syncTimer=null,syncing=null;
+function syncSoon(){if(!syncTok())return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncNow(),1500)}
+async function syncNow(){if(!syncTok())return false;if(syncing){await syncing.catch(()=>{});}
+  syncing=(async()=>{syncStatus('Syncing…');
+    const found=await findGist();let remote={decks:{},cfg:null,pt:null};
+    if(found){const f=found.gist.files[SYNC_FILE];let txt=f.content;if(f.truncated)txt=await (await fetch(f.raw_url,{cache:'no-store'})).text();try{remote={...remote,...JSON.parse(txt||'{}')}}catch(e){}}
+    const local=cleanDecks(S.decks);const merged=mergeDecks(local,cleanDecks(remote.decks));
+    // keep this device's in-memory extras (enriched card data) for decks that didn't change
+    const next={};for(const [k,v] of Object.entries(merged)){const old=S.decks[k];next[k]=old&&old.updatedAt===v.updatedAt?old:v}
+    const changedLocal=JSON.stringify(cleanDecks(S.decks))!==JSON.stringify(merged);
+    S.decks=next;lsSet('decks',JSON.stringify(S.decks));
+    if(!S.cfg&&remote.cfg){S.cfg=remote.cfg;lsSet('cfg',JSON.stringify(S.cfg))}
+    if(!lsGet('pt-settings')&&remote.pt)lsSet('pt-settings',JSON.stringify(remote.pt));
+    let pt=null;try{pt=JSON.parse(lsGet('pt-settings')||'null')}catch(e){}
+    const body={decks:merged,cfg:S.cfg||remote.cfg||null,pt:pt||remote.pt||null,savedAt:new Date().toISOString()};
+    const same=JSON.stringify({d:body.decks,c:body.cfg,p:body.pt})===JSON.stringify({d:cleanDecks(remote.decks),c:remote.cfg||null,p:remote.pt||null});
+    if(!found){const g=await (await gh('/gists',{method:'POST',body:JSON.stringify({description:'Upgrade Radar sync (private)',public:false,files:{[SYNC_FILE]:{content:JSON.stringify(body)}}})})).json();lsSet('sync-gist',g.id)}
+    else if(!same)await gh('/gists/'+found.id,{method:'PATCH',body:JSON.stringify({files:{[SYNC_FILE]:{content:JSON.stringify(body)}}})});
+    lsSet('sync-last',new Date().toISOString());
+    if(changedLocal){buildIndex();if(!$('#home').hidden)renderHome()}
+    syncStatus('Synced '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+' · '+Object.keys(merged).length+' decks');return true})();
+  try{return await syncing}catch(e){syncStatus(e.message,true);return false}finally{syncing=null}}
+function toggleSync(open){const p=$('#syncpanel');p.hidden=!open;if(!open)return;const on=!!syncTok();
+  p.innerHTML=`<h3>Sync across devices</h3>
+   <p class="note">Your decks are kept in one <b>secret Gist</b> on your GitHub account. Each device merges with it whenever you save or come back to the page; if the same deck was edited on two devices, the newer edit wins.</p>
+   ${on?'':`<ol class="note" style="margin:0;padding-left:18px"><li><a href="https://github.com/settings/tokens/new?scopes=gist&description=Upgrade%20Radar%20sync" target="_blank" rel="noopener">Create a GitHub token</a> — the <b>gist</b> box is pre-ticked; leave everything else unticked. Pick an expiry (or "No expiration").</li><li>Copy the token, paste it below, tap Connect. Do the same on each device (you can reuse the same token).</li></ol>
+   <div class="f"><label for="synctok">GitHub token</label><input id="synctok" type="password" autocomplete="off" placeholder="ghp_…"></div>`}
+   <div class="row">${on?'<button class="chip" id="syncgo">Sync now</button><button class="chip" id="syncoff">Disconnect this device</button>':'<button class="chip" id="syncon">Connect</button>'}<button class="chip" id="syncclose">Close</button><span class="note" id="syncstate">${esc(S.syncMsg||'')}</span></div>
+   <p class="note">The token is stored only in this browser. It can read and write your Gists and nothing else. Revoke it any time at github.com → Settings → Developer settings → Tokens.</p>`;
+  $('#syncclose').onclick=()=>toggleSync(false);
+  if(on){$('#syncgo').onclick=()=>syncNow();$('#syncoff').onclick=()=>{lsSet('sync-token',null);lsSet('sync-gist',null);syncStatus('Disconnected — decks stay on this device.');toggleSync(true)}}
+  else $('#syncon').onclick=async()=>{const t=$('#synctok').value.trim();if(!t)return syncStatus('Paste the token first.',true);lsSet('sync-token',t);const ok=await syncNow();if(!ok)lsSet('sync-token',null);else toggleSync(true);syncStatus(S.syncMsg,!ok)};
+}
 function exportData(){const blob=new Blob([JSON.stringify({decks:S.decks,cfg:S.cfg||null,exported:new Date().toISOString()},null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='upgrade-radar-data.json';a.click()}
-function importData(file){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);S.decks=j.decks||{};S.cfg=j.cfg||S.cfg;localStorage.setItem('decks',JSON.stringify(S.decks));if(S.cfg)localStorage.setItem('cfg',JSON.stringify(S.cfg));buildIndex();renderHome()}catch(e){alert('Not a valid export file')}};r.readAsText(file)}
+function importData(file){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);S.decks=j.decks||{};S.cfg=j.cfg||S.cfg;localStorage.setItem('decks',JSON.stringify(S.decks));if(S.cfg)localStorage.setItem('cfg',JSON.stringify(S.cfg));buildIndex();renderHome();syncSoon()}catch(e){alert('Not a valid export file')}};r.readAsText(file)}
 function parseList(txt){ // handles Archidekt, Moxfield, MTGO and plain exports
   const lines=[];let skip=false;
   for(const raw of txt.split(/\r?\n/)){const l=raw.trim();if(!l)continue;
@@ -629,7 +678,7 @@ function wire(){
   $('#since').onchange=()=>{S.since=$('#since').value||dflt;try{localStorage.setItem('since',S.since)}catch(e){}if(S.cur)renderTab()};
   document.querySelectorAll('.chip[data-b]').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);if(on)S.brackets.add(b.dataset.b);else S.brackets.delete(b.dataset.b);renderHome()});
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};
@@ -652,7 +701,8 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
   renderHome();
 }
 (async()=>{wire();try{await loadSnapshot()}catch(e){$('#status').innerHTML='<span>Snapshot failed to load.</span>';return}
-  renderHome();await Promise.all([initDb(),resolveCommanders()]);renderHome();if(location.hash==='#playtest')openPlaytest();
+  renderHome();await Promise.all([initDb().then(()=>syncTok()&&Promise.race([syncNow(),new Promise(r=>setTimeout(r,10000))])),resolveCommanders()]);renderHome();syncStatus(S.syncMsg||'',S.syncErr);if(location.hash==='#playtest')openPlaytest();
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&syncTok())syncNow()});
   window.addEventListener('hashchange',()=>{if(location.hash==='#playtest'&&$('#play').hidden)openPlaytest();else if(location.hash!=='#playtest'&&!$('#play').hidden){if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()}});})();
 })();
 </script>

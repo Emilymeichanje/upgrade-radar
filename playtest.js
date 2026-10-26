@@ -327,7 +327,7 @@ class Game {
     for (const p of this.players) this.drawSilent(p, 7);
   }
   // ---------- plumbing ----------
-  async emit(e) { this.refreshStatics(); if (this.hooks.emit) await this.hooks.emit(e, this); }
+  async emit(e) { if ((this.emits = (this.emits || 0) + 1) > 60000) throw new Error('game stalled (too many actions): ' + e.type); this.refreshStatics(); if (this.hooks.emit) await this.hooks.emit(e, this); }
   /** apply anthems / lords / equipment: per-creature static pump (b.spump) and granted keywords (card.kw = base + grants) */
   refreshStatics() {
     for (const p of this.players) {
@@ -344,6 +344,8 @@ class Game {
       }
     }
   }
+  /** loop guard: at most 250 triggered abilities resolve per turn (stops token / death-trigger loops) */
+  trigOk() { if (this.trigBudget == null) this.trigBudget = 250; if (this.trigBudget-- > 0) return true; if (!this.trigWarned) { this.trigWarned = true; this.say('— trigger limit reached this turn (loop stopped)'); } return false; }
   landLimit(p) { return 1 + p.battlefield.reduce((s, b) => s + (b.card.extraLands || 0), 0); }
   say(msg, p) { const line = (p ? p.name + ': ' : '') + msg; this.log.push({ t: this.turn, m: line }); if (this.hooks.log) this.hooks.log(line); }
   alive() { return this.players.filter(p => !p.dead); }
@@ -609,14 +611,14 @@ class Game {
       if (!q.battlefield.includes(b)) continue;
       if (tr.may && !(await this.chooseMay(q, b.card, tr))) continue;
       this.say(`— ${b.card.name} triggers`, q); await this.emit({ type: 'trigger', p: q, card: b.card, perm: b });
-      await this.runOps(q, tr.ops, b.card, { perm: b });
+      (this.trigOk()) && await this.runOps(q, tr.ops, b.card, { perm: b });
     }
     // graveyard triggers (e.g. "at the beginning of your upkeep, if this card is in your graveyard...")
     for (const c of [...p.graveyard]) for (const tr of c.triggers || []) {
       if (tr.when !== when || tr.zone !== 'graveyard' || !p.graveyard.includes(c)) continue;
       if (tr.may && !(await this.chooseMay(p, c, tr))) continue;
       this.say(`— ${c.name} triggers from the graveyard`, p); await this.emit({ type: 'trigger', p, card: c });
-      await this.runOps(p, tr.ops, c, {});
+      (this.trigOk()) && await this.runOps(p, tr.ops, c, {});
     }
   }
   async landfall(p) { await this.fireTriggers(p, 'landfall'); }
@@ -625,14 +627,14 @@ class Game {
     // the creature's own "when this dies" trigger
     for (const tr of dead.triggers || []) if (tr.when === 'dies' && (tr.zone === 'self' || tr.self)) {
       const times = owner.battlefield.some(b => b.card.doublesDeath) ? 2 : 1;
-      for (let k = 0; k < times; k++) { this.say(`— ${dead.name} dies trigger${times > 1 && k ? ' (again)' : ''}`, owner); await this.runOps(owner, tr.ops, dead, {}); }
+      for (let k = 0; k < times; k++) { this.say(`— ${dead.name} dies trigger${times > 1 && k ? ' (again)' : ''}`, owner); (this.trigOk()) && await this.runOps(owner, tr.ops, dead, {}); }
     }
     for (const q of this.alive()) for (const b of [...q.battlefield]) for (const tr of b.card.triggers || []) {
       if (tr.when !== 'dies' || tr.zone !== 'battlefield' || b === perm) continue;
       if (tr.yours && q !== owner) continue;
       if (tr.nontoken && dead.token) continue;
       const times = q.battlefield.some(x => x.card.doublesDeath) ? 2 : 1;
-      for (let k = 0; k < times; k++) { this.say(`— ${b.card.name} triggers (${dead.name} died)${k ? ' again' : ''}`, q); await this.emit({ type: 'trigger', p: q, card: b.card, perm: b }); await this.runOps(q, tr.ops, b.card, { perm: b }); }
+      for (let k = 0; k < times; k++) { this.say(`— ${b.card.name} triggers (${dead.name} died)${k ? ' again' : ''}`, q); await this.emit({ type: 'trigger', p: q, card: b.card, perm: b }); (this.trigOk()) && await this.runOps(q, tr.ops, b.card, { perm: b }); }
     }
   }
   async chooseMay(p, card, tr) {
@@ -867,21 +869,21 @@ class Game {
     if (!perm || !perm.card.isCreature) return;
     for (const q of this.alive()) for (const b of [...q.battlefield]) for (const tr of b.card.triggers || []) {
       if (tr.when !== 'creatureEnters' || (tr.another && b === perm) || (tr.yours && q !== p) || !matchesFilter(perm.card, tr.filter)) continue;
-      await this.runOps(q, tr.ops, b.card, { perm: b, entered: perm });
+      (this.trigOk()) && await this.runOps(q, tr.ops, b.card, { perm: b, entered: perm });
     }
   }
   async castTriggers(p, card) {
     for (const b of [...p.battlefield]) for (const tr of b.card.triggers || []) {
       if (tr.when !== 'cast' || !matchesFilter(card, tr.filter)) continue;
       this.say(`— ${b.card.name} triggers (cast ${card.name})`, p); await this.emit({ type: 'trigger', p, card: b.card, perm: b });
-      await this.runOps(p, tr.ops, b.card, { perm: b });
+      (this.trigOk()) && await this.runOps(p, tr.ops, b.card, { perm: b });
     }
   }
   async attackTriggers(p, atk) {
     for (const b of [...p.battlefield]) for (const tr of b.card.triggers || []) {
       if (tr.when !== 'attack') continue;
       const n = tr.who === 'this card' ? (atk.some(a => a.attacker === b) ? 1 : 0) : tr.who === 'equipped creature' ? (atk.some(a => a.attacker.id === b.attachedTo) ? 1 : 0) : tr.who === 'one or more creatures you control' ? 1 : atk.length;
-      for (let k = 0; k < n; k++) { this.say(`— ${b.card.name} attack trigger`, p); await this.runOps(p, tr.ops, b.card, { perm: b }); }
+      for (let k = 0; k < n; k++) { this.say(`— ${b.card.name} attack trigger`, p); (this.trigOk()) && await this.runOps(p, tr.ops, b.card, { perm: b }); }
     }
   }
   async combatDamageTriggers(p, attacker) {
@@ -891,7 +893,7 @@ class Game {
       if (!hit) continue;
       if (tr.who === 'one or more creatures you control' && this._cdOnce && this._cdOnce.has(b)) continue;
       (this._cdOnce = this._cdOnce || new Set()).add(b);
-      this.say(`— ${b.card.name} combat damage trigger`, p); await this.runOps(p, tr.ops, b.card, { perm: b });
+      this.say(`— ${b.card.name} combat damage trigger`, p); (this.trigOk()) && await this.runOps(p, tr.ops, b.card, { perm: b });
     }
   }
   async destroy(owner, perm, quiet) {
@@ -1053,6 +1055,7 @@ class Game {
   // ---------- turn structure ----------
   async beginTurn(p) {
     this.turn++; if (p === this.alive()[0] || this.round === 0) this.round++;
+    this.trigBudget = 250; this.trigWarned = false;
     p.landsThisTurn = 0; p.pumpUntilEOT = 0; p.extraCombat = false; this.phase = 'untap'; this.step = 'untap';
     for (const b of p.battlefield) { b.tapped = false; b.summoning = false; }
     this.say(`— turn ${this.turn} —`, p);

@@ -296,7 +296,7 @@ async function cardsNamed(names){ // batch via /cards/collection (75 per call)
     if(r.ok){const j=await r.json();out.push(...(j.data||[]).map(slim))}await sleep(120)}
   return out;
 }
-function slim(c){const f=c.card_faces?.[0]||{};return{name:c.name,mana:c.mana_cost||f.mana_cost||'',type:c.type_line||f.type_line||'',oracle:c.oracle_text||c.card_faces?.map(x=>x.oracle_text).join('\n//\n')||'',set:c.set_name,setcode:c.set,date:c.released_at,ci:c.color_identity||[],img:c.image_uris?.small||f.image_uris?.small||'',uri:c.scryfall_uri,rank:c.edhrec_rank,price:c.prices?.usd,cmc:c.cmc,power:c.power??f.power,toughness:c.toughness??f.toughness,keywords:c.keywords||[]}}
+function slim(c){const f=c.card_faces?.[0]||{};return{name:c.name,mana:c.mana_cost||f.mana_cost||'',type:c.type_line||f.type_line||'',oracle:c.oracle_text||c.card_faces?.map(x=>x.oracle_text).join('\n//\n')||'',set:c.set_name,setcode:c.set,date:c.released_at,ci:c.color_identity||[],img:c.image_uris?.small||f.image_uris?.small||'',uri:c.scryfall_uri,rank:c.edhrec_rank,price:c.prices?.usd,loyalty:c.loyalty??f.loyalty,cmc:c.cmc,power:c.power??f.power,toughness:c.toughness??f.toughness,keywords:c.keywords||[]}}
 async function commanderCard(deck){if(S.cmdr[deck.slug])return S.cmdr[deck.slug];
   try{const r=await fetch('https://api.scryfall.com/cards/named?exact='+encodeURIComponent(deck.name));if(r.ok){S.cmdr[deck.slug]=slim(await r.json());return S.cmdr[deck.slug]}}catch(e){}return null}
 
@@ -511,7 +511,7 @@ function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detai
   if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=25').then(()=>loadScript('playtest-ui.js?v=25'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=26').then(()=>loadScript('playtest-ui.js?v=26'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();

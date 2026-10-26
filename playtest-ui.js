@@ -105,6 +105,8 @@ const STYLE = `
 .gc .pt{position:absolute;right:-3px;bottom:-3px;font:700 .68rem var(--mono);background:var(--fg);color:var(--bg);padding:1px 4px;border-radius:4px}
 .gc .pt.up{background:var(--good)}
 .gc .bd{position:absolute;left:-3px;top:-3px;font:700 .64rem var(--mono);background:var(--bad);color:#fff;padding:1px 4px;border-radius:4px}
+.hbadge{position:absolute;left:4px;right:4px;bottom:4px;font:700 .58rem var(--mono);background:var(--panel);border:1px solid var(--line);border-radius:4px;text-align:center;padding:1px 2px;pointer-events:none}
+.gc.neut img{filter:grayscale(.85) brightness(.8)}
 .gc .cnt{position:absolute;left:50%;transform:translateX(-50%);bottom:-6px;font:700 .64rem var(--mono);background:var(--panel);border:1px solid var(--line);padding:0 4px;border-radius:4px;white-space:nowrap}
 .gc.lg{width:var(--tile-l)}
 .gc.lg.t{transform:rotate(90deg);filter:brightness(.72);margin:0 calc(var(--tile-l) * .22)}
@@ -268,7 +270,7 @@ class Table {
     this.el.innerHTML = `<div class="gt"><div class="gt-main"><div class="gt-board" id="gtb"></div><aside class="gt-side"><div class="pv" id="gtpv"><div class="ty">Hover a card to read it.</div></div><div class="gl" id="gtlog"></div></aside></div></div>`;
     this.board = this.el.querySelector('#gtb'); this.pv = this.el.querySelector('#gtpv'); this.logEl = this.el.querySelector('#gtlog');
     this.wire();
-    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c) };
+    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c), humanModes: c => this.ask('modes', { ...c, sel: [] }) };
     this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
     this.buildCardIndex();
     this.me = this.game.players.find(p => p.human) || null;
@@ -540,7 +542,12 @@ class Table {
   }
   handAct(card) {
     const g = this.game, me = this.me; this.handSel = null;
-    if (card.isLand) { if (me.landsThisTurn < 1) return this.act(() => g.playLand(me, card)); this.render(); return; }
+    if (card.isLand) { if (me.landsThisTurn < g.landLimit(me)) return this.act(() => g.playLand(me, card)); this.render(); return; }
+    if (card.backLand && me.landsThisTurn < g.landLimit(me)) {
+      const canCast = !card.roles.includes('counter') && g.castMode(me, card, 'hand');
+      if (!canCast) return this.act(() => g.playLand(me, card));
+      return this.ask('may', { p: me, card, question: `play the back face (${card.backLand.name}) as your land? No = cast ${card.name.split(' // ')[0]}.` }).then(asLand => asLand ? this.act(() => g.playLand(me, card)) : this.startCast(card, 'hand'));
+    }
     if (card.roles.includes('counter')) { this.render(); return; }
     if (g.castMode(me, card, 'hand')) this.startCast(card, 'hand'); else this.render();
   }
@@ -631,6 +638,8 @@ class Table {
     if (a === 'hand-info') { if (this.handSel != null) this.openSheet(this.handSel); return; }
     if (P && P.kind === 'retarget' && a === 'rt-keep') { P.res(null); return; }
     if (P && P.kind === 'may' && (a === 'may-yes' || a === 'may-no')) { P.res(a === 'may-yes'); return; }
+    if (P && P.kind === 'modes' && a === 'mode-tog') { const m = P.modes[+btn.dataset.i]; if (!m) return; const i = P.sel.indexOf(m.card); if (i >= 0) P.sel.splice(i, 1); else if (P.sel.length < P.max) P.sel.push(m.card); else if (P.max === 1) P.sel = [m.card]; this.render(); return; }
+    if (P && P.kind === 'modes' && a === 'modes-go') { if (P.sel.length >= P.min) P.res(P.sel.slice()); return; }
     if (a === 'abil' && this.myTurn && !this.busy && !P) { const o = (this.mainOpts || [])[+btn.dataset.i]; if (!o) return; if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => g.doAction(me, { ...o, instant: false })); }
     if (P && P.kind === 'search' && a === 'search-go') { P.res(P.sel.slice()); return; }
     if (P && P.kind === 'search' && a === 'search-none') { P.res([]); return; }
@@ -665,6 +674,10 @@ class Table {
     if (P && P.kind === 'block') { for (const [a, bl] of P.map) if (bl === b) badge = `<span class="bd" style="background:var(--accent)">blocks ${esc(a.card.name.slice(0, 10))}</span>`; }
     let pt = '';
     if (c.isCreature) { const pw = g.powerOf(owner, b), tg = g.toughOf(owner, b); pt = `<span class="pt ${pw > c.power ? 'up' : ''}">${pw}/${tg}</span>`; }
+    if (c.isPlaneswalker) pt = `<span class="pt">◆${b.loyalty || 0}</span>`;
+    const att = g.players.flatMap(q => q.battlefield).filter(x => x.attachedTo === b.id);
+    if (b.neutral || b.pacified) { cls.push('neut'); badge = badge || `<span class="bd">${b.neutral ? 'neutralised' : "can't attack/block"}</span>`; }
+    else if (att.length && !badge) badge = `<span class="bd" title="${esc(att.map(x => x.card.name).join(', '))}">+${esc(att.length === 1 ? att[0].card.name.split(/[ ,]/)[0].slice(0, 10) : att.length + ' attached')}</span>`;
     const body = c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`;
     return `<div class="${cls.join(' ')}${c.img ? '' : ' tok'}" data-pid="${b.id}" data-uid="${c.uid}" title="${esc(c.name)}">${body}${pt}${badge}</div>`;
   }
@@ -757,10 +770,12 @@ class Table {
       else if (P.kind === 'fetch') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a land to put onto the battlefield</h4><div class="opts">${opts}</div></div>`;
       else if (P.kind === 'etb') { const en = P.enables || []; const thumbs = en.map(c => `<div class="opt" data-uid="${c.uid}" style="cursor:default">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`).join('');
         prm = `<div class="prm"><h4>${esc(P.card.name)}: pay ${P.life} life so it enters untapped? (you're at ${me.life})</h4>${en.length ? `<div class="opts">${thumbs}</div>` : ''}<div class="gt-ctl"><button class="chip ${en.length ? 'pri' : ''}" data-act="etb-pay">Pay ${P.life} life</button><button class="chip ${en.length ? '' : 'pri'}" data-act="etb-tap">Enter tapped</button><span class="msg">${en.length ? `Untapped, it lets you cast ${en.map(c => esc(c.name)).join(', ')} this turn.` : `The extra mana doesn't make anything castable ${this.game.players[this.game.active] === me ? 'this turn' : 'right now'}; it untaps on your turn anyway.`}</span></div></div>`; }
+      else if (P.kind === 'unless' && P.tax) prm = `<div class="prm"><h4>${esc(P.why)}</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Don't pay</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
+      else if (P.kind === 'modes') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.min === P.max ? P.max : P.min + '–' + P.max} mode${P.max > 1 ? 's' : ''}</h4><div class="opts">${P.modes.map((m, i) => `<button class="chip ${P.sel.includes(m.card) ? 'pri' : ''}" data-act="mode-tog" data-i="${i}" style="text-align:left;white-space:normal">${P.sel.includes(m.card) ? '✓ ' : ''}${esc(m.text.charAt(0).toUpperCase() + m.text.slice(1))}</button>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="modes-go" ${P.sel.length >= P.min ? '' : 'disabled'}>Done (${P.sel.length}/${P.max})</button></div></div>`;
       else if (P.kind === 'unless') prm = `<div class="prm"><h4>${esc(P.counter.name)} will counter your ${esc(P.spell.card.name)} unless you pay {${P.n}}.</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Let it be countered</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
       else if (P.kind === 'alt') prm = `<div class="prm"><h4>Cast ${esc(P.card.name)}: ${P.canMana ? 'pay its mana cost, or ' : ''}exile a blue card from your hand and pay 1 life (click the card to exile)</h4><div class="opts">${opts}</div><div class="gt-ctl">${P.canMana ? `<button class="chip pri" data-act="alt-mana">Pay mana</button>` : ''}<button class="chip" data-act="alt-cancel">Cancel</button></div></div>`;
       else if (P.kind === 'search') {
-        const dest = { hand: 'put into your hand', graveyard: 'put into your graveyard', top: 'put on top of your library', battlefield: 'put onto the battlefield', reanimate: 'return to the battlefield', gyhand: 'return from your graveyard to your hand', land: 'put into your hand', scry: 'put on the bottom (the rest stay on top)', surveil: 'put into your graveyard (the rest stay on top)', damage: 'deal damage to', destroy: 'destroy', counters: 'get the counters', dig: 'put into your hand (the rest go to your graveyard)', sacrifice: 'sacrifice', equip: 'equip' }[P.dest] || P.dest;
+        const dest = { hand: 'put into your hand', graveyard: 'put into your graveyard', top: 'put on top of your library', battlefield: 'put onto the battlefield', reanimate: 'return to the battlefield', gyhand: 'return from your graveyard to your hand', land: 'put into your hand', scry: 'put on the bottom (the rest stay on top)', surveil: 'put into your graveyard (the rest stay on top)', damage: 'deal damage to', destroy: 'destroy', counters: 'get the counters', dig: 'put into your hand (the rest go to your graveyard)', sacrifice: 'sacrifice', equip: 'equip', copy: 'copy', enchant: 'enchant', flicker: 'exile and return', bounceLand: 'return to your hand', top: 'put on top of your library' }[P.dest] || P.dest;
         const fromLib = ['hand', 'graveyard', 'top', 'battlefield', 'land'].includes(P.dest), peek = P.dest === 'scry' || P.dest === 'surveil';
         const list = [...P.pool].sort((a, b) => a.name.localeCompare(b.name));
         const seen = new Set(); const uniq = (peek ? [...P.pool] : list).filter(c => P.n > 1 || !fromLib || (!seen.has(c.name) && seen.add(c.name)));
@@ -769,7 +784,7 @@ class Table {
           <input class="sfind" placeholder="Filter by name…" oninput="GoldfishUI.current.filterSearch(this.value)" autocomplete="off">
           <div class="sgrid">${grid}</div>
           <div class="gt-ctl">${P.n > 1 ? `<button class="chip pri" data-act="search-go">Done (${P.sel.length}/${P.n})</button>` : ''}${fromLib ? `<button class="chip" data-act="search-none">Find nothing</button>` : peek ? '' : `<button class="chip" data-act="search-none">Skip</button>`}<span class="msg">Hover a card to read it${P.n > 1 ? '; click to select or unselect' : '; click to choose'}.</span></div></div>`; }
-      else if (P.kind === 'may') prm = `<div class="prm"><h4>${esc(P.card.name)}: use this optional trigger?</h4><div class="gt-ctl"><button class="chip pri" data-act="may-yes">Yes</button><button class="chip" data-act="may-no">No</button></div></div>`;
+      else if (P.kind === 'may') prm = `<div class="prm"><h4>${esc(P.card.name)}: ${esc(P.question || 'use this optional trigger?')}</h4><div class="gt-ctl"><button class="chip pri" data-act="may-yes">Yes</button><button class="chip" data-act="may-no">No</button></div></div>`;
       else if (P.kind === 'player') prm = `<div class="prm"><h4>${esc(P.why)}</h4><div class="gt-ctl">${P.players.map(q => `<button class="chip ${q === me ? '' : 'pri'}" data-act="pick-player" data-p="${q.i}">${esc(short(q.name))} (${q.graveyard.length} card${q.graveyard.length === 1 ? '' : 's'}${q.graveyard.filter(c => c.isCreature).length ? ', ' + q.graveyard.filter(c => c.isCreature).length + ' creatures' : ''})</button>`).join('')}</div></div>`;
       else if (P.kind === 'discard') prm = `<div class="prm"><h4>Discard down to 7: click a card in your hand.</h4></div>`;
       else if (P.kind === 'mull') { const lands = me.hand.filter(c => c.isLand).length; prm = `<div class="prm"><h4>Opening hand: ${me.hand.length} cards, ${lands} land${lands === 1 ? '' : 's'}${P.n ? ` — you'll bottom ${P.n}` : ''}</h4>${P.confirm ? `<div class="gt-ctl"><span class="msg">Shuffle this hand away and draw ${7} new cards? You'll put ${P.n + 1} on the bottom.</span><button class="chip warn" data-act="mull-yes">Yes, mulligan</button><button class="chip pri" data-act="mull-back">Back to this hand</button></div>` : `<div class="gt-ctl"><button class="chip pri" data-act="keep">Keep</button><button class="chip" data-act="mull">Mulligan</button></div>`}</div>`; }
@@ -790,7 +805,7 @@ class Table {
     let handBar = '';
     if (me) {
       const sel = P && P.kind === 'mull-bottom' ? P.sel : [];
-      const hand = me.hand.map(c => { const can = (this.myTurn && !this.busy && !P && (c.isLand ? me.landsThisTurn < 1 : !c.roles.includes('counter') && g.castMode(me, c, 'hand'))) || (P && (P.kind === 'discard' || P.kind === 'mull-bottom')); return `<div class="hcd ${can ? 'can' : ''} ${sel.includes(c) || this.handSel === c.uid ? 'sel' : ''}" data-hand="${c.uid}" data-uid="${c.uid}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(c.name)}</div>`}</div>`; }).join('');
+      const hand = me.hand.map(c => { const can = (this.myTurn && !this.busy && !P && (c.isLand ? me.landsThisTurn < g.landLimit(me) : (!c.roles.includes('counter') && g.castMode(me, c, 'hand')) || (c.backLand && me.landsThisTurn < g.landLimit(me)))) || (P && (P.kind === 'discard' || P.kind === 'mull-bottom')); return `<div class="hcd ${can ? 'can' : ''} ${sel.includes(c) || this.handSel === c.uid ? 'sel' : ''}" data-hand="${c.uid}" data-uid="${c.uid}" style="position:relative">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(c.name)}</div>`}${c.impulse ? '<span class="hbadge">exiled · play it</span>' : c.backLand ? '<span class="hbadge">spell / land</span>' : ''}</div>`; }).join('');
       const cmdUnused = me.command.map(c => { const can = this.myTurn && !this.busy && !P && g.castMode(me, c, 'cmd'); return `<div class="hcd ${can ? 'can' : ''}" data-cmd="${c.uid}" data-uid="${c.uid}" title="Commander${me.cmdTax ? ' (tax ' + me.cmdTax + ')' : ''}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`; }).join('');
       handBar = `<div class="gt-hand">${hand}</div>`;
       const hs = this.handSel != null && me.hand.find(c => c.uid === this.handSel);

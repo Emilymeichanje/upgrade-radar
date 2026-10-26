@@ -117,6 +117,19 @@ const STYLE = `
 .gc.tok{display:grid;place-items:center;text-align:center;font-size:.58rem;padding:4px;background:linear-gradient(160deg,var(--soft),var(--panel));border:1px solid var(--line)}
 .gt-mid{min-height:84px;display:grid;place-items:center;position:relative;background:radial-gradient(ellipse at center,color-mix(in srgb,var(--accent) 8%,transparent),transparent 70%);border-radius:10px}
 .stk{display:flex;align-items:center;justify-content:center;padding-bottom:22px}
+.stkp{width:min(560px,100%);display:grid;gap:4px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);margin:6px 0}
+.stkh{font:700 .82rem var(--display);display:flex;gap:8px;align-items:baseline}.stkh small{font:400 .7rem var(--body);color:var(--muted)}
+.si{display:grid;grid-template-columns:20px 40px minmax(0,1fr);gap:8px;align-items:center;padding:4px 6px;border-radius:8px;border:1px solid transparent;background:var(--bg);position:relative}
+.si.top{border-color:var(--accent)}
+.si.hit{background:color-mix(in srgb,var(--bad) 10%,var(--bg))}
+.si.tgt{cursor:crosshair;box-shadow:0 0 0 2px var(--bad);animation:gtpulse 1s infinite}
+.si-n{font:700 .72rem var(--mono);color:var(--muted);text-align:center}
+.si-img{width:40px;aspect-ratio:.716;border-radius:4px;overflow:hidden;background:var(--soft)}.si-img img{width:100%;height:100%;object-fit:cover;display:block}
+.si-t{display:grid;gap:1px;min-width:0}.si-t b{font-size:.86rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.si-t small{font-size:.74rem;color:var(--muted)}
+.si-t i{font:600 .62rem var(--mono);color:var(--accent);font-style:normal;text-transform:uppercase;letter-spacing:.04em}.si-t i.unc{color:var(--warn)}
+svg.arrows{position:absolute;left:0;top:0;pointer-events:none;z-index:15;overflow:visible}
+kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;padding:0 3px;margin-left:4px;opacity:.7}
+@media (hover:none){kbd{display:none}}
 .stk .sc{width:128px;aspect-ratio:.716;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);position:relative;margin-left:-40px;background:var(--soft)}
 .stk .sc:first-child{margin-left:0}
 .stk .sc img{width:100%;height:100%;border-radius:8px;object-fit:cover}
@@ -255,7 +268,7 @@ class Table {
     this.el.innerHTML = `<div class="gt"><div class="gt-main"><div class="gt-board" id="gtb"></div><aside class="gt-side"><div class="pv" id="gtpv"><div class="ty">Hover a card to read it.</div></div><div class="gl" id="gtlog"></div></aside></div></div>`;
     this.board = this.el.querySelector('#gtb'); this.pv = this.el.querySelector('#gtpv'); this.logEl = this.el.querySelector('#gtlog');
     this.wire();
-    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c) };
+    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c) };
     this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
     this.buildCardIndex();
     this.me = this.game.players.find(p => p.human) || null;
@@ -333,10 +346,13 @@ class Table {
       case 'turn': if (e.p === me) this.passUntilTurn = false; this.attacking.clear(); this.blocking.clear(); this.render(); S('turn'); await this.banner(e.p === me ? 'Your turn' : short(e.p.name) + "'s turn"); break;
       case 'draw': { this.render(); if (e.p === me) { S('draw'); const cards = [...this.board.querySelectorAll('.gt-hand .hcd')].slice(-e.n); for (const c of cards) this.anim(c, [{ transform: 'translateX(-60px)', opacity: 0 }, { transform: 'none', opacity: 1 }], 300); await this.wait(250); } break; }
       case 'land': { const from = this.srcRect(e.p, e.card); this.render(); S('land'); await this.flyTo(from, this.q(`[data-lg="${e.p.i}:${CSS.escape(e.card.name)}"]`), e.card, { dur: 360 }); await this.wait(e.p === me ? 50 : 250); break; }
-      case 'cast': { const from = this.srcRect(e.p, e.card); this.stackView.push({ card: e.card, p: e.p, target: e.target }); this.render(); S(e.depth ? 'counterCast' : 'cast');
-        await this.flyTo(from, this.uidEl(e.card.uid), e.card, { dur: 460 }); await this.wait(e.p === me ? 200 : 700); break; }
-      case 'countered': { const el = this.uidEl(e.card.uid); S('counter'); await this.anim(el, [{ transform: 'rotate(0) scale(1)', opacity: 1, filter: 'none' }, { transform: 'rotate(-6deg) scale(1.05)', filter: 'brightness(2)', offset: .2 }, { transform: 'rotate(10deg) scale(.4)', opacity: 0, filter: 'grayscale(1)' }], 520); this.dropStack(e.card); this.render(); break; }
-      case 'resolve': { const from = this.rect(this.uidEl(e.card.uid)); this.dropStack(e.card); this.render(); S('resolve'); if (e.perm) await this.flyTo(from, this.permEl(e.perm.id), e.card, { dur: 380 }); else await this.wait(150); break; }
+      case 'cast': { const from = this.srcRect(e.p, e.card); this.render(); S(e.depth ? 'counterCast' : 'cast');
+        await this.flyTo(from, this.q(`[data-sid="${e.obj ? e.obj.id : ''}"] .si-img`) || this.uidEl(e.card.uid), e.card, { dur: 460 }); await this.wait(e.p === me ? 200 : 700); break; }
+      case 'resolving': { const row = this.q(`[data-sid="${e.obj.id}"]`); this.lastResolveRect = this.rect(row && row.querySelector('.si-img')); if (row) await this.anim(row, [{ boxShadow: '0 0 0 0 var(--accent)' }, { boxShadow: '0 0 0 3px var(--accent)' }], 260); break; }
+      case 'fizzle': { const row = this.q(`[data-sid="${e.obj.id}"]`); S('counter'); if (row) await this.anim(row, [{ opacity: 1 }, { opacity: .25, filter: 'grayscale(1)' }], 380); this.render(); break; }
+      case 'retarget': { this.render(); S('counterCast'); await this.wait(e.p === me ? 200 : 600); break; }
+      case 'countered': { const el = (e.obj && this.q(`[data-sid="${e.obj.id}"]`)) || this.uidEl(e.card.uid); S('counter'); await this.anim(el, [{ transform: 'rotate(0) scale(1)', opacity: 1, filter: 'none' }, { transform: 'rotate(-6deg) scale(1.05)', filter: 'brightness(2)', offset: .2 }, { transform: 'rotate(10deg) scale(.4)', opacity: 0, filter: 'grayscale(1)' }], 520); this.render(); break; }
+      case 'resolve': { const from = this.lastResolveRect || this.rect(this.uidEl(e.card.uid)); this.lastResolveRect = null; this.render(); S('resolve'); if (e.perm) await this.flyTo(from, this.permEl(e.perm.id), e.card, { dur: 380 }); else await this.wait(150); break; }
       case 'destroy': { const el = this.permEl(e.perm.id); if (!e.quiet) S('destroy'); await this.anim(el, [{ transform: 'scale(1)', opacity: 1, filter: 'none' }, { filter: 'brightness(2) sepia(1) hue-rotate(-40deg)', offset: .3 }, { transform: 'scale(.3) rotate(12deg)', opacity: 0 }], e.quiet ? 260 : 460); break; }
       case 'wipe': { S('wipe'); this.board.querySelectorAll('.gs').forEach(s => s.classList.add('flash')); await this.wait(650); this.board.querySelectorAll('.gs').forEach(s => s.classList.remove('flash')); break; }
       case 'attack': { for (const a of e.assignments) this.attacking.set(a.attacker.id, a.defender.i); this.render(); S('attack');
@@ -364,8 +380,20 @@ class Table {
   // ---------- human hooks ----------
   humanTurn(p, phase) { this.myTurn = true; this.turnPhase = phase; this.ff = false; this.mode = null; this.render(); return new Promise(res => { this.endTurn = (plan = { action: 'end' }) => { this.myTurn = false; this.mode = null; this.endTurn = null; this.render(); res(plan); }; }); }
   /** should the table stop for me at this step? (only called when I have at least one legal action) */
+  /** does this stack object involve me (aimed at me, my permanents or my spells)? */
+  aimedAtMe(obj) { const me = this.me, t = obj.target; if (!t) return false; return t === me || (t.card && this.game.ownerOf(t) === me) || (t.spell && t.spell.caster === me); }
   shouldStop(ctx) {
     const me = this.me, g = this.game;
+    if (ctx.step === 'stack') {
+      const theirs = ctx.stack.filter(o => o.caster !== me); if (!theirs.length) return this.s.stops === 'all';
+      if (ctx.stack[ctx.stack.length - 1].caster === me && this.s.stops !== 'all') return false; // you just acted: keep going unless someone answers
+      const aimed = theirs.some(o => this.aimedAtMe(o) || g.threatTo(me, o).length);
+      const answers = ctx.options.some(o => o.kind === 'cast' && (o.card.roles.includes('counter') || o.card.redirect || o.card.roles.includes('protect')));
+      if (this.passUntilTurn && ctx.active !== me) return aimed && answers; // even when skipping, stop if something is aimed at you and you can answer it
+      if (this.s.stops === 'all') return true;
+      if (this.s.stops === 'minimal') return answers && (aimed || ctx.options.some(o => o.kind === 'cast' && o.card.roles.includes('counter')));
+      return answers || aimed;
+    }
     if (this.passUntilTurn && ctx.active !== me) return false;
     if (this.s.stops === 'minimal') return false;
     if (this.s.stops === 'all') return true;
@@ -455,9 +483,16 @@ class Table {
   }
   // ---------- actions ----------
   async act(fn) { if (this.busy) return; this.busy = true; this.render(); try { await fn(); } finally { this.busy = false; this.render(); } }
-  needsTarget(c) { return c.roles.includes('removal') || (c.dmg && !c.roles.includes('wipe')); }
+  needsTarget(c) { return c.roles.includes('removal') || c.roles.includes('counter') || !!c.redirect || (c.dmg && !c.roles.includes('wipe')); }
+  targetsSpells(c) { return c.roles.includes('counter') || !!c.redirect; }
+  /** can the card in targeting mode target this stack object? */
+  validSpellTarget(obj) {
+    const m = this.mode; if (!m || m.kind !== 'target' || !this.targetsSpells(m.card)) return false;
+    if (m.card.redirect) return !!obj.target;
+    return obj.caster !== this.me && G.counterHits(m.card, obj.card) && !this.game.isUncounterable(obj);
+  }
   startCast(card, zone) {
-    if (this.needsTarget(card)) { this.mode = { kind: 'target', card, zone, players: !!card.dmg && !card.roles.includes('removal') }; this.render(); return; }
+    if (this.needsTarget(card)) { this.mode = { kind: 'target', card, zone, players: !!card.dmg && !card.roles.includes('removal'), spells: this.targetsSpells(card) }; this.render(); return; }
     this.act(() => this.game.cast(this.me, card, zone, null));
   }
   validTarget(perm, owner) {
@@ -480,12 +515,18 @@ class Table {
     let lp = null;
     this.el.addEventListener('touchstart', e => { const t = e.target.closest('[data-uid]'); if (!t) return; clearTimeout(lp); lp = setTimeout(() => { this.lpFired = true; this.openSheet(+t.dataset.uid); }, 520); }, { passive: true });
     for (const ev of ['touchend', 'touchmove', 'touchcancel']) this.el.addEventListener(ev, () => clearTimeout(lp), { passive: true });
-    document.addEventListener('keydown', this.onKey = e => { if (e.key === 'Escape' && this.mode) { this.mode = null; this.render(); } });
+    document.addEventListener('keydown', this.onKey = e => {
+      if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      if (e.key === 'Escape' && this.mode) { this.mode = null; this.render(); return; }
+      const P = this.prompt; if (!P || this.mode) return;
+      if ((e.key === ' ' || e.key === 'Enter' || e.key === '1') && ['priority', 'counter', 'endstep', 'attack'].includes(P.kind)) { e.preventDefault(); P.res(null); }
+      else if ((e.key === '6' || e.key === 'F6') && P.kind === 'priority' && P.active !== this.me) { e.preventDefault(); this.passUntilTurn = true; P.res(null); }
+    });
   }
   findCard(uid) {
     const g = this.game; if (!g) return null;
     for (const p of g.players) { for (const z of [p.hand, p.command, p.graveyard, p.exile]) { const c = z.find(c => c.uid === uid); if (c) return c; } const b = p.battlefield.find(b => b.card.uid === uid); if (b) return b.card; }
-    const s = this.stackView.find(s => s.card.uid === uid); if (s) return s.card;
+    const s = (g.stack || []).find(s => s.card.uid === uid); if (s) return s.card;
     if (this.prompt && this.prompt.spell && this.prompt.spell.card.uid === uid) return this.prompt.spell.card;
     for (const p of g.players) { const c = p.library.find(c => c.uid === uid); if (c) return c; }
     return this.cardByUid ? this.cardByUid.get(uid) || null : null;
@@ -517,9 +558,11 @@ class Table {
     const btn = t.closest('[data-act]'); if (btn) { this.sfx.play('click'); return this.action(btn.dataset.act, btn); }
     const P = this.prompt;
     // prompt option cards
+    const sr = t.closest('[data-sid]'); if (sr && this.mode && this.mode.spells) { const obj = g.stack.find(o => o.id === +sr.dataset.sid); if (obj && this.validSpellTarget(obj)) return this.finishTarget({ spell: obj }); return; }
+    const rt = t.closest('[data-rt]'); if (rt && P && P.kind === 'retarget') return P.res(P.candidates[+rt.dataset.rt]);
     const po = t.closest('[data-popt]'); if (po && P && P.kind === 'priority') {
       const o = P.options[+po.dataset.popt]; if (!o) return;
-      if (o.kind === 'cast' && this.needsTarget(o.card)) { this.mode = { kind: 'target', card: o.card, zone: o.zone || 'hand', respond: true, players: !!o.card.dmg && !o.card.roles.includes('removal') }; this.render(); return; }
+      if (o.kind === 'cast' && this.needsTarget(o.card)) { this.mode = { kind: 'target', card: o.card, zone: o.zone || 'hand', respond: true, players: !!o.card.dmg && !o.card.roles.includes('removal'), spells: this.targetsSpells(o.card) }; this.render(); return; }
       return P.res(o);
     }
     const opt = t.closest('[data-opt]'); if (opt && P) {
@@ -586,6 +629,7 @@ class Table {
     if (a === 'hand-go') { const c = me && me.hand.find(c => c.uid === this.handSel); if (c && this.myTurn && !this.busy && !P) return this.handAct(c); this.handSel = null; this.render(); return; }
     if (a === 'hand-x') { this.handSel = null; this.render(); return; }
     if (a === 'hand-info') { if (this.handSel != null) this.openSheet(this.handSel); return; }
+    if (P && P.kind === 'retarget' && a === 'rt-keep') { P.res(null); return; }
     if (P && P.kind === 'may' && (a === 'may-yes' || a === 'may-no')) { P.res(a === 'may-yes'); return; }
     if (a === 'abil' && this.myTurn && !this.busy && !P) { const o = (this.mainOpts || [])[+btn.dataset.i]; if (!o) return; if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => g.doAction(me, { ...o, instant: false })); }
     if (P && P.kind === 'search' && a === 'search-go') { P.res(P.sel.slice()); return; }
@@ -647,13 +691,55 @@ class Table {
       return `<div class="czc ${can ? 'can' : ''}" data-cmd="${c.uid}" data-uid="${c.uid}" title="${esc(c.name)} — click to cast">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<span>${esc(c.name)}</span>`}</div><div class="cz-cost">${cost.total} mana${p.cmdTax ? ` (tax +${p.cmdTax})` : ''}</div>`; }).join('');
     return `<aside class="cz"><div class="cz-l">Command zone</div>${cards || `<div class="cz-empty">${p.battlefield.some(b => b.card.isCommander) ? 'Commander on the battlefield' : 'Empty'}</div>`}</aside>`;
   }
+  /** what a stack object will do, in plain words */
+  stackVerb(o) {
+    const c = o.card, t = o.target;
+    if (c.roles.includes('counter') && t && t.spell) return `counter ${t.spell.card.name}${c.counter && c.counter.unless ? ` unless ${short(t.spell.caster.name)} pays {${c.counter.unless}}` : ''}`;
+    if (c.redirect && t && t.spell) return `change the target of ${t.spell.card.name}`;
+    if (t && t.card) return `${c.roles.includes('removal') ? 'remove' : 'target'} ${t.card.name} (${short((this.game.ownerOf(t) || {}).name || '')})`;
+    if (t && t.life !== undefined) return `${c.dmg ? c.dmg + ' damage to ' : 'target '}${short(t.name)}`;
+    if (c.roles.includes('wipe')) return 'destroy all creatures';
+    return c.isCreature || c.isArtifact || c.isEnchantment || c.isPlaneswalker ? 'enter the battlefield' : 'resolve';
+  }
+  stackPanel() {
+    const g = this.game, st = g.stack || []; if (!st.length) return '';
+    const rows = [...st].reverse().map((o, i) => {
+      const can = this.mode && this.mode.spells && this.validSpellTarget(o);
+      const targeted = st.some(x => x.target && x.target.spell === o);
+      return `<div class="si ${i === 0 ? 'top' : ''} ${can ? 'tgt' : ''} ${targeted ? 'hit' : ''}" data-sid="${o.id}" data-uid="${o.card.uid}">
+        <div class="si-n">${st.length - i}</div>
+        <div class="si-img">${o.card.img ? `<img src="${esc(o.card.img)}" alt="">` : ''}</div>
+        <div class="si-t"><b>${esc(o.card.name)}</b><small>${esc(short(o.caster.name))} · ${esc(this.stackVerb(o))}</small>${i === 0 ? '<i>resolves next</i>' : ''}${g.isUncounterable(o) ? '<i class="unc">can\'t be countered</i>' : ''}</div></div>`;
+    }).join('');
+    return `<div class="stkp"><div class="stkh">Stack <small>${st.length} item${st.length > 1 ? 's' : ''} · top resolves first</small></div>${rows}</div>`;
+  }
+  /** arrows from each stack item to what it targets (drawn after every render) */
+  drawArrows() {
+    const g = this.game; const old = this.board.querySelector('svg.arrows'); if (old) old.remove();
+    if (!g || !g.stack || !g.stack.length) return;
+    const host = this.board.getBoundingClientRect(); const lines = [];
+    for (const o of g.stack) {
+      const t = o.target; if (!t) continue;
+      const from = this.board.querySelector(`[data-sid="${o.id}"]`); if (!from) continue;
+      const to = t.spell ? this.board.querySelector(`[data-sid="${t.spell.id}"]`) : t.card ? this.board.querySelector(`[data-pid="${t.id}"]`) : this.board.querySelector(`[data-life="${t.i}"]`);
+      if (!to) continue;
+      const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+      const x1 = a.left - host.left + (t.spell ? 6 : a.width / 2), y1 = a.top - host.top + a.height / 2, x2 = b.left - host.left + (t.spell ? 6 : b.width / 2), y2 = b.top - host.top + b.height / 2;
+      const bend = t.spell ? -40 : 0, mx = (x1 + x2) / 2 + bend, my = (y1 + y2) / 2 - (t.spell ? 0 : 30);
+      const color = o.card.roles.includes('counter') ? 'var(--accent)' : o.card.redirect ? 'var(--warn)' : 'var(--bad)';
+      lines.push(`<path d="M${x1},${y1} Q${mx},${my} ${x2},${y2}" stroke="${color}" fill="none" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#ah-${color.replace(/\W/g, '')})"/>`);
+    }
+    if (!lines.length) return;
+    const mk = c => `<marker id="ah-${c.replace(/\W/g, '')}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`;
+    this.board.insertAdjacentHTML('beforeend', `<svg class="arrows" width="${host.width}" height="${this.board.scrollHeight}"><defs>${mk('var(--accent)')}${mk('var(--warn)')}${mk('var(--bad)')}</defs>${lines.join('')}</svg>`);
+  }
   phaseLabel() { const g = this.game; return { untap: 'untap', main1: 'main phase', combat: 'combat', main2: 'second main', end: 'end step', setup: 'setup' }[g.phase] || g.phase; }
   render() {
     const g = this.game, me = this.me, P = this.prompt; if (!g) return;
     const active = g.players[g.active];
     const opps = g.players.filter(p => p !== me);
-    const stack = this.stackView.map(s => `<div class="sc" data-uid="${s.card.uid}">${s.card.img ? `<img src="${esc(big(s.card.img))}" alt="${esc(s.card.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(s.card.name)}</div>`}<div class="who">${esc(short(s.p.name))}${s.target ? ' → ' + esc(s.target.spell ? s.target.spell.card.name : s.target.card ? s.target.card.name : short(s.target.name)) : ''}</div></div>`).join('');
-    let mid = stack ? `<div class="stk">${stack}</div>` : `<div class="idle">${g.winner ? '' : this.busy ? 'Resolving…' : this.myTurn ? (this.touch ? 'Your move · long-press a card to read it' : 'Your move') : esc(short(active.name)) + ' is playing'}</div>`;
+    const stack = this.stackPanel();
+    let mid = stack ? stack : `<div class="idle">${g.winner ? '' : this.busy ? 'Resolving…' : this.myTurn ? (this.touch ? 'Your move · long-press a card to read it' : 'Your move') : esc(short(active.name)) + ' is playing'}</div>`;
     // prompt panel
     let prm = '';
     if (P) {
@@ -663,6 +749,9 @@ class Table {
       else if (P.kind === 'endstep') prm = `<div class="prm"><h4>End of ${esc(short(P.of.name))}'s turn. Cast anything at instant speed?</h4><div class="opts">${opts}</div><div class="gt-ctl"><button class="chip" data-act="pass">Pass</button><span class="msg">Turn this stop off in settings.</span></div></div>`;
       else if (P.kind === 'block') { const incoming = P.attacks.filter(a => !P.map.has(a.attacker) || a.attacker.card.kw.includes('trample')).reduce((s, a) => s + g.powerOf(P.attacker, a.attacker), 0);
         prm = `<div class="prm"><h4>Declare blockers — ${esc(short(P.attacker.name))} is attacking you</h4><div class="gt-ctl"><span class="msg">Click one of your untapped creatures, then the attacker it blocks. Unblocked damage: <b>${incoming}</b> (you're at ${me.life}).</span><button class="chip pri" data-act="block-go">Confirm blocks</button></div></div>`; }
+      else if (P.kind === 'priority' && P.step === 'stack') { const top = P.stack[P.stack.length - 1];
+        prm = `<div class="prm"><h4>Respond? Top of the stack: ${esc(top.card.name)} — ${esc(short(top.caster.name))} wants to ${esc(this.stackVerb(top))}</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass <kbd>Space</kbd></button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn <kbd>6</kbd></button>` : ''}<span class="msg hint">Counterspells can target anything on the stack, not just the top: pick one, then click its row.</span></div></div>`; }
+      else if (P.kind === 'retarget') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a new target for ${esc(P.obj.card.name)} (now: ${esc(this.game.targetName(P.obj.target))})</h4><div class="opts">${P.candidates.map((t, i) => t.spell ? `<button class="chip" data-rt="${i}">${esc(t.spell.card.name)} (on the stack)</button>` : t.card ? `<div class="opt" data-rt="${i}" data-uid="${t.card.uid}">${t.card.img ? `<img src="${esc(big(t.card.img))}" alt="${esc(t.card.name)}">` : esc(t.card.name)}<span class="olab">${esc(short((this.game.ownerOf(t) || {}).name || ''))}</span></div>` : `<button class="chip" data-rt="${i}">${esc(short(t.name))} (${t.life} life)</button>`).join('')}</div><div class="gt-ctl"><button class="chip" data-act="rt-keep">Keep the current target</button></div></div>`;
       else if (P.kind === 'priority') { const stepN = { upkeep: 'upkeep', draw: 'draw step', beginCombat: 'beginning of combat', declareAttackers: 'declare attackers', declareBlockers: 'declare blockers', end: 'end step' }[P.step] || P.step; const whose = P.active === me ? 'your' : esc(short(P.active.name)) + "'s";
         prm = `<div class="prm"><h4>Priority — ${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}. Use an effect?</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass</button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn</button>` : ''}<span class="msg hint">Fetchlands, instants, flash cards, abilities and graveyard spells are used here.</span></div></div>`; }
       else if (P.kind === 'fetch') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a land to put onto the battlefield</h4><div class="opts">${opts}</div></div>`;
@@ -688,7 +777,7 @@ class Table {
     }
     // controls
     let ctl = '';
-    if (this.mode && this.mode.kind === 'target') ctl = `<div class="gt-ctl"><span class="msg">Choose a target for <b>${esc(this.mode.card.name)}</b>${this.mode.players ? ' (a permanent or an opponent\'s life total)' : ''}.</span><button class="chip" data-act="cancel">Cancel</button></div>`;
+    if (this.mode && this.mode.kind === 'target') ctl = `<div class="gt-ctl"><span class="msg">Choose a target for <b>${esc(this.mode.card.name)}</b>${this.mode.spells ? ' — click a highlighted row on the stack' : this.mode.players ? ' (a permanent or an opponent\'s life total)' : ''}.</span><button class="chip" data-act="cancel">Cancel</button></div>`;
     else if (this.mode && this.mode.kind === 'attack') ctl = `<div class="gt-ctl"><span class="msg">Attack:</span>${g.opponentsOf(me).map(q => `<button class="chip" data-act="def" data-p="${q.i}" aria-pressed="${this.mode.def === q}">${esc(short(q.name))} (${q.life})</button>`).join('')}<button class="chip" data-act="atk-all">All creatures</button><button class="chip pri" data-act="atk-go" ${this.mode.map.size ? '' : 'disabled'}>Attack with ${this.mode.map.size}</button><button class="chip" data-act="cancel">Cancel</button><span class="msg">Click your creatures to toggle them.</span></div>`;
     else if (this.myTurn && !P) {
       const combatPhase = this.turnPhase === 'main1' || this.turnPhase === 'combat2';
@@ -731,6 +820,7 @@ class Table {
       ${me ? this.seat(me) : ''}
       ${this.mobile ? `<div class="gt-dock">${prm}${ctl}${handBar}</div>` : ctl + handBar}
       ${over}${settings}${this.sheetHtml ? `<div class="sheet"><div class="box"><button class="chip" data-act="sheet-x" style="justify-self:end">Close</button>${this.sheetHtml}</div></div>` : ''}`;
+    requestAnimationFrame(() => this.drawArrows());
     if (this.showSettings) {
       const bind = (id, k, f = v => v) => { const el = this.board.querySelector('#' + id); el.onchange = el.oninput = () => { this.s[k] = f(el.type === 'checkbox' ? el.checked : el.value); saveSettings(this.s); if (k === 'volume') this.sfx.vol(); }; };
       bind('st-anim', 'anim'); bind('st-speed', 'speed'); bind('st-sound', 'sound'); bind('st-vol', 'volume', Number); bind('st-stop', 'stops');

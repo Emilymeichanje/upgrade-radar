@@ -83,6 +83,7 @@ function tagStatic(card, lines) {
     if ((m = l.match(/you may play (an|two) additional lands? on each of your turns/))) card.extraLands = m[1] === 'two' ? 2 : 1;
     if ((m = l.match(/^([a-z ,]*?)spells you cast cost \{(\d+)\} less to cast/))) card.reducers.push({ n: +m[2], filter: m[1].replace(/\bthat are\b.*$/, '').trim() });
     if (/^this card can't be blocked\.?$/.test(l) && !card.kw.includes('unblockable')) card.kw.push('unblockable');
+    if ((m = l.match(/^([a-z ,]*?)spells you control can't be countered/))) (card.noCounter = card.noCounter || []).push(m[1].trim());
   }
 }
 /** does a card match a filter like "vampire", "red", "legendary", "noncreature", "artifact or enchantment"? */
@@ -280,6 +281,10 @@ function tagCard(c) {
   // numbers applied when the card resolves: spells use their text minus triggered/activated lines; permanents use etbOps instead
   const isPerm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
   const res = isPerm ? '' : o.split('\n').filter(l => !/^(at the beginning|whenever|when )/.test(l) && !/^[^:"]+: /.test(l) && !/^(flashback|cycling|escape|jump-start)/.test(l)).join('\n');
+  card.freeCmd = /if you control a commander, you may cast this spell without paying its mana cost/.test(o);
+  card.uncounterable = /this spell can't be countered/.test(o);
+  card.redirect = /change the target of target spell|choose new targets for target spell|change the target of target (instant|sorcery)/.test(o);
+  if (card.redirect && !r.includes('redirect')) r.push('redirect');
   card.spellOps = isPerm ? null : parseOps(res).filter(op => ['dig', 'mill', 'millOpp', 'scry', 'surveil', 'gyToHand', 'drain', 'landToHand', 'counters'].includes(op.op));
   if (card.spellOps && !card.spellOps.length) card.spellOps = null;
   const tokN = res.match(/create (a|an|two|three|four|\d+)/); card.tokenCount = tokN ? (NUM[tokN[1]] || parseInt(tokN[1]) || 1) : 0;
@@ -406,14 +411,14 @@ class Game {
     if (!instant && this.stack.length) return null;
     if (zone === 'gy') { const gc = card.gyCast; if (!gc || !p.graveyard.includes(card)) return null; if (gc.exileOthers && p.graveyard.filter(c => c !== card).length < gc.exileOthers) return null; if (gc.discard && !p.hand.length) return null; if (gc.discardLand && !p.hand.some(c => c.isLand)) return null; return this.canPayCost(p, this.costOf(p, card, zone)) ? 'mana' : null; }
     const free = this.freeMode(p, card);
-    if (free && card.counter.free === 'commander') return 'free'; // no downside: never pay mana for it
+    if (free && (card.freeCmd || (card.counter && card.counter.free === 'commander'))) return 'free'; // no downside: never pay mana for it
     if (this.canPayCost(p, this.costOf(p, card, zone))) return 'mana';
     return free;
   }
   freeMode(p, card) {
     const f = card.counter && card.counter.free;
     if (f === 'pitch' || (f === 'pitchNotTurn' && this.players[this.active] !== p)) { if (p.hand.some(c => c !== card && c.colors.includes('U'))) return 'free'; }
-    if (f === 'commander' && p.battlefield.some(b => b.card.isCommander)) return 'free';
+    if ((f === 'commander' || card.freeCmd) && p.battlefield.some(b => b.card.isCommander)) return 'free';
     return null;
   }
   /** cards that become castable this turn only if `perm` is untapped */
@@ -467,14 +472,26 @@ class Game {
     return true;
   }
   /** cast a spell; returns true if it resolved. target: perm (with .owner) or player */
-  async cast(p, card, zone = 'hand', target = null, { instant = false, depth = 0 } = {}) {
-    let mode = this.castMode(p, card, zone, { instant }); if (!mode) return false;
+  // ============================== THE STACK ==============================
+  // Every spell is a stack object { id, card, caster, target, zone }. Targets can be permanents, players, or other
+  // stack objects ({spell: obj}) anywhere on the stack. Players pass priority in turn order; when everyone passes in a
+  // row, the top object resolves (or fizzles if its target became illegal) and priority starts again with the active player.
+  /** cast a spell. Outside a priority loop this runs the stack until it's empty; returns true if this spell resolved. */
+  async cast(p, card, zone = 'hand', target = null, opts = {}) {
+    const obj = await this.putOnStack(p, card, zone, target, opts);
+    if (!obj) return false;
+    if (this.stackBusy) return true; // cast in response: it resolves when everyone passes
+    await this.runStack(p);
+    return !!obj.resolved;
+  }
+  async putOnStack(p, card, zone = 'hand', target = null, { instant = false } = {}) {
+    let mode = this.castMode(p, card, zone, { instant }); if (!mode) return null;
     let exile = null;
     if (p.human && card.counter && card.counter.free && card.counter.free.startsWith('pitch') && this.freeMode(p, card) && this.hooks.humanAltCost) {
       const canMana = this.canPayCost(p, this.costOf(p, card, zone)), blues = p.hand.filter(c => c !== card && c.colors.includes('U'));
-      if (canMana || blues.length > 1) { const r = await this.hooks.humanAltCost({ p, card, canMana, blues }); if (!r) return false; mode = r.mode; exile = r.exile || null; }
+      if (canMana || blues.length > 1) { const r = await this.hooks.humanAltCost({ p, card, canMana, blues }); if (!r) return null; mode = r.mode; exile = r.exile || null; }
     }
-    const src = zone === 'cmd' ? p.command : zone === 'gy' ? p.graveyard : p.hand; const i = src.indexOf(card); if (i < 0) return false;
+    const src = zone === 'cmd' ? p.command : zone === 'gy' ? p.graveyard : p.hand; const i = src.indexOf(card); if (i < 0) return null;
     src.splice(i, 1);
     if (zone === 'gy') { const gc = card.gyCast;
       if (gc.exileOthers) { const others = p.graveyard.filter(c => c !== card).sort((a, b) => a.cmc - b.cmc).slice(0, gc.exileOthers); for (const c of others) { p.graveyard.splice(p.graveyard.indexOf(c), 1); p.exile.push(c); } }
@@ -482,60 +499,126 @@ class Game {
       if (gc.discardLand) { const d = p.hand.find(c => c.isLand); if (d) { p.hand.splice(p.hand.indexOf(d), 1); p.graveyard.push(d); } }
     }
     if (mode === 'mana') this.payCost(p, this.costOf(p, card, zone));
-    else if (card.counter.free.startsWith('pitch')) { // exile the least valuable other blue card, pay 1 life
+    else if (card.counter && card.counter.free && card.counter.free.startsWith('pitch') && !card.freeCmd) { // exile the least valuable other blue card, pay 1 life
       const blues = p.hand.filter(c => c.colors.includes('U')).sort((a, b) => a.cmc - b.cmc); const ex = exile && p.hand.includes(exile) ? exile : blues[0]; p.hand.splice(p.hand.indexOf(ex), 1); p.exile.push(ex); p.life -= 1;
       this.say(`exiles ${ex.name} to cast ${card.name} for free`, p);
     }
     if (zone === 'cmd') p.cmdTax += 2;
-    const spell = { card, caster: p, target, zone }; this.stack.push(spell);
-    this.say(`casts ${card.name}${zone === 'gy' ? ' (' + card.gyCast.kind + ')' : ''}${target ? ' → ' + (target.spell ? target.spell.card.name : target.card ? target.card.name : target.name) : ''}`, p);
-    await this.emit({ type: 'cast', p, card, target, depth });
+    const obj = { id: UID++, kind: 'spell', card, caster: p, target, zone };
+    this.stack.push(obj);
+    this.say(`casts ${card.name}${zone === 'gy' ? ' (' + card.gyCast.kind + ')' : ''}${target ? ' → ' + this.targetName(target) : ''}`, p);
+    await this.emit({ type: 'cast', p, card, target, obj, depth: this.stack.length - 1 });
     await this.castTriggers(p, card);
-    // priority: everyone else in turn order may respond with a counterspell
-    let countered = false;
-    if (depth < 4) for (const q of this.after(p)) {
-      if (countered || this.winner) break;
-      const resp = await this.askCounter(q, spell, depth);
-      if (resp && resp.ability) { await this.activate(q, resp.ability); continue; }
-      if (resp) { const isCounter = resp.card.roles.includes('counter'); const ok = await this.cast(q, resp.card, 'hand', isCounter ? { spell } : null, { instant: true, depth: depth + 1 }); if (ok && spell.countered) countered = true; }
-    }
-    this.stack.splice(this.stack.indexOf(spell), 1);
-    if (spell.countered) {
-      await this.emit({ type: 'countered', p, card });
-      if (card.isCommander) { p.command.push(card); this.say(`— ${card.name} returns to the command zone`, p); } else if (zone === 'gy' && card.gyCast.exileAfter) p.exile.push(card); else p.graveyard.push(card);
-      return false;
-    }
-    await this.resolve(spell);
+    return obj;
+  }
+  targetName(t) { return !t ? '' : t.spell ? t.spell.card.name + ' (on the stack)' : t.card ? t.card.name : t.name; }
+  ownerOf(perm) { return this.players.find(q => q.battlefield.includes(perm)) || null; }
+  isUncounterable(obj) { return !!obj.card.uncounterable || obj.caster.battlefield.some(b => (b.card.noCounter || []).some(f => matchesFilter(obj.card, f))); }
+  /** is the object's target still legal as it tries to resolve? */
+  targetLegal(obj) {
+    const t = obj.target; if (!t) return true;
+    if (t.spell) return this.stack.includes(t.spell);
+    if (t.card) { const o = this.ownerOf(t); if (!o) return false; if (o !== obj.caster && (t.protTurn === this.turn || t.card.kw.includes('hexproof') || t.card.kw.includes('shroud'))) return false; return true; }
+    if (t.life !== undefined) return !t.dead;
     return true;
   }
-  async askCounter(q, spell, depth) {
-    const counters = q.hand.filter(c => c.roles.includes('counter') && counterHits(c, spell.card) && this.castMode(q, c, 'hand', { instant: true }));
-    const threatened = this.threatTo(q, spell);
-    const protects = threatened.length ? q.hand.filter(c => c.roles.includes('protect') && c.isInstant && this.castMode(q, c, 'hand', { instant: true })) : [];
-    const options = [...counters, ...protects];
-    if (!options.length && !(q.ai && threatened.length)) return null;
-    if (q.human) return options.length && this.hooks.humanRespond ? await this.hooks.humanRespond({ kind: 'counter', spell, options, depth, threatened }) : null;
-    if (q.ai) {
-      const c = counters.length ? q.ai.chooseCounter(this, q, spell, counters, depth) : null; if (c) return { card: c };
-      const pr = protects.length ? q.ai.chooseProtect(this, q, spell, protects, threatened) : null; if (pr) return { card: pr, protect: true };
-      if ((q.ai.level === 'cutthroat' || q.ai.expert) && threatened.length === 1 && threatened[0].card.isCreature && !threatened[0].card.isCommander) {
-        const outlet = this.abilityOptions(q, { instant: true }).find(o => o.ab.sacOther);
-        if (outlet) return { ability: { ...outlet, victim: threatened[0] } };
+  /** where a spell card goes when it leaves the stack (non-permanents after resolving, or anything countered / fizzled) */
+  async leaveStack(obj) {
+    const { card, caster: p, zone } = obj;
+    if (card.isCommander) { p.command.push(card); this.say(`— ${card.name} returns to the command zone`, p); }
+    else if (zone === 'gy' && card.gyCast && card.gyCast.exileAfter) { p.exile.push(card); this.say(`— ${card.name} is exiled`, p); }
+    else p.graveyard.push(card);
+  }
+  /** spells of players who left the game leave the stack */
+  purgeStack() { for (const o of [...this.stack]) if (o.caster.dead) { this.stack.splice(this.stack.indexOf(o), 1); this.say(`— ${o.card.name} leaves the stack (its controller left the game)`); } }
+  async runStack(starter) {
+    this.stackBusy = (this.stackBusy || 0) + 1;
+    try {
+      let first = starter, guard = 300;
+      while (this.stack.length && !this.winner && guard-- > 0) {
+        this.purgeStack(); if (!this.stack.length) break;
+        if (first.dead) first = this.players[this.active].dead ? this.alive()[0] : this.players[this.active];
+        if (!first) break;
+        const actor = await this.stackPriority(first);
+        if (actor) { first = actor; continue; } // something new on the stack: the player who acted gets priority again
+        const obj = this.stack.pop();
+        await this.emit({ type: 'resolving', obj, p: obj.caster, card: obj.card });
+        await this.resolveObj(obj);
+        first = this.players[this.active];
       }
-      return null;
+    } finally { this.stackBusy--; }
+  }
+  stackSig() { return this.stack.map(o => o.id + ':' + (o.target && o.target.spell ? 's' + o.target.spell.id : o.target && o.target.card ? 'p' + o.target.id : o.target ? 'q' + o.target.i : '')).join(','); }
+  /** what q could do with priority while the stack is not empty */
+  stackOptions(q) {
+    if (q.dead) return [];
+    const out = [];
+    for (const c of q.hand) {
+      if (!c.flash || !this.castMode(q, c, 'hand', { instant: true })) continue;
+      if (c.roles.includes('counter') && !this.stack.some(o => o.caster !== q && counterHits(c, o.card) && !this.isUncounterable(o))) continue;
+      if (c.redirect && !this.stack.some(o => o.target)) continue;
+      out.push({ kind: 'cast', card: c, zone: 'hand' });
+    }
+    out.push(...this.gyCastOptions(q, { instant: true }), ...this.abilityOptions(q, { instant: true }));
+    for (const b of q.battlefield) if (b.card.fetch && this.canActivate(q, b)) out.push({ kind: 'fetch', perm: b, card: b.card });
+    return out;
+  }
+  async stackPriority(first) {
+    const order = [first, ...this.after(first)].filter(q => !q.dead);
+    const sig = this.stackSig();
+    for (const q of order) {
+      if (this.winner) return null;
+      const options = this.stackOptions(q); if (!options.length) continue;
+      let act = null;
+      if (q.human) { if (q.passedSig !== sig && this.hooks.humanPriority) { act = await this.hooks.humanPriority({ step: 'stack', active: this.players[this.active], options, stack: this.stack }); if (!act) q.passedSig = sig; } }
+      else if (q.ai) act = q.ai.stackResponse(this, q, options);
+      if (act) { const before = this.stack.length; const ok = await this.doAction(q, { ...act, instant: true }); if (ok || this.stack.length !== before) return q; }
     }
     return null;
   }
+  async resolveObj(obj) {
+    const { card, caster: p } = obj;
+    if (obj.target && !this.targetLegal(obj)) {
+      obj.fizzled = true; this.say(`— ${card.name} fizzles: ${obj.target.spell ? obj.target.spell.card.name + ' is no longer on the stack' : 'its target is no longer legal'}`, p);
+      await this.emit({ type: 'fizzle', p, card, obj }); await this.leaveStack(obj); return;
+    }
+    obj.resolved = true;
+    await this.resolve(obj);
+  }
+  /** legal new targets for a redirected spell, from the original caster's point of view */
+  retargetCandidates(obj) {
+    const c = obj.card, o = c.oracle.toLowerCase(), caster = obj.caster, out = [];
+    if (c.roles.includes('counter')) { for (const s of this.stack) if (s !== obj && counterHits(c, s.card) && !(obj.target && s === obj.target.spell)) out.push({ spell: s }); return out; }
+    const perms = this.alive().flatMap(q => q.battlefield.map(b => { b.owner = q.i; return b; })).filter(b => !(this.ownerOf(b) !== caster && (b.card.kw.includes('hexproof') || b.card.kw.includes('shroud'))));
+    if (c.roles.includes('removal')) {
+      const ok = /target (creature or planeswalker|creature)/.test(o) ? (b => b.card.isCreature || (/planeswalker/.test(o) && b.card.isPlaneswalker)) : /target artifact or enchantment/.test(o) ? (b => b.card.isArtifact || b.card.isEnchantment) : /target artifact/.test(o) ? (b => b.card.isArtifact) : /target enchantment/.test(o) ? (b => b.card.isEnchantment) : /target nonland permanent/.test(o) ? (b => !b.card.isLand) : /target permanent/.test(o) ? (b => true) : (b => b.card.isCreature);
+      out.push(...perms.filter(ok));
+    }
+    if (c.dmg) { if (/any target|target creature/.test(o)) out.push(...perms.filter(b => b.card.isCreature && !out.includes(b))); if (/any target|target player|target opponent/.test(o)) out.push(...this.alive().filter(q => !(/opponent/.test(o) && q === caster))); }
+    return out.filter(t => t !== obj.target);
+  }
+  async doRedirect(p, card, target) {
+    const victim = target && target.spell; if (!victim || !this.stack.includes(victim) || !victim.target) { this.say(`— nothing to redirect`, p); return; }
+    const cands = this.retargetCandidates(victim); if (!cands.length) { this.say(`— ${victim.card.name} has no other legal target`, p); return; }
+    let nt = null;
+    if (p.human) nt = this.hooks.humanRetarget ? await this.hooks.humanRetarget({ p, card, obj: victim, candidates: cands }) : null;
+    else if (p.ai) nt = p.ai.chooseRetarget(this, p, victim, cands);
+    if (!nt) { this.say(`— keeps ${victim.card.name}'s target`, p); return; }
+    victim.target = nt; this.say(`— ${victim.card.name} now targets ${this.targetName(nt)}`, p);
+    await this.emit({ type: 'retarget', p, obj: victim, target: nt });
+  }
   async resolve(spell) {
     const { card, caster: p, target } = spell;
+    if (card.redirect) { await this.doRedirect(p, card, target); await this.leaveStack(spell, 'resolved'); await this.emit({ type: 'resolve', p, card }); return; }
     // counterspell resolving against a spell on the stack
     if (card.roles.includes('counter') && target && target.spell) {
       const victim = target.spell;
       if (card.counter.unless && victim.caster && this.canPayCost(victim.caster, { generic: card.counter.unless, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: card.counter.unless }) && await this.choosePayUnless(victim.caster, victim, card, card.counter.unless)) {
         this.payCost(victim.caster, { generic: card.counter.unless, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: card.counter.unless });
         this.say(`pays {${card.counter.unless}} for ${card.name}`, victim.caster); await this.emit({ type: 'paid', p: victim.caster, n: card.counter.unless });
-      } else victim.countered = true;
-      p.graveyard.push(card); await this.emit({ type: 'resolve', p, card }); return;
+      } else if (this.isUncounterable(victim)) this.say(`— ${victim.card.name} can't be countered`, p);
+      else { const i = this.stack.indexOf(victim); if (i >= 0) { this.stack.splice(i, 1); victim.countered = true; this.say(`— ${victim.card.name} is countered`, p); await this.emit({ type: 'countered', p: victim.caster, card: victim.card, obj: victim, by: card }); await this.leaveStack(victim, 'countered'); } }
+      await this.leaveStack(spell, 'resolved'); await this.emit({ type: 'resolve', p, card }); return;
     }
     const perm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
     if (card.roles.includes('wipe')) {
@@ -577,8 +660,7 @@ class Game {
     if (card.roles.includes('extracombat')) p.extraCombat = true;
     let pm = null;
     if (perm) { pm = { id: UID++, card, tapped: false, summoning: card.isCreature, counters: 0, loyalty: card.isPlaneswalker ? 4 : 0 }; p.battlefield.push(pm); }
-    else if (spell.zone === 'gy' && card.gyCast && card.gyCast.exileAfter) { p.exile.push(card); this.say(`— ${card.name} is exiled`, p); }
-    else p.graveyard.push(card);
+    else await this.leaveStack(spell, 'resolved');
     await this.emit({ type: 'resolve', p, card, perm: pm });
     if (pm && card.etbOps) await this.runOps(p, card.etbOps, card, { perm: pm });
     if (pm) await this.creatureEntered(p, pm);
@@ -1399,6 +1481,53 @@ class AI {
   combatRelevant(game, me, c) {
     if (c.isCreature) return c.kw.includes('haste') || c.roles.includes('ramp') || !!c.manaAb || (c.anthems && c.anthems.length > 0) || me.battlefield.some(b => b.card.anthems && b.card.anthems.some(a => a.kws.includes('haste')));
     return ['removal', 'ramp', 'draw', 'pump', 'extracombat', 'tutor', 'wipe', 'reanimate', 'tokens'].some(r => c.roles.includes(r)) || !!c.equip || !!(c.anthems && c.anthems.length) || !!c.manaAb || !!c.spellOps;
+  }
+  /** priority while the stack has things on it: counter any object (not just the top), redirect, protect, or sacrifice in response */
+  stackResponse(game, me, options) {
+    const fresh = game.stack.filter(o => !(o.seen && o.seen.has(me.i)));
+    for (const o of fresh) (o.seen = o.seen || new Set()).add(me.i);
+    if (!fresh.length) return null;
+    const castable = options.filter(o => o.kind === 'cast').map(o => o.card);
+    const counters = castable.filter(c => c.roles.includes('counter'));
+    // 1) counterspells, newest object first; counter-wars are handled by chooseCounter
+    for (const obj of [...fresh].reverse()) {
+      if (obj.caster === me || game.isUncounterable(obj)) continue;
+      if (game.stack.some(s => s.caster === me && s.target && s.target.spell === obj)) continue; // already countering it
+      const hits = counters.filter(c => counterHits(c, obj.card)); if (!hits.length) continue;
+      const c = this.chooseCounter(game, me, obj, hits, game.stack.indexOf(obj)); if (c) return { kind: 'cast', card: c, zone: 'hand', target: { spell: obj } };
+    }
+    // 2) redirect something aimed at me, my permanents or my spells
+    const redirects = castable.filter(c => c.redirect);
+    if (redirects.length) for (const obj of [...fresh].reverse()) {
+      if (obj.caster === me || !obj.target) continue;
+      const t = obj.target, aimedAtMe = t === me || (t.card && game.ownerOf(t) === me) || (t.spell && t.spell.caster === me);
+      if (!aimedAtMe) continue;
+      const value = t.spell ? this.castValueRaw(game, me, t.spell.card) : t.card ? this.permBase(t) + 2 : (obj.card.dmg || 0);
+      if (value < (this.level === 'casual' ? 6 : 3)) continue;
+      if (!game.retargetCandidates(obj).length) continue;
+      return { kind: 'cast', card: [...redirects].sort((a, b) => (game.castMode(me, b, 'hand', { instant: true }) === 'free') - (game.castMode(me, a, 'hand', { instant: true }) === 'free') || a.mana.total - b.mana.total)[0], zone: 'hand', target: { spell: obj } };
+    }
+    // 3) protection, or sacrificing the creature in response to removal
+    for (const obj of fresh) {
+      if (obj.caster === me) continue;
+      const threatened = game.threatTo(me, obj); if (!threatened.length) continue;
+      const protects = castable.filter(c => c.roles.includes('protect') && c.isInstant);
+      const pr = protects.length ? this.chooseProtect(game, me, obj, protects, threatened) : null; if (pr) return { kind: 'cast', card: pr, zone: 'hand' };
+      if ((this.level === 'cutthroat' || this.expert) && threatened.length === 1 && threatened[0].card.isCreature && !threatened[0].card.isCommander) {
+        const outlet = options.find(o => o.kind === 'ability' && o.ab.sacOther); if (outlet) return { ...outlet, victim: threatened[0] };
+      }
+    }
+    return null;
+  }
+  /** a redirect resolving: pick the new target that helps me most */
+  chooseRetarget(game, me, obj, cands) {
+    const opps = new Set(game.opponentsOf(me));
+    const c = obj.card;
+    if (c.roles.includes('counter')) { const s = cands.filter(t => t.spell && t.spell.caster !== me).sort((a, b) => this.spellThreat(game, me, b.spell) - this.spellThreat(game, me, a.spell))[0]; return s || null; }
+    const perms = cands.filter(t => t.card && opps.has(game.ownerOf(t))).sort((a, b) => this.permValue(b, game.ownerOf(b), game, me) - this.permValue(a, game.ownerOf(a), game, me));
+    const players = cands.filter(t => t.life !== undefined && opps.has(t)).sort((a, b) => this.threatOf(game, me, b) - this.threatOf(game, me, a));
+    if (c.dmg && players.length && (!perms.length || players[0].life <= c.dmg)) return players[0];
+    return perms[0] || players[0] || null;
   }
   /** expert: which of my would-be attackers stay home to survive the crack-back from everyone who sees me as their target */
   expertHome(game, me, attackers) {

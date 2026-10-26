@@ -912,7 +912,7 @@ function tagCard(c) {
   if (card.redirect && !r.includes('redirect')) r.push('redirect');
   const tokN = res.match(/create (a|an|two|three|four|\d+) (?:tapped )?(?:\d+\/\d+|[a-z ]*creature token)/); card.tokenCount = tokN ? (NUM[tokN[1]] || parseInt(tokN[1]) || 1) : 0;
   const drawN = res.match(/draw (a|two|three|four|five|six|seven|\d+) cards?/); card.drawN = drawN ? (NUM[drawN[1]] || parseInt(drawN[1]) || 1) : 0;
-  card.spellOps = isPerm ? null : parseOps(res).filter(op => !((op.op === 'destroy' && r.includes('removal')) || (op.op === 'damage' && card.dmg) || (op.op === 'draw' && card.drawN) || (op.op === 'gain' && card.gainN) || (op.op === 'tokens' && card.tokenCount) || (op.op === 'landToBf' && r.includes('ramp')) || (op.op === 'pumpAll' && r.includes('pump')) || (op.op === 'extraCombat' && r.includes('extracombat')) || (op.op === 'bounceTarget' && r.includes('removal')) || (op.op === 'lose' && !/loses? \d+ life/.test(res)) || (op.op === 'note' && /goad/.test(op.text || '')) || (op.op === 'gyToBf' && card.reanimate) || (op.op === 'tutorTo' && card.tutor)));
+  card.spellOps = isPerm ? null : parseOps(res).filter(op => !((op.op === 'destroy' && r.includes('removal')) || (op.op === 'destroyAll' && op.how === 'destroy' && r.includes('wipe') && /creature/.test(op.what || '')) || (op.op === 'damage' && card.dmg) || (op.op === 'draw' && card.drawN) || (op.op === 'gain' && card.gainN) || (op.op === 'tokens' && card.tokenCount) || (op.op === 'landToBf' && r.includes('ramp')) || (op.op === 'pumpAll' && r.includes('pump')) || (op.op === 'extraCombat' && r.includes('extracombat')) || (op.op === 'bounceTarget' && r.includes('removal')) || (op.op === 'lose' && !/loses? \d+ life/.test(res)) || (op.op === 'note' && /goad/.test(op.text || '')) || (op.op === 'gyToBf' && card.reanimate) || (op.op === 'tutorTo' && card.tutor)));
   if (card.spellOps && !card.spellOps.length) card.spellOps = null;
   const tokPT = o.match(/(\d+)\/(\d+) [a-z ]*creature token/); card.tokenPT = tokPT ? [+tokPT[1], +tokPT[2]] : [1, 1];
   const dmg = res.match(/deals? (\d+) damage/); card.dmg = dmg ? +dmg[1] : 0;
@@ -1842,8 +1842,9 @@ class Game {
     const perm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
     if (card.roles.includes('wipe')) {
       await this.emit({ type: 'wipe', p, card });
-      for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn)) await this.destroy(q, b, true);
-      this.say(`— board wiped`, p);
+      const hit = this.wipeHits(card, p); const exileOp = (card.spellOps || []).some(op => op.op === 'destroyAll' && op.how === 'exile' && /creature/.test(op.what || ''));
+      if (!exileOp) for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn && hit(b, q))) await this.destroy(q, b, true);
+      if (!exileOp) this.say(hit.all ? `— board wiped` : `— destroys ${hit.desc}`, p);
       for (const q of this.alive()) if (q.battlefield.some(x => x.card.isCreature && x.protTurn === this.turn)) this.say(`— ${q.name}'s creatures survive (protected)`, p);
     } else if (card.roles.includes('removal') && target && target.card && !(card.statics && card.statics.enchant) && !(card.spellOps || []).some(o => ['shrinkTarget', 'dispatch', 'swine', 'oring', 'destroyUpTo', 'bounceSpellOrPerm'].includes(o.op))) {
       const owner = this.players[target.owner];
@@ -1904,9 +1905,20 @@ class Game {
     this.say(`— protects ${perms.length === 1 ? perms[0].card.name : perms.length + ' permanents'} this turn`, p);
   }
   /** does `spell` threaten q's board? (for protection responses) */
+  /** which creatures a sweeper actually hits: "destroy all creatures that entered this turn", "with power 4 or greater", "you don't control"... */
+  wipeHits(card, caster) {
+    const o = (card.oracle || '').toLowerCase(); let m; const tests = [], desc = [];
+    if (/creatures that entered (the battlefield )?this turn/.test(o)) { tests.push(b => b.enteredTurn === this.turn); desc.push('creatures that entered this turn'); }
+    if ((m = o.match(/(?:destroy|exile) all creatures with power (\d+) or (greater|less)/))) { const n = +m[1], ge = m[2] === 'greater'; tests.push((b, q) => ge ? this.powerOf(q, b) >= n : this.powerOf(q, b) <= n); desc.push(`creatures with power ${n} or ${m[2]}`); }
+    if ((m = o.match(/(?:destroy|exile) all (?:creatures|nonland permanents) with mana value (\d+) or (greater|less)/))) { const n = +m[1], ge = m[2] === 'greater'; tests.push(b => ge ? (b.card.cmc || 0) >= n : (b.card.cmc || 0) <= n); desc.push(`creatures with mana value ${n} or ${m[2]}`); }
+    if (/(?:destroy|exile) all (?:creatures|nonland permanents) (?:you don't control|your opponents control)|each creature your opponents control/.test(o)) { tests.push((b, q) => q !== caster); desc.push("opponents' creatures"); }
+    if (/(?:destroy|exile) all non-?artifact creatures/.test(o)) { tests.push(b => !b.card.isArtifact); desc.push('nonartifact creatures'); }
+    if (/(?:destroy|exile) all (?:tapped creatures)/.test(o)) { tests.push(b => b.tapped); desc.push('tapped creatures'); }
+    const f = (b, q) => tests.every(t => t(b, q)); f.all = !tests.length; f.desc = desc.join(', '); return f;
+  }
   threatTo(q, spell) {
     const c = spell.card;
-    if (c.roles.includes('wipe')) return q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn);
+    if (c.roles.includes('wipe')) { const hit = this.wipeHits(c, spell.caster); return q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn && hit(b, q)); }
     if (c.roles.includes('removal') && spell.target && spell.target.card && q.battlefield.includes(spell.target) && spell.target.protTurn !== this.turn) return [spell.target];
     return [];
   }
@@ -2971,6 +2983,30 @@ class Game {
     this.say(`— turn ${this.turn} —`, p);
     await this.emit({ type: 'turn', p });
   }
+  /** undo support: a deep copy of the whole table (everything but hooks/rng), restorable in place so live references to the game, its player list and players stay valid */
+  snapshot() {
+    const memo = new Map(), skip = new Set(['hooks', 'rng']);
+    const cl = o => { if (o === null || typeof o !== 'object') return o; if (memo.has(o)) return memo.get(o);
+      if (Array.isArray(o)) { const a = []; memo.set(o, a); for (const v of o) a.push(cl(v)); return a; }
+      if (o instanceof Map) { const m = new Map(); memo.set(o, m); for (const [k, v] of o) m.set(cl(k), cl(v)); return m; }
+      if (o instanceof Set) { const s = new Set(); memo.set(o, s); for (const v of o) s.add(cl(v)); return s; }
+      const c = Object.create(Object.getPrototypeOf(o)); memo.set(o, c); for (const k of Object.keys(o)) if (!(o === this && skip.has(k))) c[k] = cl(o[k]); return c; };
+    const g = cl(this); return { g, players: g.players, people: g.players.slice() };
+  }
+  restore(snap) {
+    const anchors = [[snap.g, this], [snap.players, this.players], ...snap.people.map((sp, i) => [sp, this.players[i]])];
+    const memo = new Map(anchors);
+    const cl = o => { if (o === null || typeof o !== 'object') return o; if (memo.has(o)) return memo.get(o);
+      if (Array.isArray(o)) { const a = []; memo.set(o, a); for (const v of o) a.push(cl(v)); return a; }
+      if (o instanceof Map) { const m = new Map(); memo.set(o, m); for (const [k, v] of o) m.set(cl(k), cl(v)); return m; }
+      if (o instanceof Set) { const s = new Set(); memo.set(o, s); for (const v of o) s.add(cl(v)); return s; }
+      const c = Object.create(Object.getPrototypeOf(o)); memo.set(o, c); for (const k of Object.keys(o)) c[k] = cl(o[k]); return c; };
+    for (const [src, dst] of anchors) {
+      if (Array.isArray(src)) { dst.length = 0; for (const v of src) dst.push(cl(v)); continue; }
+      for (const k of Object.keys(dst)) if (!(dst === this && (k === 'hooks' || k === 'rng'))) delete dst[k];
+      for (const k of Object.keys(src)) dst[k] = cl(src[k]);
+    }
+  }
   async takeTurn(p) {
     await this.beginTurn(p); if (p.dead || this.winner) return;
     this.phase = 'upkeep';
@@ -3225,7 +3261,8 @@ class AI {
     if (c.spellOps) for (const op of c.spellOps) v += op.op === 'gyToHand' ? (me.graveyard.length ? Math.max(...me.graveyard.map(x => this.castValueRaw(game, me, x))) * 0.6 : -10) : op.op === 'dig' ? 2 : op.op === 'drain' ? op.n * 1.2 : op.op === 'landToHand' ? 1.5 : 0.5; // no effect we model: don't cast it blindly
     if (c.roles.includes('ramp')) v += game.round <= 4 ? 6 : 1;
     if (c.roles.includes('draw')) v += me.hand.length <= 3 ? 5 : 2;
-    if (c.roles.includes('wipe')) { const oppPower = opps.reduce((s, q) => s + this.boardPower(game, q), 0); const myPower = this.boardPower(game, me); v += (oppPower >= myPower * 2 + 6 || opps.some(q => this.boardPower(game, q) >= me.life)) ? 10 : -12; }
+    if (c.roles.includes('wipe')) { const hit = game.wipeHits(c, me); const bp = q => q.battlefield.filter(b => b.card.isCreature && hit(b, q) && !b.card.kw.includes('indestructible')).reduce((s, b) => s + game.powerOf(q, b), 0); const oppPower = opps.reduce((s, q) => s + bp(q), 0); const myPower = bp(me);
+      v += hit.all ? ((oppPower >= myPower * 2 + 6 || opps.some(q => bp(q) >= me.life)) ? 10 : -12) : (oppPower > myPower && oppPower >= 3 ? 4 + oppPower - myPower : -12); }
     if (c.roles.includes('removal')) { const t = this.bestTarget(game, me, b => b.card.isCreature); const need = this.removalNeed(game, me, c); v += t && t.value >= need ? 3 + maxThreat / 8 + (t.value - need) / 2 : -10; if (c.flash && this.level !== 'casual') v -= 3; } // flash removal: prefer holding it
     if (c.isCreature) v += 2 + c.power * 0.5 + c.kw.length * 0.5 + (c.roles.includes('engine') ? 2 : 0);
     if (c.roles.includes('pump')) v += myCreatures >= 3 ? 4 : -5;

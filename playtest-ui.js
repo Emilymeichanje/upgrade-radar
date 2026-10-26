@@ -380,7 +380,7 @@ class Table {
   }
   dropStack(card) { const i = this.stackView.findIndex(s => s.card === card); if (i >= 0) this.stackView.splice(i, 1); }
   // ---------- human hooks ----------
-  humanTurn(p, phase) { this.myTurn = true; this.turnPhase = phase; this.ff = false; this.mode = null; this.render(); return new Promise(res => { this.endTurn = (plan = { action: 'end' }) => { this.myTurn = false; this.mode = null; this.endTurn = null; this.render(); res(plan); }; }); }
+  humanTurn(p, phase) { this.undoStack = []; this.myTurn = true; this.turnPhase = phase; this.ff = false; this.mode = null; this.render(); return new Promise(res => { this.endTurn = (plan = { action: 'end' }) => { this.undoStack = []; this.myTurn = false; this.mode = null; this.endTurn = null; this.render(); res(plan); }; }); }
   /** should the table stop for me at this step? (only called when I have at least one legal action) */
   /** does this stack object involve me (aimed at me, my permanents or my spells)? */
   aimedAtMe(obj) { const me = this.me, t = obj.target; if (!t) return false; return t === me || (t.card && this.game.ownerOf(t) === me) || (t.spell && t.spell.caster === me); }
@@ -484,7 +484,24 @@ class Table {
     return new Promise(res => { this.prompt = { kind: 'mull', n: 0, res: () => { this.prompt = null; res(); } }; this.render(); });
   }
   // ---------- actions ----------
-  async act(fn) { if (this.busy) return; this.busy = true; this.render(); try { await fn(); } finally { this.busy = false; this.render(); } }
+  async act(fn) { if (this.busy) return; this.busy = true; this.render();
+    const g = this.game, undoable = this.myTurn && !this.prompt && g && g.snapshot; let pre = null;
+    if (undoable) { try { if (!g._rngWrapped) { const r = g.rng; g.rng = () => { g._rngN = (g._rngN || 0) + 1; return r(); }; g._rngWrapped = true; } pre = { snap: g.snapshot(), libs: this.undoSig(g, true), opp: this.undoSig(g, false), rn: g._rngN || 0, logN: g.log.length, phase: this.turnPhase }; } catch (e) { console.warn('undo snapshot', e); } }
+    try { await fn(); } finally {
+      if (pre && this.myTurn && this.game === g) {
+        const added = g.log.slice(pre.logN).map(l => l.m).filter(Boolean);
+        if (added.length || this.undoSig(g, false) !== pre.opp || this.undoSig(g, true) !== pre.libs) {
+          const oppActed = added.some(m => g.players.some(q => q !== this.me && m.startsWith(q.name + ': ') && /^(casts|activates|cracks|plays)\b/.test(m.slice(q.name.length + 2))));
+          const why = this.undoSig(g, true) !== pre.libs ? 'it drew, searched, revealed or shuffled cards' : (oppActed || this.undoSig(g, false) !== pre.opp) ? 'an opponent responded' : (g._rngN || 0) !== pre.rn ? 'it involved a random result' : null;
+          const mine = added.map(m => m.startsWith(this.me.name + ': ') ? m.slice(this.me.name.length + 2) : m); const label = (mine.find(m => !/^—/.test(m)) || mine[0] || 'last action').slice(0, 60);
+          (this.undoStack = this.undoStack || []).push({ snap: pre.snap, why, label, phase: pre.phase, uiLog: this.logLines.length }); if (this.undoStack.length > 15) this.undoStack.shift();
+        }
+      }
+      this.busy = false; this.render(); } }
+  /** what an undo must not erase: every library's order (hidden info) or, with libs=false, the opponents' hands (they responded) */
+  undoSig(g, libs) { return g.players.map(p => libs ? p.library.map(c => c.uid).join(',') : (p === this.me ? '' : p.hand.map(c => c.uid).join(','))).join('|'); }
+  undo() { const g = this.game, u = (this.undoStack || []).pop(); if (!u || u.why) { if (u) this.undoStack.push(u); return; }
+    g.restore(u.snap); this.mode = null; this.handSel = null; this.sheetHtml = null; this.addLog(`↶ Undid: ${u.label}`); this.sfx && this.sfx.play && this.sfx.play('click'); this.render(); }
   needsTarget(c) { return c.roles.includes('removal') || c.roles.includes('counter') || !!c.redirect || (c.dmg && !c.roles.includes('wipe')); }
   targetsSpells(c) { return c.roles.includes('counter') || !!c.redirect; }
   /** can the card in targeting mode target this stack object? */
@@ -520,6 +537,7 @@ class Table {
     document.addEventListener('keydown', this.onKey = e => {
       if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
       if (e.key === 'Escape' && this.mode) { this.mode = null; this.render(); return; }
+      if ((e.key === 'z' || e.key === 'Z') && !e.altKey && this.myTurn && !this.busy && !this.prompt && !this.mode) { e.preventDefault(); this.undo(); return; }
       const P = this.prompt; if (!P || this.mode) return;
       if ((e.key === ' ' || e.key === 'Enter' || e.key === '1') && ['priority', 'counter', 'endstep', 'attack'].includes(P.kind)) { e.preventDefault(); P.res(null); }
       else if ((e.key === '6' || e.key === 'F6') && P.kind === 'priority' && P.active !== this.me) { e.preventDefault(); this.passUntilTurn = true; P.res(null); }
@@ -624,6 +642,7 @@ class Table {
     if (a === 'ff') { this.ff = !this.ff; this.render(); return; }
     if (a === 'leave') { this.aborted = true; if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
     if (a === 'cancel') { this.mode = null; this.render(); return; }
+    if (a === 'undo' && this.myTurn && !this.busy && !P) { this.undo(); return; }
     if (a === 'end' && this.myTurn && !this.busy && !P) { this.endTurn({ action: this.turnPhase === 'main1' ? 'end' : 'done' }); return; }
     if (a === 'to-main2' && this.myTurn && !this.busy && !P) { this.endTurn({ action: 'attack', assignments: [] }); return; }
     if (a === 'attack' && this.myTurn && !this.busy && (this.turnPhase === 'main1' || this.turnPhase === 'combat2')) { this.mode = { kind: 'attack', map: new Map(), def: g.opponentsOf(me)[0] }; this.render(); return; }
@@ -807,7 +826,7 @@ class Table {
       const fetchHint = me.battlefield.some(b => b.card.fetch && g.canActivate(me, b)) ? (this.touch ? ' · tap a glowing fetchland to crack it' : ' · click a glowing fetchland to crack it') : '';
       this.mainOpts = this.busy ? [] : [...g.gyCastOptions(me), ...g.abilityOptions(me)];
       const abil = this.mainOpts.length ? `<div class="gt-ctl abil-row"><span class="msg">Abilities:</span>${this.mainOpts.map((o, i) => `<button class="chip abil" data-act="abil" data-i="${i}" data-uid="${o.card.uid}">${esc(short(o.card.name))} · ${esc(this.optLabel(o))}${o.card.abilities && o.ab && o.ab.zone !== 'battlefield' ? ` <small>(${o.ab.zone})</small>` : o.zone === 'gy' ? ' <small>(graveyard)</small>' : ''}</button>`).join('')}</div>` : '';
-      ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint}</span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>`; }
+      ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint}</span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u ? `<button class="chip" data-act="undo" ${this.busy || u.why ? 'disabled' : ''} title="${esc(u.why ? "Can't undo: " + u.why : 'Undo: ' + u.label + ' (Z)')}">↶ Undo</button>` : ''; })()}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u && u.why ? `<div class="note" style="margin-top:4px">Can't undo ${esc(u.label)}: ${esc(u.why)}.</div>` : ''; })()}`; }
     // hand
     let handBar = '';
     if (me) {

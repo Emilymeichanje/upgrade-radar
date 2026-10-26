@@ -516,8 +516,8 @@ class Table {
   }
   validTarget(perm, owner) {
     const m = this.mode; if (!m || m.kind !== 'target') return false;
-    if (perm.card.isLand || perm.card.kw.includes('hexproof') && owner !== this.me) return false;
     if (m.restrict && !m.restrict.includes(perm)) return false;
+    if (this.game.targetOk && !m.spells) return this.game.targetOk(m.card, perm, this.me) && (!perm.card.isLand || /\bland\b|target permanent|nonland/.test(m.card.oracle.toLowerCase()) && !/nonland/.test(m.card.oracle.toLowerCase()));
     const o = m.card.oracle.toLowerCase();
     if (/target creature/.test(o) && !/permanent|artifact|enchantment|planeswalker/.test(o)) return perm.card.isCreature;
     return true;

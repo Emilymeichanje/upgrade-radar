@@ -1,0 +1,14 @@
+{
+  "name": "Upgrade Radar",
+  "short_name": "Upgrade Radar",
+  "description": "Commander deck upgrades from new cards and EDHREC, plus a playtest table.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f1513",
+  "theme_color": "#0f1513",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

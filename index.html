@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>Upgrade Radar</title>
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#0f1513"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
 /* Layout: one column, sticky header with filters; deck grid → deck detail with tabs. Numbers in mono; every color a token. */
@@ -150,6 +151,14 @@ body.playing main .wrap,body.playing header.top .wrap{max-width:1680px}
 .threat{font-family:var(--mono);font-size:.72rem;color:var(--muted)}
 @media (max-width:480px){.deck{grid-template-columns:52px 1fr}.deck img,.deck .ph{width:52px;height:52px}.hero{grid-template-columns:72px 1fr}.hero img{width:72px}}
 @media (prefers-reduced-motion:no-preference){.deck,.card{transition:border-color .15s}}
+#lstgrid{margin-top:14px;display:grid;gap:14px}
+.dg-s h4{margin:0 0 6px;font:700 .95rem var(--display)}.dg-s h4 small{font:400 .8rem var(--body);color:var(--muted)}
+.dg{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}
+.dg-c{position:relative;display:block;aspect-ratio:.716;border-radius:6px;overflow:hidden;background:var(--soft);color:var(--fg);text-decoration:none;font-size:.7rem}
+.dg-c img{width:100%;height:100%;object-fit:cover;display:block}
+.dg-c span{display:grid;place-items:center;height:100%;padding:4px;text-align:center}
+.dg-n{position:absolute;right:4px;bottom:4px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:0 5px;font:700 .72rem var(--mono)}
+@media (max-width:640px){.dg{grid-template-columns:repeat(auto-fill,minmax(72px,1fr))}}
 #filtbtn{display:none}
 /* phones: filters fold away, bigger tap targets, nothing wider than the screen */
 @media (max-width:640px){
@@ -338,7 +347,7 @@ function parseList(txt){ // handles Archidekt, Moxfield, MTGO and plain exports
     if(/^(sideboard|maybeboard|maybe|considering|tokens?)$/.test(head)){skip=true;continue}   // cards under these headers are not in the 99
     if(/^(commander|commanders|deck|main|mainboard|companion)$/.test(head)){skip=false;continue}
     if(/^(\/\/|#)/.test(l))continue;
-    if(!skip)lines.push(l)}
+    if(!skip){const q=l.match(/^(\d+)\s*x?\s+/i);const n=q?Math.min(+q[1],99):1;for(let i=0;i<n;i++)lines.push(l)}}
   return lines
     .map(l=>l.replace(/\s*\[[^\]]*\]/g,'')          // Archidekt [Category] / [Commander{top}]
              .replace(/\s*\^[^^]*\^/g,'')            // Archidekt ^colour tags^
@@ -440,7 +449,7 @@ async function openDeck(slug){
 async function deckListEnriched(d){ // returns [{name,oracle,type,roles,st}] or null
   const dk=S.decks[d.slug];if(!dk||!dk.list||!dk.list.length)return null;
   if(dk._enriched&&dk._enriched.n===dk.list.length)return dk._enriched.v;
-  const st=statsFor(d);let cards=[];try{cards=await cardsNamed(dk.list)}catch(e){}
+  const st=statsFor(d);let cards=[];try{cards=await cardsNamed([...new Set(dk.list)])}catch(e){}
   const cmd=commanderNames(d);
   const v=cards.filter(c=>!cmd.has(norm(c.name))).map(c=>({name:c.name,oracle:c.oracle,type:c.type,roles:rolesOf(c.oracle),st:st[norm(c.name)]||null}));
   dk._enriched={n:dk.list.length,v};return v;
@@ -451,9 +460,11 @@ async function renderTab(){
   const dk=S.decks[d.slug]||{};const own=new Set((dk.list||[]).map(norm));const dismissed=dk.dismissed||{};const kept=dk.kept||{};
   if(S.tab==='list'){
     pane.innerHTML=`<p class="note">Paste an export from Archidekt (Export → Text), Moxfield (More → Export → any text option) or a plain list. Quantities, set codes, foil marks, Moxfield #tags and Archidekt [categories] are stripped automatically. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
-      <textarea id="lst" aria-label="Decklist">${esc((dk.list||[]).join('\n'))}</textarea>
-      <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg">${dk.list?dk.list.length+' cards saved':''}</span></div>`;
-    $('#savelist').onclick=async()=>{const list=parseList($('#lst').value);await saveDeck(d.slug,{list,_enriched:null});const cmd=commanderNames(d);const ninety=list.filter(n=>!cmd.has(norm(n))).length;$('#lstmsg').textContent=`${list.length} lines saved (${ninety} in the 99; commander line ignored)`};
+      <textarea id="lst" aria-label="Decklist">${esc((()=>{const m=new Map();for(const n of dk.list||[])m.set(n,(m.get(n)||0)+1);return [...m].map(([n,k])=>k+' '+n).join('\n')})())}</textarea>
+      <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg"></span></div>
+      <div id="lstgrid"></div>`;
+    $('#savelist').onclick=async()=>{const list=parseList($('#lst').value);await saveDeck(d.slug,{list,_enriched:null});renderDeckGrid(d,stale)};
+    if(dk.list&&dk.list.length)renderDeckGrid(d,stale);
     return;
   }
   pane.innerHTML='<div class="empty">Fetching cards…</div>';
@@ -500,8 +511,34 @@ function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detai
   if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=22').then(()=>loadScript('playtest-ui.js?v=22'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=23').then(()=>loadScript('playtest-ui.js?v=23'));return ptLoaded}
 const PT={cfg:null,table:null};
+/** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
+const GRIDCACHE=new Map();
+async function renderDeckGrid(d,stale){
+  const el=$('#lstgrid'),msg=$('#lstmsg');if(!el)return;
+  const list=(S.decks[d.slug]&&S.decks[d.slug].list)||[];
+  if(!list.length){el.innerHTML='';msg.textContent='';return}
+  const cmd=commanderNames(d);const ninety=list.filter(n=>!cmd.has(norm(n)));
+  const inPool=list.length>=60;
+  msg.innerHTML=`<b style="color:var(--good)">✓ Saved</b> · ${list.length} cards (${ninety.length} in the 99) · ${inPool?'<b>in the Playtest pool</b>':'<span style="color:var(--warn)">Playtest needs 60+ cards</span>'}`;
+  el.innerHTML='<div class="note">Loading card images…</div>';
+  const uniq=[...new Set(list)];const need=uniq.filter(n=>!GRIDCACHE.has(norm(n)));
+  try{const got=await cardsNamed(need);for(const c of got){GRIDCACHE.set(norm(c.name),c);GRIDCACHE.set(norm(c.name.split(' // ')[0]),c)}}catch(e){}
+  if(stale&&stale())return;
+  let cmdCard=null;for(const n of cmd){const c=GRIDCACHE.get(n);if(c){cmdCard=c;break}}
+  if(!cmdCard)cmdCard=S.cmdr[d.slug]||await commanderCard(d);
+  const counts=new Map();for(const n of ninety){const k=norm(n);counts.set(k,(counts.get(k)||0)+1)}
+  const groups=[['Creatures',/\bCreature\b/],['Planeswalkers',/\bPlaneswalker\b/],['Battles',/\bBattle\b/],['Instants',/\bInstant\b/],['Sorceries',/\bSorcery\b/],['Artifacts',/\bArtifact\b/],['Enchantments',/\bEnchantment\b/],['Lands',/\bLand\b/]];
+  const buckets=new Map(groups.map(g=>[g[0],[]]));const missing=[];
+  for(const [k,n] of counts){const c=GRIDCACHE.get(k);if(!c){missing.push([...ninety].find(x=>norm(x)===k));continue}
+    const front=(c.type||'').split(' // ')[0];const g=/\bLand\b/.test(front)?'Lands':(groups.find(([,re])=>re.test(front))||['Artifacts'])[0];buckets.get(g).push({c,n})}
+  const tile=({c,n})=>`<a class="dg-c" href="${esc(c.uri||'#')}" target="_blank" rel="noopener" title="${esc(c.name)}">${c.img?`<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">`:`<span>${esc(c.name)}</span>`}${n>1?`<b class="dg-n">×${n}</b>`:''}</a>`;
+  const sect=(title,items)=>items.length?`<div class="dg-s"><h4>${title} <small>${items.reduce((s,x)=>s+x.n,0)}</small></h4><div class="dg">${items.sort((a,b)=>(a.c.cmc||0)-(b.c.cmc||0)||a.c.name.localeCompare(b.c.name)).map(tile).join('')}</div></div>`:'';
+  el.innerHTML=(missing.length?`<p class="note" style="color:var(--warn)">Not found on Scryfall (check spelling): ${missing.map(esc).join(', ')}</p>`:'')
+    +(cmdCard?sect('Commander',[{c:cmdCard,n:1}]):'')
+    +groups.map(([g])=>sect(g,buckets.get(g))).join('');
+}
 function decksWithLists(){return S.index.filter(d=>!d.retired&&S.decks[d.slug]?.list?.length>=60)}
 async function openPlaytest(){
   if(PT.table){PT.table.aborted=true;PT.table=null}

@@ -197,12 +197,14 @@ body.playing main .wrap,body.playing header.top .wrap{max-width:1680px}
     <button class="chip" id="b3" aria-pressed="true" data-b="3">Bracket 3</button>
     <button class="chip" id="bc" aria-pressed="true" data-b="cEDH">cEDH</button>
     <button class="chip" id="addbtn">+ Add deck</button>
+    <button class="chip" id="bulkbtn" title="Paste several deck exports at once">Bulk lists</button>
     <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
     <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
     <button class="chip" id="theme" title="Switch between light, dark and system theme">Theme: system</button>
   </div>
   <div class="search"><input type="search" id="q" placeholder="Search decks: name, colors (e.g. WUB), bracket, tag" aria-label="Search decks" autocomplete="off"><label class="note" for="sort">Sort</label><select id="sort"><option value="name">Name A–Z</option><option value="updated">Last updated</option><option value="decks">EDHREC popularity</option></select><span class="note" id="cap"></span></div>
   <div id="addpanel" class="panel" hidden></div>
+  <div id="bulkpanel" class="panel" hidden></div>
 </div></header>
 
 <main><div class="wrap">
@@ -421,6 +423,42 @@ function toggleAdd(open){const p=$('#addpanel');p.hidden=!open;if(!open)return;
     buildIndex();const d=S.index.find(x=>x.slug===slug);d.ci=card.ci;d.img=card.img.replace('/small/','/normal/');d.art=card.img.replace('/small/','/art_crop/');S.cmdr[slug]=card;
     toggleAdd(false);renderHome();openDeck(slug)};
 }
+// ---------- bulk lists: paste many exports, each goes to the deck whose commander it contains ----------
+function splitBulk(txt){return txt.split(/^\s*(?:-{3,}|={3,})\s*$/m).map(s=>s.trim()).filter(s=>s.split(/\n/).length>=20)}
+function bulkCmdrName(raw){ // the commander named inside the export itself (Archidekt [Commander] tag, or a "Commander" section)
+  const lines=raw.split(/\r?\n/);const tagged=lines.find(l=>/\[[^\]]*commander[^\]]*\]/i.test(l));if(tagged)return parseList(tagged)[0]||null;
+  const i=lines.findIndex(l=>/^\s*(\/\/|#)?\s*commanders?\s*:?\s*$/i.test(l));if(i>=0){const nxt=lines.slice(i+1).find(l=>l.trim());if(nxt)return parseList(nxt)[0]||null}
+  return null}
+function bulkMatch(raw){const list=parseList(raw);const have=new Set(list.map(norm));
+  const cands=active().filter(d=>{const names=String(d.name).split(/\s+(?:\/\/|\+|&)\s+/);return names.every(n=>have.has(norm(n)))});
+  cands.sort((a,b)=>String(b.name).length-String(a.name).length);
+  return {list,deck:cands[0]||null,cmdr:cands[0]?null:bulkCmdrName(raw)}}
+function toggleBulk(open){const p=$('#bulkpanel');p.hidden=!open;if(!open)return;
+  p.innerHTML=`<h3>Bulk lists</h3>
+   <p class="note">Paste several Archidekt or Moxfield exports into the box, with a line of <b>---</b> between decks. Each list goes to the deck whose commander is in it. A list whose commander isn't one of your decks yet is added as a new deck, if you have room under your cap. Saving replaces those decks' current lists.</p>
+   <textarea id="bulktxt" aria-label="Several decklists" style="min-height:220px"></textarea>
+   <div class="row"><button class="chip" id="bulkcheck">Check</button><button class="chip" id="bulksave" disabled>Save all</button><button class="chip" id="bulkcancel">Cancel</button><span class="note" id="bulkmsg"></span></div>
+   <div id="bulkres"></div>`;
+  let plan=[];
+  $('#bulkcancel').onclick=()=>toggleBulk(false);
+  $('#bulkcheck').onclick=()=>{const blocks=splitBulk($('#bulktxt').value);plan=blocks.map(bulkMatch);
+    if(!blocks.length){$('#bulkmsg').textContent='No lists found — each deck needs at least 20 lines, separated by ---.';$('#bulksave').disabled=true;$('#bulkres').innerHTML='';return}
+    const seen=new Set();for(const x of plan){if(x.deck){if(seen.has(x.deck.slug))x.dup=true;seen.add(x.deck.slug)}}
+    $('#bulkres').innerHTML='<ul style="margin:0;padding-left:18px">'+plan.map((x,i)=>`<li>List ${i+1} (${x.list.length} cards): ${x.deck?(x.dup?'<span class="err">'+esc(x.deck.display||x.deck.name)+' appears twice — only the first is saved</span>':'→ <b>'+esc(x.deck.display||x.deck.name)+'</b>'+(x.list.length<60?' <span class="err">(under 60 cards; Playtest needs 60+)</span>':'')):x.cmdr?'→ new deck: <b>'+esc(x.cmdr)+'</b>':'<span class="err">no matching deck and no commander marked in the export — add the deck first, or keep the Commander section in the export</span>'}</li>`).join('')+'</ul>';
+    const n=plan.filter(x=>(x.deck&&!x.dup)||x.cmdr).length;$('#bulkmsg').textContent=`${n} of ${plan.length} lists ready.`;$('#bulksave').disabled=!n};
+  $('#bulksave').onclick=async()=>{$('#bulksave').disabled=true;let saved=0;const errs=[];
+    for(const x of plan){
+      if(x.deck&&!x.dup){await saveDeck(x.deck.slug,{list:x.list,_enriched:null});saved++;continue}
+      if(!x.cmdr)continue;
+      if(active().length>=cap()){errs.push(x.cmdr+': at your deck cap — dismantle one first');continue}
+      let card=null;try{const r=await fetch('https://api.scryfall.com/cards/named?exact='+encodeURIComponent(x.cmdr));if(r.ok)card=slim(await r.json())}catch(e){}
+      if(!card){errs.push(x.cmdr+': Scryfall couldn\'t find it');continue}
+      if(!/legendary/i.test(card.type)&&!/can be your commander/i.test(card.oracle)){errs.push(card.name+': not a legal commander');continue}
+      const slug=slugify(card.name);
+      await saveDeck(slug,{custom:!S.snap.commanders.some(c=>c.slug===slug),name:card.name,bracket:'3',retired:false,addedAt:new Date().toISOString(),list:x.list,_enriched:null});
+      buildIndex();const d=S.index.find(y=>y.slug===slug);if(d){d.ci=card.ci;d.img=card.img.replace('/small/','/normal/');d.art=card.img.replace('/small/','/art_crop/');S.cmdr[slug]=card}saved++}
+    buildIndex();renderHome();$('#bulkmsg').textContent=`Saved ${saved} list${saved===1?'':'s'}.`+(errs.length?' Skipped: '+errs.join('; '):'')};
+}
 async function retireDeck(slug){await saveDeck(slug,{retired:true,retiredAt:new Date().toISOString()});buildIndex();$('#back').click()}
 async function rebuildDeck(slug){if(active().length>=cap()){$('#addpanel').hidden=false;toggleAdd(true);$('#newname').value=S.index.find(d=>d.slug===slug).name;window.scrollTo(0,0);return}
   await saveDeck(slug,{retired:false,rebuiltAt:new Date().toISOString()});buildIndex();$('#back').click()}
@@ -591,7 +629,7 @@ function wire(){
   $('#since').onchange=()=>{S.since=$('#since').value||dflt;try{localStorage.setItem('since',S.since)}catch(e){}if(S.cur)renderTab()};
   document.querySelectorAll('.chip[data-b]').forEach(b=>b.onclick=()=>{const on=b.getAttribute('aria-pressed')!=='true';b.setAttribute('aria-pressed',on);if(on)S.brackets.add(b.dataset.b);else S.brackets.delete(b.dataset.b);renderHome()});
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};

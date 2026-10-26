@@ -500,7 +500,7 @@ function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detai
   if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=19').then(()=>loadScript('playtest-ui.js?v=19'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=20').then(()=>loadScript('playtest-ui.js?v=20'));return ptLoaded}
 const PT={cfg:null,table:null};
 function decksWithLists(){return S.index.filter(d=>!d.retired&&S.decks[d.slug]?.list?.length>=60)}
 async function openPlaytest(){
@@ -510,7 +510,7 @@ async function openPlaytest(){
   const ds=decksWithLists();
   if(ds.length<2){el.innerHTML=`<h2 style="font-size:1.4rem">Playtest</h2><div class="empty">Playtest needs at least 2 decks with a saved list of 60+ cards (you have ${ds.length}). Open a deck in <b>Decks</b> → "Your list" → paste your Archidekt or Moxfield export → Save, then come back.</div>`;return}
   const opt=ds.map(d=>`<option value="${esc(d.slug)}">${esc(d.display||d.name)}</option>`).join('');
-  const lv=id=>`<select id="${id}"><option value="casual">Casual</option><option value="focused" selected>Focused</option><option value="cutthroat">Cutthroat</option></select>`;
+  const lv=id=>`<select id="${id}"><option value="casual">Casual</option><option value="focused">Focused</option><option value="cutthroat">Cutthroat</option><option value="expert" selected>Expert</option></select>`;
   const prev=PT.cfg||{};
   el.innerHTML=`<h2 style="font-size:1.4rem;margin-bottom:4px">Playtest</h2>
    <p class="note" style="max-width:760px">Four-player Commander table. You pilot seat 1 against three AI opponents running your other decks. The AI counters spells it judges dangerous, removes attackers at instant speed, holds mana up and blocks to survive. The engine reads card types, costs, colours, power/toughness, keywords and roles (ramp, draw, removal, wipes, counterspells, tokens, pump), but <b>not</b> each card's unique text, so engines and combos don't run. Use it to test curve, speed and interaction.</p>
@@ -518,16 +518,19 @@ async function openPlaytest(){
     <div class="seat"><h3>Seat 1 — you</h3><div class="row"><select id="s0">${opt}</select><label class="note"><input type="checkbox" id="watch" ${prev.watch?'checked':''}> AI pilots this seat too (watch mode)</label></div><div class="row" id="w0" ${prev.watch?'':'hidden'}>${lv('l0')}</div></div>
     ${[1,2,3].map(i=>`<div class="seat"><h3>Seat ${i+1} — AI</h3><div class="row"><select id="s${i}">${opt}</select>${lv('l'+i)}</div></div>`).join('')}
     <div class="row"><button class="chip" id="ptrand">Randomize AI decks</button><button class="chip" id="ptlvl">Randomize difficulty</button><button class="chip pri" id="ptstart">Start game</button></div>
-    <p class="note">Difficulty — <b>Casual</b>: plays its hand, attacks the lowest life, counters loosely and misses things. <b>Focused</b>: attacks the biggest threat, keeps blockers back, counters engines, commanders and anything aimed at its board. <b>Cutthroat</b>: weighs engines, card advantage and mana, holds counter mana up early, saves free counters for game-changing spells, takes lethal first and races when ahead.</p>
+    <p class="note">Difficulty — <b>Casual</b>: plays its hand, attacks the lowest life, counters loosely and misses things. <b>Focused</b>: attacks the biggest threat, keeps blockers back, counters engines, commanders and anything aimed at its board. <b>Cutthroat</b>: weighs engines, card advantage and mana, holds counter mana up early, saves free counters for game-changing spells, takes lethal first and races when ahead. <b>Expert</b> (default): everything Cutthroat does, plus it knows which cards are Commander staples (from EDHREC), casts non-combat spells after combat, doesn't overextend into a likely board wipe, sends each attacker to the player it actually gets through to, counts crack-back from every creature, mulligans with ramp in mind, and sacrifices creatures in response to removal when it has an outlet.</p>
    </div>`;
   const pick=()=>{const used=new Set([$('#s0').value]);for(const i of [1,2,3]){const pool=ds.filter(d=>!used.has(d.slug));const d=pool.length?pool[Math.floor(Math.random()*pool.length)]:ds[Math.floor(Math.random()*ds.length)];$('#s'+i).value=d.slug;used.add(d.slug)}};
   if(prev.slugs){prev.slugs.forEach((s,i)=>{if(ds.some(d=>d.slug===s))$('#s'+i).value=s});prev.levels.forEach((l,i)=>{if(l&&$('#l'+i))$('#l'+i).value=l})}else pick();
-  $('#ptrand').onclick=pick;$('#ptlvl').onclick=()=>{for(const i of [1,2,3])$('#l'+i).value=['casual','focused','cutthroat'][Math.floor(Math.random()*3)]};
+  $('#ptrand').onclick=pick;$('#ptlvl').onclick=()=>{for(const i of [1,2,3])$('#l'+i).value=['casual','focused','cutthroat','expert'][Math.floor(Math.random()*4)]};
   $('#watch').onchange=()=>{$('#w0').hidden=!$('#watch').checked};
   $('#ptstart').onclick=()=>{PT.cfg={slugs:[0,1,2,3].map(i=>$('#s'+i).value),levels:[0,1,2,3].map(i=>$('#l'+i)?$('#l'+i).value:null),watch:$('#watch').checked};startGame(PT.cfg)};
 }
+/** EDHREC popularity (share of decks running a card) for every commander's lists: the AI treats widely played cards as strong */
+function popularityMap(){const m={};for(const c of (S.snap&&S.snap.commanders)||[])for(const v of Object.values(c.lists||{}))for(const x of v){const s=x.p?x.d/x.p:0;if(s>(m[x.n]||0))m[x.n]=s}return m}
 async function startGame(cfg){
   const el=$('#play');el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>';
+  if(Goldfish.setPopularity)Goldfish.setPopularity(popularityMap());
   const seats=[];
   for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===cfg.slugs[i]);const list=S.decks[d.slug].list;
     let cards=[];try{cards=await cardsNamed([...new Set(list)])}catch(e){}
@@ -538,7 +541,7 @@ async function startGame(cfg){
     const deck=Goldfish.buildDeck(full.filter(c=>!cmd.has(norm(c.name))).concat(cmdCards),cmdCards.map(c=>c.name));
     if(deck.library.length<40){el.innerHTML=`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards were found on Scryfall. Check the list for typos.</div><button class="chip" id="ptback2">Back to setup</button>`;$('#ptback2').onclick=openPlaytest;return}
     const human=i===0&&!cfg.watch;
-    seats.push({name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'focused'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')});
+    seats.push({name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'expert'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')});
   }
   el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg)});
 }

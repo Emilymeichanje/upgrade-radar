@@ -393,6 +393,11 @@ class Table {
     for (const a of c.abilities || []) bits.push((a.zone === 'battlefield' ? 'ability' : a.zone + ' ability') + ': ' + this.optLabel({ kind: 'ability', ab: a }));
     if (c.gyCast) bits.push('castable from graveyard: ' + c.gyCast.kind);
     if (c.doublesDeath) bits.push('doubles death triggers');
+    for (const an of c.anthems || []) bits.push(`${an.other ? 'other ' : ''}${an.filter || 'creatures'} you control ${an.pump[0] || an.pump[1] ? `+${an.pump[0]}/+${an.pump[1]}` : ''}${an.kws.length ? ' ' + an.kws.join(', ') : ''}`);
+    if (c.equip) bits.push(`equipped creature ${c.equip.pump[0] || c.equip.pump[1] ? `+${c.equip.pump[0]}/+${c.equip.pump[1]}` : ''}${c.equip.kws.length ? ' ' + c.equip.kws.join(', ') : ''}`);
+    if (c.extraLands) bits.push(`+${c.extraLands} land drop${c.extraLands > 1 ? 's' : ''}`);
+    for (const r of c.reducers || []) bits.push(`${r.filter || 'spells'} cost {${r.n}} less`);
+    if (c.pop) bits.push(`EDHREC staple score ${Math.round(c.pop * 100)}%`);
     return bits.length ? `<div class="rl">Engine also runs: ${esc(bits.join(' · '))}</div>` : '';
   }
   /** official rulings (Wizards of the Coast, the same ones Gatherer shows), fetched on demand from Scryfall */
@@ -424,7 +429,7 @@ class Table {
   optLabel(o) {
     if (o.kind === 'fetch') return 'crack';
     if (o.kind === 'cast') return o.zone === 'gy' ? (o.card.gyCast.kind + ' ' + this.costStr(o.card.gyCast.cost)) : 'cast';
-    if (o.kind === 'ability') { const ab = o.ab; const what = ab.label || ({ gyToHand: 'return a card to hand', draw: 'draw', landToHand: 'find a land', selfToBf: 'return to battlefield', selfToHand: 'return to hand', tokens: 'make tokens', gain: 'gain life', drain: 'drain', damage: 'deal damage', counters: '+1/+1 counters', destroy: 'destroy', gyToBf: 'reanimate', mill: 'mill', scry: 'scry', surveil: 'surveil', tokenCopy: 'token copy' }[ab.ops[0].op] || 'activate'); return `${what} ${this.costStr(ab.cost)}${ab.tap ? ' {T}' : ''}`; }
+    if (o.kind === 'ability') { const ab = o.ab; const what = ab.label || ({ gyToHand: 'return a card to hand', draw: 'draw', landToHand: 'find a land', selfToBf: 'return to battlefield', selfToHand: 'return to hand', tokens: 'make tokens', gain: 'gain life', drain: 'drain', damage: 'deal damage', counters: '+1/+1 counters', destroy: 'destroy', gyToBf: 'reanimate', mill: 'mill', scry: 'scry', surveil: 'surveil', tokenCopy: 'token copy', attach: 'equip', edict: 'edict', bounceAllOpp: 'overload' }[ab.ops[0].op] || 'activate'); return `${what} ${this.costStr(ab.cost)}${ab.tap ? ' {T}' : ''}`; }
     return '';
   }
   filterSearch(v) { const s = v.trim().toLowerCase(); for (const el of this.board.querySelectorAll('.sgrid .sopt')) el.style.display = !s || el.dataset.name.includes(s) ? '' : 'none'; }
@@ -666,7 +671,7 @@ class Table {
       else if (P.kind === 'unless') prm = `<div class="prm"><h4>${esc(P.counter.name)} will counter your ${esc(P.spell.card.name)} unless you pay {${P.n}}.</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Let it be countered</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
       else if (P.kind === 'alt') prm = `<div class="prm"><h4>Cast ${esc(P.card.name)}: ${P.canMana ? 'pay its mana cost, or ' : ''}exile a blue card from your hand and pay 1 life (click the card to exile)</h4><div class="opts">${opts}</div><div class="gt-ctl">${P.canMana ? `<button class="chip pri" data-act="alt-mana">Pay mana</button>` : ''}<button class="chip" data-act="alt-cancel">Cancel</button></div></div>`;
       else if (P.kind === 'search') {
-        const dest = { hand: 'put into your hand', graveyard: 'put into your graveyard', top: 'put on top of your library', battlefield: 'put onto the battlefield', reanimate: 'return to the battlefield', gyhand: 'return from your graveyard to your hand', land: 'put into your hand', scry: 'put on the bottom (the rest stay on top)', surveil: 'put into your graveyard (the rest stay on top)', damage: 'deal damage to', destroy: 'destroy', counters: 'get the counters', dig: 'put into your hand (the rest go to your graveyard)' }[P.dest] || P.dest;
+        const dest = { hand: 'put into your hand', graveyard: 'put into your graveyard', top: 'put on top of your library', battlefield: 'put onto the battlefield', reanimate: 'return to the battlefield', gyhand: 'return from your graveyard to your hand', land: 'put into your hand', scry: 'put on the bottom (the rest stay on top)', surveil: 'put into your graveyard (the rest stay on top)', damage: 'deal damage to', destroy: 'destroy', counters: 'get the counters', dig: 'put into your hand (the rest go to your graveyard)', sacrifice: 'sacrifice', equip: 'equip' }[P.dest] || P.dest;
         const fromLib = ['hand', 'graveyard', 'top', 'battlefield', 'land'].includes(P.dest), peek = P.dest === 'scry' || P.dest === 'surveil';
         const list = [...P.pool].sort((a, b) => a.name.localeCompare(b.name));
         const seen = new Set(); const uniq = (peek ? [...P.pool] : list).filter(c => P.n > 1 || !fromLib || (!seen.has(c.name) && seen.add(c.name)));

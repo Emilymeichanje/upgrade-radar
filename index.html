@@ -156,13 +156,13 @@ body.playing main .wrap,body.playing header.top .wrap{max-width:1680px}
   header.top .wrap{gap:8px 10px;padding-block:8px}
   header.top h1{font-size:1.05rem;letter-spacing:-.02em}
   header.top h1 small{display:none}
-  #filtbtn{display:inline-flex;margin-left:auto}
-  header.top .ctl{display:none;margin-left:0;width:100%}
+  #filtbtn{display:inline-flex;order:3;flex:none}
+  header.top .ctl{display:none;margin-left:0;width:100%;order:4}
   body.ctlopen header.top .ctl{display:flex}
   body.playing #filtbtn,body.playing .search{display:none}
-  .search{gap:6px;width:100%;min-width:0}.search input{width:0}
+  .search{gap:6px;flex:1 1 0;width:auto;min-width:0;order:2}.search input{width:0}
   .search label.note{display:none}
-  .search select{max-width:42%}
+  .search select{max-width:38%}
   .search .note#cap{display:none}
   .chip{padding:7px 13px;min-height:36px}
   .topnav button{padding:6px 11px}
@@ -498,7 +498,7 @@ function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detai
   if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=16').then(()=>loadScript('playtest-ui.js?v=16'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=17').then(()=>loadScript('playtest-ui.js?v=17'));return ptLoaded}
 const PT={cfg:null,table:null};
 function decksWithLists(){return S.index.filter(d=>!d.retired&&S.decks[d.slug]?.list?.length>=60)}
 async function openPlaytest(){

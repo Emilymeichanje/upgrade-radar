@@ -343,8 +343,10 @@ function parseList(txt){ // handles Archidekt, Moxfield, MTGO and plain exports
     .map(l=>l.replace(/\s*\[[^\]]*\]/g,'')          // Archidekt [Category] / [Commander{top}]
              .replace(/\s*\^[^^]*\^/g,'')            // Archidekt ^colour tags^
              .replace(/\s*\*[A-Z]+\*/g,'')           // *F* foil / *E* etched
+             .replace(/\s+#!?[^\s#]+/g,'')           // Moxfield #tags / #!global tags
              .replace(/^\d+\s*x?\s+/i,'')            // "1x " / "1 "
              .replace(/\s*\([A-Za-z0-9]{2,6}\)\s*[\w★-]*\s*$/,'') // (SET) 123
+             .replace(/\s+\/\/?\s+/,' // ')         // Moxfield writes DFCs as "Front / Back"; Scryfall wants "Front // Back"
              .trim())
     .filter(Boolean)}
 
@@ -448,7 +450,7 @@ async function renderTab(){
   $('#detail').querySelectorAll('[role=tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===S.tab));
   const dk=S.decks[d.slug]||{};const own=new Set((dk.list||[]).map(norm));const dismissed=dk.dismissed||{};const kept=dk.kept||{};
   if(S.tab==='list'){
-    pane.innerHTML=`<p class="note">Paste an export from Archidekt (Export → Text), Moxfield (Export → Copy for MTGO) or a plain list. Quantities, set codes, foil marks and Archidekt [categories] are stripped automatically. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
+    pane.innerHTML=`<p class="note">Paste an export from Archidekt (Export → Text), Moxfield (More → Export → any text option) or a plain list. Quantities, set codes, foil marks, Moxfield #tags and Archidekt [categories] are stripped automatically. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
       <textarea id="lst" aria-label="Decklist">${esc((dk.list||[]).join('\n'))}</textarea>
       <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg">${dk.list?dk.list.length+' cards saved':''}</span></div>`;
     $('#savelist').onclick=async()=>{const list=parseList($('#lst').value);await saveDeck(d.slug,{list,_enriched:null});const cmd=commanderNames(d);const ninety=list.filter(n=>!cmd.has(norm(n))).length;$('#lstmsg').textContent=`${list.length} lines saved (${ninety} in the 99; commander line ignored)`};
@@ -506,7 +508,7 @@ async function openPlaytest(){
   showView('play');const el=$('#play');el.innerHTML='<div class="empty">Loading the table…</div>';
   try{await loadPlaytest()}catch(e){el.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return}
   const ds=decksWithLists();
-  if(ds.length<2){el.innerHTML=`<h2 style="font-size:1.4rem">Playtest</h2><div class="empty">Playtest needs at least 2 decks with a saved list of 60+ cards (you have ${ds.length}). Open a deck in <b>Decks</b> → "Your list" → paste your Archidekt export → Save, then come back.</div>`;return}
+  if(ds.length<2){el.innerHTML=`<h2 style="font-size:1.4rem">Playtest</h2><div class="empty">Playtest needs at least 2 decks with a saved list of 60+ cards (you have ${ds.length}). Open a deck in <b>Decks</b> → "Your list" → paste your Archidekt or Moxfield export → Save, then come back.</div>`;return}
   const opt=ds.map(d=>`<option value="${esc(d.slug)}">${esc(d.display||d.name)}</option>`).join('');
   const lv=id=>`<select id="${id}"><option value="casual">Casual</option><option value="focused" selected>Focused</option><option value="cutthroat">Cutthroat</option></select>`;
   const prev=PT.cfg||{};

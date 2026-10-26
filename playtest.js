@@ -518,7 +518,7 @@ class Game {
     if (q.ai) {
       const c = counters.length ? q.ai.chooseCounter(this, q, spell, counters, depth) : null; if (c) return { card: c };
       const pr = protects.length ? q.ai.chooseProtect(this, q, spell, protects, threatened) : null; if (pr) return { card: pr, protect: true };
-      if (q.ai.level === 'cutthroat' && threatened.length === 1 && threatened[0].card.isCreature && !threatened[0].card.isCommander) {
+      if ((q.ai.level === 'cutthroat' || q.ai.expert) && threatened.length === 1 && threatened[0].card.isCreature && !threatened[0].card.isCommander) {
         const outlet = this.abilityOptions(q, { instant: true }).find(o => o.ab.sacOther);
         if (outlet) return { ability: { ...outlet, victim: threatened[0] } };
       }
@@ -1108,8 +1108,8 @@ class Game {
 // ============================== AI ==============================
 // difficulty: 'casual' | 'focused' | 'cutthroat'
 class AI {
-  constructor(level = 'focused', rng = Math.random) { this.expert = level === 'expert'; this.level = this.expert ? 'cutthroat' : level; this.rng = rng; }
-  popW() { return this.expert ? 1 : { casual: 0, focused: 0.4, cutthroat: 0.6 }[this.level]; }
+  constructor(level = 'focused', rng = Math.random) { this.expert = level === 'expert'; this.level = this.expert ? 'focused' : level; /* self-play: Focused's core beat Cutthroat's with real decks */ this.rng = rng; }
+  popW() { return this.expert ? 0.5 : { casual: 0, focused: 0.4, cutthroat: 0.6 }[this.level]; }
   W() { return { casual: { power: 1, evasive: 0.3, engines: 0.5, mana: 0, cmd: 0.5, lethal: 1, life: 0, cmddmg: 0.3 },
                  focused: { power: 1, evasive: 0.8, engines: 1.5, mana: 0.3, cmd: 1, lethal: 2, life: 0.5, cmddmg: 0.6 },
                  cutthroat: { power: 1, evasive: 1.2, engines: 2.5, mana: 0.6, cmd: 1.5, lethal: 3, life: 1, cmddmg: 1 } }[this.level]; }
@@ -1416,7 +1416,7 @@ class AI {
     let k = 0; while (k < cands.length && dmgWith(k) > me.life * P.crackFrac) k++;
     return new Set(cands.slice(0, k));
   }
-  params() { return this._params || (this._params = Object.assign({ crackFrac: 0.3, sideShare: 0.25, removalScale: 1, counterAdj: 0, reserve: 1, wipe: 1, seq: 1, cmdBonus: 4, lateRound: 10, target: 'threat', lifeW: 0.5, home: 'base', spread: 1, chumpLife: 8 }, AI.tuning || {})); }
+  params() { return this._params || (this._params = Object.assign({ crackFrac: 0.3, sideShare: 0.25, removalScale: 1, counterAdj: 0, reserve: 1, wipe: 1, seq: 0, mull: 0, cmdBonus: 4, lateRound: 10, target: 'threat', lifeW: 0.5, home: 'base', spread: 1, chumpLife: 8 }, AI.tuning || {})); }
   bestEquipTarget(game, me, eq) {
     const mine = me.battlefield.filter(b => b.card.isCreature);
     const score = b => game.powerOf(me, b) + (b.card.kw.some(k => EVASIVE.includes(k)) ? 3 : 0) + (b.card.isCommander ? 2 : 0) - (b.summoning && !b.card.kw.includes('haste') ? 2 : 0) - (b.card.roles.includes('ramp') ? 3 : 0);
@@ -1586,7 +1586,7 @@ class AI {
     if (mulls >= 2) return lands >= 1 && lands <= 6;            // going to 5 or fewer is worse than a mediocre 7
     if (mulls === 1) return lands >= 2 && lands <= 5 || (lands === 6 && cheap >= 1);
     if (this.level === 'casual') return lands >= 2 && lands <= 5;
-    if (this.expert) { const ramp = hand.filter(c => !c.isLand && c.cmc <= 2 && (c.manaAb || c.roles.includes('ramp'))).length; if (lands === 2) return ramp >= 1 || cheap >= 3; return lands >= 3 && lands <= 5 && (cheap >= 1 || ramp >= 1); }
+    if (this.expert && this.params().mull) { const ramp = hand.filter(c => !c.isLand && c.cmc <= 2 && (c.manaAb || c.roles.includes('ramp'))).length; if (lands === 2) return ramp >= 1 || cheap >= 3; return lands >= 3 && lands <= 5 && (cheap >= 1 || ramp >= 1); }
     return lands >= 2 && lands <= 5 && cheap >= 1;
   }
   bottomChoice(hand, n) {

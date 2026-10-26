@@ -148,6 +148,12 @@ const STYLE = `
 .cz-cost{font:.68rem var(--mono);color:var(--muted)}
 .cz-empty{font-size:.72rem;color:var(--muted);text-align:center;padding:24px 0}
 .cmdz{display:flex;gap:6px;align-items:flex-end}
+.rul{display:grid;gap:6px;font-size:.8rem;border-top:1px solid var(--line);padding-top:8px}
+.rul ul{margin:0;padding-left:16px;display:grid;gap:6px}
+.rul .rd{font-family:var(--mono);font-size:.66rem;color:var(--muted)}
+.rul summary{cursor:pointer;color:var(--muted)}
+.rul a{color:var(--accent);font-size:.78rem}
+.pv{max-height:calc(100vh - 140px);overflow:auto}
 .sheet{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.55);display:grid;align-items:end}
 .sheet .box{background:var(--panel);border-radius:14px 14px 0 0;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px));max-height:85vh;overflow:auto;display:grid;gap:8px;font-size:.92rem}
 .sheet .box > img{width:min(260px,70vw);border-radius:10px;justify-self:center}
@@ -389,6 +395,31 @@ class Table {
     if (c.doublesDeath) bits.push('doubles death triggers');
     return bits.length ? `<div class="rl">Engine also runs: ${esc(bits.join(' · '))}</div>` : '';
   }
+  /** official rulings (Wizards of the Coast, the same ones Gatherer shows), fetched on demand from Scryfall */
+  rulingsHtml(c) {
+    if (!c || c.token || !c.name) return '';
+    const r = (window.__rulings || {})[c.name];
+    if (!r) return `<div class="rul"><button class="chip" data-act="rulings" data-rname="${esc(c.name)}" data-ruid="${c.uid}">Official rulings</button></div>`;
+    if (r === 'loading') return `<div class="rul note">Loading rulings…</div>`;
+    if (r.error) return `<div class="rul note">${esc(r.error)} <button class="chip" data-act="rulings" data-rname="${esc(c.name)}" data-ruid="${c.uid}">Retry</button></div>`;
+    const wotc = r.list.filter(x => x.source === 'wotc'), other = r.list.filter(x => x.source !== 'wotc');
+    const li = x => `<li><span class="rd">${esc(x.published_at)}</span> ${esc(x.comment)}</li>`;
+    return `<div class="rul"><div class="rl">Official rulings${wotc.length ? ` (${wotc.length})` : ''}</div>${wotc.length ? `<ul>${wotc.map(li).join('')}</ul>` : '<div class="note">No official rulings for this card.</div>'}${other.length ? `<details><summary>Scryfall notes (${other.length})</summary><ul>${other.map(li).join('')}</ul></details>` : ''}${r.gatherer ? `<a href="${esc(r.gatherer)}" target="_blank" rel="noopener">Open on Gatherer ↗</a>` : ''}</div>`;
+  }
+  async loadRulings(name, uid) {
+    const store = window.__rulings = window.__rulings || {};
+    store[name] = 'loading'; this.refreshPreview(uid);
+    try {
+      const card = await fetch('https://api.scryfall.com/cards/named?exact=' + encodeURIComponent(name)).then(r => { if (!r.ok) throw new Error('Scryfall ' + r.status); return r.json(); });
+      const rul = await fetch(card.rulings_uri).then(r => r.json());
+      store[name] = { list: (rul.data || []).sort((a, b) => a.published_at.localeCompare(b.published_at)), gatherer: card.related_uris && card.related_uris.gatherer };
+    } catch (e) { store[name] = { error: "Couldn't reach Scryfall for rulings." }; }
+    this.refreshPreview(uid);
+  }
+  refreshPreview(uid) {
+    if (this.sheetHtml && this.sheetUid === uid) { const c = this.findCard(uid); if (c) this.sheetHtml = this.previewHtml(c); this.render(); }
+    if (this.pvUid === uid) { this.pvUid = null; this.preview(uid, true); }
+  }
   costStr(c) { if (!c) return ''; let s = c.generic ? `{${c.generic}}` : ''; for (const k of 'WUBRG') s += `{${k}}`.repeat(c.pips[k] || 0); return s || '{0}'; }
   optLabel(o) {
     if (o.kind === 'fetch') return 'crack';
@@ -454,7 +485,8 @@ class Table {
     for (const p of g.players) { const c = p.library.find(c => c.uid === uid); if (c) return c; }
     return this.cardByUid ? this.cardByUid.get(uid) || null : null;
   }
-  previewHtml(c) { return `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}${this.engineNotes(c)}`; }
+  previewHtml(c) { return this.previewBody(c) + this.rulingsHtml(c); }
+  previewBody(c) { return `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}${this.engineNotes(c)}`; }
   preview(uid, keepCtx = false) {
     const c = this.findCard(uid); if (!c || this.pvUid === uid) return; this.pvUid = uid;
     if (!keepCtx) this.pinnedCtx = null;
@@ -468,7 +500,7 @@ class Table {
   }
   openSheet(uid, html) {
     const c = uid != null ? this.findCard(uid) : null; if (!c && !html) return;
-    this.sheetHtml = html || this.previewHtml(c); this.render();
+    this.sheetUid = html ? null : uid; this.sheetHtml = html || this.previewHtml(c); this.render();
   }
   onClick(e) {
     const t = e.target; const g = this.game, me = this.me; if (!g) return;
@@ -545,6 +577,7 @@ class Table {
     if (a === 'atk-go' && this.mode && this.mode.kind === 'attack') { const asg = [...this.mode.map].map(([attacker, defender]) => ({ attacker, defender })); this.mode = null; if (this.endTurn) this.endTurn({ action: 'attack', assignments: asg }); return; }
     if (P && P.kind === 'etb' && (a === 'etb-pay' || a === 'etb-tap')) { P.res(a === 'etb-pay'); return; }
     if (P && P.kind === 'unless' && (a === 'unless-pay' || a === 'unless-no')) { P.res(a === 'unless-pay'); return; }
+    if (a === 'rulings') { this.loadRulings(btn.dataset.rname, +btn.dataset.ruid); return; }
     if (a === 'hand-go') { const c = me && me.hand.find(c => c.uid === this.handSel); if (c && this.myTurn && !this.busy && !P) return this.handAct(c); this.handSel = null; this.render(); return; }
     if (a === 'hand-x') { this.handSel = null; this.render(); return; }
     if (a === 'hand-info') { if (this.handSel != null) this.openSheet(this.handSel); return; }

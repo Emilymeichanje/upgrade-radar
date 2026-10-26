@@ -148,6 +148,47 @@ const STYLE = `
 .cz-cost{font:.68rem var(--mono);color:var(--muted)}
 .cz-empty{font-size:.72rem;color:var(--muted);text-align:center;padding:24px 0}
 .cmdz{display:flex;gap:6px;align-items:flex-end}
+.sheet{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.55);display:grid;align-items:end}
+.sheet .box{background:var(--panel);border-radius:14px 14px 0 0;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px));max-height:85vh;overflow:auto;display:grid;gap:8px;font-size:.92rem}
+.sheet .box > img{width:min(260px,70vw);border-radius:10px;justify-self:center}
+.sheet .tx{white-space:pre-wrap}
+.hsel{background:var(--panel);border:1px solid var(--accent);border-radius:8px;padding:6px 8px}
+.hsel b{font-size:.9rem}
+@media (hover:none){.hcd:hover{transform:none;z-index:auto}.hcd.sel{transform:translateY(-12px) scale(1.06);z-index:5}.prm .opt:hover{transform:none}.czc:hover{transform:none}}
+@media (max-width:700px){
+  .gt{--tile-o:36px;--tile-m:50px;--tile-l:30px;--hand:76px;gap:8px;touch-action:manipulation}
+  .gt-bar{padding:6px 8px;gap:6px}
+  .gt-bar .ph{min-width:0;flex:1;font-size:.76rem}
+  .steps{order:5;flex-basis:100%;justify-content:space-between}
+  .steps span{padding:2px 5px;font-size:.6rem;flex:1;text-align:center}
+  .gt-bar .chip{padding:4px 10px;min-height:32px;font-size:.8rem}
+  .gt-opps{grid-template-columns:minmax(0,1fr);gap:6px}
+  .gs{padding:6px;gap:4px;border-radius:8px}
+  .gs-h{grid-template-columns:30px minmax(0,1fr) auto;gap:6px}
+  .gs .av{width:30px;height:30px}.gs.me .av{width:36px;height:36px}
+  .gs .nm b{font-size:.85rem}.gs .nm small{font-size:.66rem}
+  .gs .lf{font-size:1.15rem;padding:1px 6px}
+  .gs-meta{font-size:.64rem;gap:1px 8px}
+  .gs-bf{min-height:0;gap:3px}.gs-lands{gap:3px}.gs.me .gs-bf{min-height:calc(var(--tile-m)*1.4)}
+  .gc .pt,.gc .bd,.gc .cnt{font-size:.54rem}
+  .gt-mid{min-height:40px}.gt-mid .idle{font-size:.74rem;text-align:center;padding:0 8px}
+  .stk .sc{width:76px;margin-left:-26px}.stk .sc .who{font-size:.62rem}
+  .gt-dock{position:sticky;bottom:0;z-index:20;background:var(--bg);border-top:1px solid var(--line);margin:0 -4px;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));display:grid;gap:6px;max-height:64vh;overflow-y:auto;box-shadow:0 -8px 24px rgba(0,0,0,.28)}
+  .prm{padding:8px 10px;gap:6px;box-shadow:none}.prm h4{font-size:.9rem}
+  .prm .opt{width:62px}
+  .olab{font-size:.5rem}
+  .sgrid{grid-template-columns:repeat(auto-fill,minmax(60px,1fr));max-height:36vh}
+  .sfind{width:100%}
+  .gt-ctl{gap:6px}.gt-ctl .msg{font-size:.76rem;flex-basis:100%}.gt-ctl .msg.hint{display:none}
+  .gt-ctl .chip{min-height:36px}
+  .gt-hand{min-height:calc(var(--hand)*1.25);padding:12px 2px 0}
+  .hcd{margin-left:-8px}
+  .gs-body{gap:6px}
+  .cz{width:56px;padding:4px}.cz-l{font-size:.48rem;letter-spacing:.04em}.cz-cost{font-size:.56rem}.cz-empty{font-size:.6rem;padding:10px 0}
+  .gt-side .pv{display:none}
+  .gl{max-height:170px;font-size:.68rem}
+  .set .box{max-width:100%}
+}
 .popt{position:relative}
 .olab{position:absolute;left:50%;bottom:4px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--accent);border-radius:4px;padding:0 5px;font:600 .62rem var(--mono);white-space:nowrap;max-width:96%;overflow:hidden;text-overflow:ellipsis}
 .abil-row{flex-wrap:wrap}
@@ -395,6 +436,14 @@ class Table {
   wire() {
     this.el.addEventListener('mouseover', e => { const t = e.target.closest('[data-uid]'); if (t) this.preview(+t.dataset.uid, !!t.closest('.lgx')); });
     this.el.addEventListener('click', e => this.onClick(e));
+    // phones: compact layout; touch: long-press any card to read it
+    const mq = window.matchMedia('(max-width:700px)'); this.mobile = mq.matches;
+    (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(e => { this.mobile = e.matches; this.render(); });
+    this.touch = window.matchMedia('(hover: none)').matches;
+    this.el.addEventListener('contextmenu', e => { const t = e.target.closest('[data-uid]'); if (!t || !this.touch) return; e.preventDefault(); this.openSheet(+t.dataset.uid); });
+    let lp = null;
+    this.el.addEventListener('touchstart', e => { const t = e.target.closest('[data-uid]'); if (!t) return; clearTimeout(lp); lp = setTimeout(() => { this.lpFired = true; this.openSheet(+t.dataset.uid); }, 520); }, { passive: true });
+    for (const ev of ['touchend', 'touchmove', 'touchcancel']) this.el.addEventListener(ev, () => clearTimeout(lp), { passive: true });
     document.addEventListener('keydown', this.onKey = e => { if (e.key === 'Escape' && this.mode) { this.mode = null; this.render(); } });
   }
   findCard(uid) {
@@ -405,15 +454,28 @@ class Table {
     for (const p of g.players) { const c = p.library.find(c => c.uid === uid); if (c) return c; }
     return this.cardByUid ? this.cardByUid.get(uid) || null : null;
   }
+  previewHtml(c) { return `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}${this.engineNotes(c)}`; }
   preview(uid, keepCtx = false) {
     const c = this.findCard(uid); if (!c || this.pvUid === uid) return; this.pvUid = uid;
     if (!keepCtx) this.pinnedCtx = null;
-    this.pv.innerHTML = (this.pinnedCtx || '') + `${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : ''}<div><b>${esc(c.name)}</b> <span class="ty">${esc(c.manaCost || '')}</span></div><div class="ty">${esc(c.type)}${c.isCreature ? ` · ${c.power}/${c.toughness}` : ''}</div><div class="tx">${esc(c.oracle || '')}</div>${c.roles && c.roles.length ? `<div class="rl">Engine reads it as: ${esc(c.roles.join(' · '))}${c.kw && c.kw.length ? ' · ' + esc(c.kw.join(', ')) : ''}</div>` : ''}${this.engineNotes(c)}`;
+    this.pv.innerHTML = (this.pinnedCtx || '') + this.previewHtml(c);
+  }
+  handAct(card) {
+    const g = this.game, me = this.me; this.handSel = null;
+    if (card.isLand) { if (me.landsThisTurn < 1) return this.act(() => g.playLand(me, card)); this.render(); return; }
+    if (card.roles.includes('counter')) { this.render(); return; }
+    if (g.castMode(me, card, 'hand')) this.startCast(card, 'hand'); else this.render();
+  }
+  openSheet(uid, html) {
+    const c = uid != null ? this.findCard(uid) : null; if (!c && !html) return;
+    this.sheetHtml = html || this.previewHtml(c); this.render();
   }
   onClick(e) {
     const t = e.target; const g = this.game, me = this.me; if (!g) return;
-    const ll = t.closest('[data-log]'); if (ll) { this.showLogLine(+ll.dataset.log); return; }
-    const lc = t.closest('[data-lgc]'); if (lc) { for (const b of this.pv.querySelectorAll('.lgx-c')) b.classList.toggle('on', b === lc); this.pinnedCtx = this.pv.querySelector('.lgx').outerHTML; this.pvUid = null; this.preview(+lc.dataset.lgc, true); return; }
+    if (this.lpFired) { this.lpFired = false; e.preventDefault(); return; } // the tap that ended a long-press
+    if (this.sheetHtml && (t.closest('[data-act="sheet-x"]') || t.classList.contains('sheet'))) { this.sheetHtml = null; this.render(); return; }
+    const ll = t.closest('[data-log]'); if (ll) { this.showLogLine(+ll.dataset.log); if (this.mobile) this.openSheet(null, this.pv.innerHTML); return; }
+    const lc = t.closest('[data-lgc]'); if (lc) { for (const b of this.pv.querySelectorAll('.lgx-c')) b.classList.toggle('on', b === lc); this.pinnedCtx = this.pv.querySelector('.lgx').outerHTML; this.pvUid = null; this.preview(+lc.dataset.lgc, true); if (this.sheetHtml) this.openSheet(null, this.pv.innerHTML); return; }
     const u = t.closest('[data-uid]'); if (u) this.preview(+u.dataset.uid);
     const btn = t.closest('[data-act]'); if (btn) { this.sfx.play('click'); return this.action(btn.dataset.act, btn); }
     const P = this.prompt;
@@ -439,11 +501,9 @@ class Table {
       const card = me.hand.find(c => c.uid === +hc.dataset.hand); if (!card) return;
       if (P && P.kind === 'discard') return P.res(card);
       if (P && P.kind === 'mull-bottom') { const i = P.sel.indexOf(card); if (i >= 0) P.sel.splice(i, 1); else if (P.sel.length < P.n) P.sel.push(card); this.render(); return; }
-      if (!this.myTurn || this.busy || P) return;
-      if (card.isLand) return this.act(() => g.playLand(me, card));
-      if (card.roles.includes('counter')) return;
-      if (g.castMode(me, card, 'hand')) this.startCast(card, 'hand');
-      return;
+      if (!this.myTurn || this.busy || P) { if (this.touch) this.openSheet(card.uid); return; }
+      if (this.touch && this.handSel !== card.uid) { this.handSel = card.uid; this.render(); return; } // first tap selects, second tap plays
+      return this.handAct(card);
     }
     const cz = t.closest('[data-cmd]'); if (cz && me && this.myTurn && !this.busy && !P) { const card = me.command.find(c => c.uid === +cz.dataset.cmd); if (card && g.castMode(me, card, 'cmd')) this.startCast(card, 'cmd'); return; }
     // life totals as targets
@@ -485,6 +545,9 @@ class Table {
     if (a === 'atk-go' && this.mode && this.mode.kind === 'attack') { const asg = [...this.mode.map].map(([attacker, defender]) => ({ attacker, defender })); this.mode = null; if (this.endTurn) this.endTurn({ action: 'attack', assignments: asg }); return; }
     if (P && P.kind === 'etb' && (a === 'etb-pay' || a === 'etb-tap')) { P.res(a === 'etb-pay'); return; }
     if (P && P.kind === 'unless' && (a === 'unless-pay' || a === 'unless-no')) { P.res(a === 'unless-pay'); return; }
+    if (a === 'hand-go') { const c = me && me.hand.find(c => c.uid === this.handSel); if (c && this.myTurn && !this.busy && !P) return this.handAct(c); this.handSel = null; this.render(); return; }
+    if (a === 'hand-x') { this.handSel = null; this.render(); return; }
+    if (a === 'hand-info') { if (this.handSel != null) this.openSheet(this.handSel); return; }
     if (P && P.kind === 'may' && (a === 'may-yes' || a === 'may-no')) { P.res(a === 'may-yes'); return; }
     if (a === 'abil' && this.myTurn && !this.busy && !P) { const o = (this.mainOpts || [])[+btn.dataset.i]; if (!o) return; if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => g.doAction(me, { ...o, instant: false })); }
     if (P && P.kind === 'search' && a === 'search-go') { P.res(P.sel.slice()); return; }
@@ -536,7 +599,7 @@ class Table {
       <div class="gs-h"><div class="av" style="background-image:url('${esc(p.art || '')}')"></div><div class="nm"><b>${esc(short(p.name))}</b><small>${esc(p.deckName)}${p.level ? ' · ' + esc(p.level) : ''}</small></div><div class="lf ${p.life <= 10 ? 'low' : ''} ${tgtLife ? 'tgt' : ''}" data-life="${p.i}">${p.life}</div></div>
       <div class="gs-meta"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><span>gy ${p.graveyard.length}</span>${p.command.length ? `<span>cmd zone: ${esc(p.command.map(c => c.name.split(',')[0]).join(', '))}${p.cmdTax ? ' +' + p.cmdTax : ''}</span>` : ''}${cmdDmg}</div>
       ${threat !== null ? `<div class="thr" title="Threat to you: ${threat.toFixed(0)}"><i style="width:${Math.min(100, threat / maxT * 100)}%"></i></div>` : ''}
-      ${isMe ? '<div class="gs-body"><div class="gs-main">' : ''}<div class="gs-bf">${nonl.map(b => this.tile(b, p)).join('') || '<span class="gs-meta">no permanents</span>'}</div>
+      ${isMe ? '<div class="gs-body"><div class="gs-main">' : ''}<div class="gs-bf">${nonl.map(b => this.tile(b, p)).join('') || (this.mobile && lands.length ? '' : '<span class="gs-meta">no permanents</span>')}</div>
       <div class="gs-lands">${[...groups].map(([key, bs]) => { const name = bs[0].card.name, tapped = bs[0].tapped; const c = bs[0].card; const canAct = isMe && bs.some(b => b.card.fetch && g.canActivate(p, b)) && ((this.myTurn && !this.busy && !this.prompt) || (this.prompt && this.prompt.kind === 'priority')); return `<div class="gc lg ${tapped ? 't' : ''} ${canAct ? 'act' : ''}" data-lg="${p.i}:${esc(name)}" data-uid="${c.uid}" title="${esc(name)}${tapped ? ' (tapped)' : ''}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(name)}" loading="lazy">` : `<span>${esc(name)}</span>`}${canAct ? '<span class="cnt">crack</span>' : bs.length > 1 ? `<span class="cnt">×${bs.length}</span>` : ''}</div>`; }).join('')}</div>
     ${isMe ? `</div>${this.cmdZone(p)}</div>` : ''}</section>`;
   }
@@ -552,7 +615,7 @@ class Table {
     const active = g.players[g.active];
     const opps = g.players.filter(p => p !== me);
     const stack = this.stackView.map(s => `<div class="sc" data-uid="${s.card.uid}">${s.card.img ? `<img src="${esc(big(s.card.img))}" alt="${esc(s.card.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(s.card.name)}</div>`}<div class="who">${esc(short(s.p.name))}${s.target ? ' → ' + esc(s.target.spell ? s.target.spell.card.name : s.target.card ? s.target.card.name : short(s.target.name)) : ''}</div></div>`).join('');
-    let mid = stack ? `<div class="stk">${stack}</div>` : `<div class="idle">${g.winner ? '' : this.busy ? 'Resolving…' : this.myTurn ? 'Your move' : esc(short(active.name)) + ' is playing'}</div>`;
+    let mid = stack ? `<div class="stk">${stack}</div>` : `<div class="idle">${g.winner ? '' : this.busy ? 'Resolving…' : this.myTurn ? (this.touch ? 'Your move · long-press a card to read it' : 'Your move') : esc(short(active.name)) + ' is playing'}</div>`;
     // prompt panel
     let prm = '';
     if (P) {
@@ -563,7 +626,7 @@ class Table {
       else if (P.kind === 'block') { const incoming = P.attacks.filter(a => !P.map.has(a.attacker) || a.attacker.card.kw.includes('trample')).reduce((s, a) => s + g.powerOf(P.attacker, a.attacker), 0);
         prm = `<div class="prm"><h4>Declare blockers — ${esc(short(P.attacker.name))} is attacking you</h4><div class="gt-ctl"><span class="msg">Click one of your untapped creatures, then the attacker it blocks. Unblocked damage: <b>${incoming}</b> (you're at ${me.life}).</span><button class="chip pri" data-act="block-go">Confirm blocks</button></div></div>`; }
       else if (P.kind === 'priority') { const stepN = { upkeep: 'upkeep', draw: 'draw step', beginCombat: 'beginning of combat', declareAttackers: 'declare attackers', declareBlockers: 'declare blockers', end: 'end step' }[P.step] || P.step; const whose = P.active === me ? 'your' : esc(short(P.active.name)) + "'s";
-        prm = `<div class="prm"><h4>Priority — ${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}. Use an effect?</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass</button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn</button>` : ''}<span class="msg">Fetchlands, instants, flash cards, abilities and graveyard spells are used here.</span></div></div>`; }
+        prm = `<div class="prm"><h4>Priority — ${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}. Use an effect?</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass</button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn</button>` : ''}<span class="msg hint">Fetchlands, instants, flash cards, abilities and graveyard spells are used here.</span></div></div>`; }
       else if (P.kind === 'fetch') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a land to put onto the battlefield</h4><div class="opts">${opts}</div></div>`;
       else if (P.kind === 'etb') { const en = P.enables || []; const thumbs = en.map(c => `<div class="opt" data-uid="${c.uid}" style="cursor:default">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`).join('');
         prm = `<div class="prm"><h4>${esc(P.card.name)}: pay ${P.life} life so it enters untapped? (you're at ${me.life})</h4>${en.length ? `<div class="opts">${thumbs}</div>` : ''}<div class="gt-ctl"><button class="chip ${en.length ? 'pri' : ''}" data-act="etb-pay">Pay ${P.life} life</button><button class="chip ${en.length ? '' : 'pri'}" data-act="etb-tap">Enter tapped</button><span class="msg">${en.length ? `Untapped, it lets you cast ${en.map(c => esc(c.name)).join(', ')} this turn.` : `The extra mana doesn't make anything castable ${this.game.players[this.game.active] === me ? 'this turn' : 'right now'}; it untaps on your turn anyway.`}</span></div></div>`; }
@@ -592,7 +655,7 @@ class Table {
     else if (this.myTurn && !P) {
       const combatPhase = this.turnPhase === 'main1' || this.turnPhase === 'combat2';
       const canAtk = combatPhase && me.battlefield.some(b => g.canAttackWith(me, b));
-      const fetchHint = me.battlefield.some(b => b.card.fetch && g.canActivate(me, b)) ? ' · click a glowing fetchland to crack it' : '';
+      const fetchHint = me.battlefield.some(b => b.card.fetch && g.canActivate(me, b)) ? (this.touch ? ' · tap a glowing fetchland to crack it' : ' · click a glowing fetchland to crack it') : '';
       this.mainOpts = this.busy ? [] : [...g.gyCastOptions(me), ...g.abilityOptions(me)];
       const abil = this.mainOpts.length ? `<div class="gt-ctl abil-row"><span class="msg">Abilities:</span>${this.mainOpts.map((o, i) => `<button class="chip abil" data-act="abil" data-i="${i}" data-uid="${o.card.uid}">${esc(short(o.card.name))} · ${esc(this.optLabel(o))}${o.card.abilities && o.ab && o.ab.zone !== 'battlefield' ? ` <small>(${o.ab.zone})</small>` : o.zone === 'gy' ? ' <small>(graveyard)</small>' : ''}</button>`).join('')}</div>` : '';
       ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint}</span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>`; }
@@ -600,9 +663,13 @@ class Table {
     let handBar = '';
     if (me) {
       const sel = P && P.kind === 'mull-bottom' ? P.sel : [];
-      const hand = me.hand.map(c => { const can = (this.myTurn && !this.busy && !P && (c.isLand ? me.landsThisTurn < 1 : !c.roles.includes('counter') && g.castMode(me, c, 'hand'))) || (P && (P.kind === 'discard' || P.kind === 'mull-bottom')); return `<div class="hcd ${can ? 'can' : ''} ${sel.includes(c) ? 'sel' : ''}" data-hand="${c.uid}" data-uid="${c.uid}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(c.name)}</div>`}</div>`; }).join('');
+      const hand = me.hand.map(c => { const can = (this.myTurn && !this.busy && !P && (c.isLand ? me.landsThisTurn < 1 : !c.roles.includes('counter') && g.castMode(me, c, 'hand'))) || (P && (P.kind === 'discard' || P.kind === 'mull-bottom')); return `<div class="hcd ${can ? 'can' : ''} ${sel.includes(c) || this.handSel === c.uid ? 'sel' : ''}" data-hand="${c.uid}" data-uid="${c.uid}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(c.name)}</div>`}</div>`; }).join('');
       const cmdUnused = me.command.map(c => { const can = this.myTurn && !this.busy && !P && g.castMode(me, c, 'cmd'); return `<div class="hcd ${can ? 'can' : ''}" data-cmd="${c.uid}" data-uid="${c.uid}" title="Commander${me.cmdTax ? ' (tax ' + me.cmdTax + ')' : ''}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`; }).join('');
       handBar = `<div class="gt-hand">${hand}</div>`;
+      const hs = this.handSel != null && me.hand.find(c => c.uid === this.handSel);
+      if (hs && this.myTurn && !P) { const ok = hs.isLand ? me.landsThisTurn < 1 : !hs.roles.includes('counter') && g.castMode(me, hs, 'hand');
+        handBar = `<div class="gt-ctl hsel"><b>${esc(hs.name)}</b><button class="chip pri" data-act="hand-go" ${ok && !this.busy ? '' : 'disabled'}>${hs.isLand ? 'Play land' : 'Cast'}</button><button class="chip" data-act="hand-info">Details</button><button class="chip" data-act="hand-x">Cancel</button>${ok ? '' : `<span class="msg">${hs.isLand ? 'Land drop used' : hs.roles.includes('counter') ? 'Counterspells are cast in response' : 'Not enough mana'}</span>`}</div>` + handBar; }
+      else if (!hs) this.handSel = null;
     }
     // overlays
     let over = '';
@@ -618,15 +685,14 @@ class Table {
       <div class="gt-ctl" style="justify-content:flex-end"><button class="chip pri" data-act="close-settings">Done</button></div></div></div>` : '';
     this.board.innerHTML = `
       <div class="gt-bar"><span class="ph">Round <b>${g.round}</b> · <b>${esc(short(active.name))}</b></span><span class="steps">${[['upkeep', 'Upkeep'], ['draw', 'Draw'], ['main1', 'Main'], ['combat', 'Combat'], ['main2', 'Main 2'], ['end', 'End']].map(([k, l]) => `<span class="${(g.phase === k || (k === 'combat' && g.phase === 'combat')) ? 'on' : ''}">${l}</span>`).join('')}</span>
-        <button class="chip" data-act="ff" aria-pressed="${this.ff}" title="Skip animations until your next decision">${this.ff ? 'Fast-forwarding' : 'Fast-forward'}</button>
-        <button class="chip" data-act="settings">Settings</button><button class="chip" data-act="leave">Leave game</button></div>
+        <button class="chip" data-act="ff" aria-pressed="${this.ff}" title="Skip animations until your next decision">${this.mobile ? (this.ff ? 'Skipping…' : 'Skip ▸▸') : this.ff ? 'Fast-forwarding' : 'Fast-forward'}</button>
+        <button class="chip" data-act="settings">Settings</button><button class="chip" data-act="leave">${this.mobile ? 'Leave' : 'Leave game'}</button></div>
       <div class="gt-opps">${opps.map(p => this.seat(p)).join('')}</div>
       <div class="gt-mid">${mid}</div>
-      ${prm}
+      ${this.mobile ? '' : prm}
       ${me ? this.seat(me) : ''}
-      ${ctl}
-      ${handBar}
-      ${over}${settings}`;
+      ${this.mobile ? `<div class="gt-dock">${prm}${ctl}${handBar}</div>` : ctl + handBar}
+      ${over}${settings}${this.sheetHtml ? `<div class="sheet"><div class="box"><button class="chip" data-act="sheet-x" style="justify-self:end">Close</button>${this.sheetHtml}</div></div>` : ''}`;
     if (this.showSettings) {
       const bind = (id, k, f = v => v) => { const el = this.board.querySelector('#' + id); el.onchange = el.oninput = () => { this.s[k] = f(el.type === 'checkbox' ? el.checked : el.value); saveSettings(this.s); if (k === 'volume') this.sfx.vol(); }; };
       bind('st-anim', 'anim'); bind('st-speed', 'speed'); bind('st-sound', 'sound'); bind('st-vol', 'volume', Number); bind('st-stop', 'stops');

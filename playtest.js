@@ -120,7 +120,7 @@ function tagModes(card, lines) {
   if (bullets.length < 2) return;
   const max = /choose two/.test(hl) ? 2 : /three/.test(hl) ? 3 : /one or more|one or both/.test(hl) ? bullets.length : 1;
   card.modeCount = { min: /two/.test(hl) ? 2 : 1, max, cmdMax: /if you control a commander as you cast this spell, you may choose both/.test(hl) ? bullets.length : max };
-  card.modes = bullets.map(text => { const sub = tagCard({ name: card.name, type: card.type, oracle: text.charAt(0).toUpperCase() + text.slice(1), mana: card.manaCost, cmc: card.cmc }); sub.img = card.img; sub.isMode = true; return { text, card: sub }; });
+  card.modes = bullets.map(t0 => { const text = t0.replace(/\bthis card\b/g, card.name.split(' // ')[0]); const sub = tagCard({ name: card.name, type: card.type, oracle: text.charAt(0).toUpperCase() + text.slice(1), mana: card.manaCost, cmc: card.cmc }); sub.img = card.img; sub.isMode = true; return { text, card: sub }; });
 }
 /** static abilities: anthems / lords, granted keywords, equipment, extra land drops, cost reducers, self evasion */
 function tagStatic(card, lines) {

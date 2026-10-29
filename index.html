@@ -256,7 +256,10 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const pct=(d,p)=>p?Math.round(100*d/p):0;
 const fmt=n=>Number(n||0).toLocaleString();
 const ciKey=ci=>(ci&&ci.length?[...ci].sort().join(''):'C');
-const norm=n=>String(n||'').split(' // ')[0].toLowerCase().replace(/[^a-z0-9]/g,'');
+// names that Scryfall only knows under another name (Secret Lair / Universes Beyond flavour names, "A/B" room spellings) map to the oracle card
+const ALIAS=(()=>{try{return JSON.parse(localStorage.getItem('mtgAlias')||'{}')||{}}catch(e){return{}}})();
+const norm0=n=>String(n||'').split(/\s*\/\/?\s*/)[0].normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+const norm=n=>{const k=norm0(n);return ALIAS[k]||k};
 
 const S={snap:null,index:[],decks:{},db:null,uid:null,since:null,brackets:new Set(['2','3','4','cEDH']),colors:new Set(),cmode:'any',q:'',cur:null,tab:'new',
   live:{},scry:{},cmdr:{},reprints:false};
@@ -330,7 +333,11 @@ async function newCards(ci){
 async function cardsNamed(names){ // batch via /cards/collection (75 per call)
   const out=[];for(let i=0;i<names.length;i+=75){const chunk=names.slice(i,i+75).map(name=>({name}));
     const r=await fetch('https://api.scryfall.com/cards/collection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifiers:chunk})});
-    if(r.ok){const j=await r.json();out.push(...(j.data||[]).map(slim))}await sleep(120)}
+    if(r.ok){const j=await r.json();out.push(...(j.data||[]).map(slim));
+      for(const nf of (j.not_found||[]).slice(0,40)){const asked=nf.name||'';if(!asked)continue;const front=asked.split(/\s*\/\/?\s*/)[0];
+        for(const q of [...new Set([asked.replace(/\s*\/\/?\s*/,' // '),front])]){await sleep(110);try{const r2=await fetch('https://api.scryfall.com/cards/named?fuzzy='+encodeURIComponent(q));if(!r2.ok)continue;const c=slim(await r2.json());ALIAS[norm0(asked)]=norm0(c.name);out.push(c);break}catch(e){}}}
+      try{localStorage.setItem('mtgAlias',JSON.stringify(ALIAS))}catch(e){}}
+    await sleep(120)}
   return out;
 }
 function slim(c){const f=c.card_faces?.[0]||{};return{name:c.name,mana:c.mana_cost||f.mana_cost||'',type:c.type_line||f.type_line||'',oracle:c.oracle_text||c.card_faces?.map(x=>x.oracle_text).join('\n//\n')||'',set:c.set_name,setcode:c.set,date:c.released_at,ci:c.color_identity||[],img:c.image_uris?.small||f.image_uris?.small||'',uri:c.scryfall_uri,rank:c.edhrec_rank,price:c.prices?.usd,usd:c.prices?.usd!=null?+c.prices.usd:null,gc:!!c.game_changer,border:c.border_color,fx:c.frame_effects||[],promo:!!c.promo,full:!!c.full_art,cn:c.collector_number,imgN:c.image_uris?.normal||f.image_uris?.normal||'',artc:c.image_uris?.art_crop||f.image_uris?.art_crop||'',loyalty:c.loyalty??f.loyalty,cmc:c.cmc,power:c.power??f.power,toughness:c.toughness??f.toughness,keywords:c.keywords||[]}}
@@ -632,13 +639,14 @@ function toggleCheck(open){const p=$('#checkpanel');p.hidden=!open;if(!open)retu
       const where=new Map();for(const d of ds){for(const n of new Set([d.name,...S.decks[d.slug].list])){const k=norm(n);if(!where.has(k))where.set(k,{name:n,decks:new Set()});where.get(k).decks.add(d.display||d.name)}}
       const names=[...where.values()].map(x=>x.name);msg.textContent=`Fetching ${names.length} cards from Scryfall…`;
       const cards=await cardsNamed(names);const found=new Set();
+      for(const [k,v] of [...where]){const k2=norm(v.name);if(k2!==k){where.delete(k);if(!where.has(k2))where.set(k2,v)}}
       const rows=[];for(const c of cards){const k=norm(c.name);found.add(k);const w=where.get(k)||{decks:new Set()};if(/^(Basic )?Land — (Plains|Island|Swamp|Mountain|Forest)$|^Basic Land/.test(c.type))continue;
         let a;try{a=Goldfish.auditCard(c)}catch(e){a={lines:[{line:'(engine error: '+e.message+')',status:'missing'}],missing:1,generic:0}}
         rows.push({c,a,decks:[...w.decks]})}
       const missing=rows.filter(r=>r.a.missing),cond=rows.filter(r=>!r.a.missing&&r.a.generic),fine=rows.length-missing.length-cond.length;
       const notFound=[...where.entries()].filter(([k])=>!found.has(k)).map(([,v])=>v.name);
       const li=r=>`<li><b>${esc(r.c.name)}</b> <span class="note">· ${esc(r.decks.join(', '))}</span><ul style="margin:2px 0 6px;padding-left:16px">${r.a.lines.filter(x=>x.status==='missing'||x.status==='generic').map(x=>`<li class="note">${x.status==='missing'?'✗':'?'} ${esc(x.line)}</li>`).join('')}</ul></li>`;
-      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v37',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
+      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v38',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
       $('#chkres').innerHTML=`<p><b>${rows.length}</b> cards checked: <b>${fine}</b> fully covered, <b>${cond.length}</b> with a condition unverified, <b>${missing.length}</b> with text not modelled.${notFound.length?` <span class="err">${notFound.length} name${notFound.length===1?'':'s'} not found on Scryfall: ${esc(notFound.join(', '))}</span>`:''}</p>
         ${flagged.length?`<div class="row"><button class="chip pri" id="chkcopy">Copy report for Claude</button><button class="chip" id="chkdl">Download report</button><span class="note" id="chkcopied"></span></div>`:''}
         ${missing.length?`<h4>Not modelled</h4><ul style="padding-left:18px">${missing.map(li).join('')}</ul>`:''}
@@ -772,7 +780,7 @@ function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detai
   if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=37').then(()=>loadScript('playtest-ui.js?v=37'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=38').then(()=>loadScript('playtest-ui.js?v=38'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();

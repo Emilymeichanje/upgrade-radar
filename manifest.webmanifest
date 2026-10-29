@@ -1,6 +1,6 @@
 {
-  "name": "Upgrade Radar",
-  "short_name": "Upgrade Radar",
+  "name": "MTG Dashboard",
+  "short_name": "MTG Dash",
   "description": "Commander deck upgrades from new cards and EDHREC, plus a playtest table.",
   "start_url": "./",
   "scope": "./",

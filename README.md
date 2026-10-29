@@ -1,4 +1,4 @@
-# Upgrade Radar — static site
+# MTG Dashboard — static site
 
 Two files, no build step:
 

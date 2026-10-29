@@ -529,14 +529,14 @@ function deckStats(d){const dk=S.decks[d.slug];if(!dk||!dk.list||!dk.list.length
 // ---------- two-card combos (Commander Spellbook, refreshed weekly by a GitHub Action) ----------
 const CB={m:null,n:0,ts:null,err:null,p:null};
 function loadCombos(){if(CB.p)return CB.p;CB.p=(async()=>{try{const r=await fetch('data/combos.json?w='+Math.floor(Date.now()/6048e5));if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();const m=new Map();
-    for(const row of j.c||[])for(const k of [norm(row[0]),norm(row[1])]){if(!m.has(k))m.set(k,[]);m.get(k).push(row)}CB.m=m;CB.n=j.n||0;CB.ts=j.timestamp||null}catch(e){CB.err=e.message}renderHomeSoon();if(S.cur&&S.tab==='list')renderBracketBox(S.cur)})();return CB.p}
+    for(const row of j.c||[])for(const k of new Set([row[0],row[1],row[0].split(' // ')[0],row[1].split(' // ')[0]].map(norm))){if(!m.has(k))m.set(k,[]);m.get(k).push(row)}CB.m=m;CB.n=j.n||0;CB.ts=j.timestamp||null}catch(e){CB.err=e.message}renderHomeSoon();if(S.cur&&S.tab==='list')renderBracketBox(S.cur)})();return CB.p}
 const BR_NAME={'1':'Exhibition','2':'Core','3':'Upgraded','4':'Optimized','cEDH':'cEDH'};
 /** Bracket by the official criteria that can be counted (Commander Brackets beta, Oct 2025 update: tutors no longer count).
  *  The brackets also judge intent and game speed, so this is a floor, not a ceiling. */
 function assessBracket(d){const dk=S.decks[d.slug]||{};if(!dk.list||!dk.list.length)return null;
-  const cmd=commanderNames(d);const all=[...new Set([...dk.list,d.name])];const names=new Set([...all.map(norm),...cmd]);
+  const cmd=commanderNames(d);const all=[...new Set([...dk.list,d.name])];const names=new Set([...all.map(norm),...all.map(n=>norm(n.split(' // ')[0])),...cmd]);
   let pending=0;const gc=[],mld=[],et=[];for(const n of all){const e=P.m[norm(n)];if(!e){pending++;continue}if(e.gc)gc.push(n);if(e.mld)mld.push(n);if(e.et)et.push(n)}
-  const combos=[];if(CB.m){const seen=new Set();for(const n of names)for(const r of CB.m.get(n)||[]){const id=r[0]+'|'+r[1];if(!seen.has(id)&&names.has(norm(r[0]))&&names.has(norm(r[1]))){seen.add(id);combos.push(r)}}}
+  const combos=[];if(CB.m){const seen=new Set();for(const n of names)for(const r of CB.m.get(n)||[]){const id=r[0]+'|'+r[1];const has=n=>names.has(norm(n))||names.has(norm(n.split(' // ')[0]));if(!seen.has(id)&&has(r[0])&&has(r[1])){seen.add(id);combos.push(r)}}}
   const early=combos.filter(r=>r[2]!=null&&r[2]<=4),late=combos.filter(r=>!early.includes(r));
   const rows=[
     {k:'gc',label:'Game Changers',items:gc,lvl:gc.length>3?4:gc.length?3:2,rule:'Bracket 2: none · Bracket 3: up to 3 · Bracket 4: any number'},

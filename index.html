@@ -646,7 +646,7 @@ function toggleCheck(open){const p=$('#checkpanel');p.hidden=!open;if(!open)retu
       const missing=rows.filter(r=>r.a.missing),cond=rows.filter(r=>!r.a.missing&&r.a.generic),fine=rows.length-missing.length-cond.length;
       const notFound=[...where.entries()].filter(([k])=>!found.has(k)).map(([,v])=>v.name);
       const li=r=>`<li><b>${esc(r.c.name)}</b> <span class="note">· ${esc(r.decks.join(', '))}</span><ul style="margin:2px 0 6px;padding-left:16px">${r.a.lines.filter(x=>x.status==='missing'||x.status==='generic').map(x=>`<li class="note">${x.status==='missing'?'✗':'?'} ${esc(x.line)}</li>`).join('')}</ul></li>`;
-      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v38',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
+      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v39',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
       $('#chkres').innerHTML=`<p><b>${rows.length}</b> cards checked: <b>${fine}</b> fully covered, <b>${cond.length}</b> with a condition unverified, <b>${missing.length}</b> with text not modelled.${notFound.length?` <span class="err">${notFound.length} name${notFound.length===1?'':'s'} not found on Scryfall: ${esc(notFound.join(', '))}</span>`:''}</p>
         ${flagged.length?`<div class="row"><button class="chip pri" id="chkcopy">Copy report for Claude</button><button class="chip" id="chkdl">Download report</button><span class="note" id="chkcopied"></span></div>`:''}
         ${missing.length?`<h4>Not modelled</h4><ul style="padding-left:18px">${missing.map(li).join('')}</ul>`:''}
@@ -780,7 +780,7 @@ function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detai
   if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=38').then(()=>loadScript('playtest-ui.js?v=38'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=39').then(()=>loadScript('playtest-ui.js?v=39'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();

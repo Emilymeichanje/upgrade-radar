@@ -100,6 +100,16 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
 .search input{flex:1;min-width:0;padding:8px 12px;font-size:1rem}
 .search select{padding:7px 8px}
 .deck .upd{font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+.lst{font-size:.72rem;font-weight:600;padding:1px 7px;border-radius:4px;border:1px solid currentColor;white-space:nowrap}
+.lst.ok{color:var(--good)}.lst.no{color:var(--bad)}
+.missing{border:1px solid var(--bad);border-radius:8px;padding:10px 12px;margin:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel)}
+.missing b{color:var(--bad)}
+.brbox{border:1px solid var(--line,var(--soft));border-radius:8px;padding:12px 14px;margin:0 0 12px;background:var(--panel);display:grid;gap:8px}
+.brbox h4{margin:0;font-size:1rem}.brbox .over{color:var(--warn)}
+.brbox table{width:100%;border-collapse:collapse}.brbox td{padding:6px 4px;border-top:1px solid var(--soft);vertical-align:top;font-size:.88rem}
+.brbox td.lv{white-space:nowrap;font-family:var(--mono);font-size:.78rem}.brbox .hi{color:var(--warn);font-weight:600}.brbox .okc{color:var(--good)}
+.brbox ul{margin:4px 0 0;padding-left:18px}.brbox .fix{border-left:3px solid var(--warn);padding:4px 10px;font-size:.88rem}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--bad);margin-left:4px;vertical-align:1px}
 .panel{flex-basis:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:10px}
 .panel h3{font-size:1rem}
 .panel .f{display:grid;gap:4px}
@@ -380,8 +390,10 @@ function swapFor(card,sc,deck,list){ // list: [{name,oracle,type,roles}] with ed
 }
 
 // ---------- db ----------
-async function initDb(){try{const raw=localStorage.getItem('decks');if(raw)S.decks=JSON.parse(raw);const c=localStorage.getItem('cfg');if(c)S.cfg=JSON.parse(c)}catch(e){}S.db=true;buildIndex()}
-async function saveDeck(slug,patch){const cur=S.decks[slug]||{};S.decks[slug]={...cur,...patch,updatedAt:new Date().toISOString()};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}syncSoon()}
+/** lists saved before list dates were tracked: date them by the deck's last change */
+function migrateListAt(){for(const dk of Object.values(S.decks||{}))if(dk&&dk.list&&dk.list.length&&!dk.listAt){dk.listAt=dk.updatedAt||dk.addedAt||null;dk.listAtApprox=true}}
+async function initDb(){try{const raw=localStorage.getItem('decks');if(raw)S.decks=JSON.parse(raw);migrateListAt();const c=localStorage.getItem('cfg');if(c)S.cfg=JSON.parse(c)}catch(e){}S.db=true;buildIndex()}
+async function saveDeck(slug,patch){const cur=S.decks[slug]||{};const now=new Date().toISOString();if(patch.list&&JSON.stringify(patch.list)!==JSON.stringify(cur.list||null))patch={...patch,listAt:now};S.decks[slug]={...cur,...patch,updatedAt:now};try{localStorage.setItem('decks',JSON.stringify(S.decks))}catch(e){console.warn('storage',e)}syncSoon()}
 
 // ---------- sync: one private GitHub Gist holds your decks; every device merges with it, newest edit of each deck wins ----------
 const SYNC_FILE='upgrade-radar.json';
@@ -406,7 +418,7 @@ async function syncNow(){if(!syncTok())return false;if(syncing){await syncing.ca
     // keep this device's in-memory extras (enriched card data) for decks that didn't change
     const next={};for(const [k,v] of Object.entries(merged)){const old=S.decks[k];next[k]=old&&old.updatedAt===v.updatedAt?old:v}
     const changedLocal=JSON.stringify(cleanDecks(S.decks))!==JSON.stringify(merged);
-    S.decks=next;lsSet('decks',JSON.stringify(S.decks));
+    S.decks=next;migrateListAt();lsSet('decks',JSON.stringify(S.decks));
     if(!S.cfg&&remote.cfg){S.cfg=remote.cfg;lsSet('cfg',JSON.stringify(S.cfg))}
     if(!lsGet('pt-settings')&&remote.pt)lsSet('pt-settings',JSON.stringify(remote.pt));
     let pt=null;try{pt=JSON.parse(lsGet('pt-settings')||'null')}catch(e){}
@@ -470,7 +482,7 @@ function colorOk(d){if(!S.colors.size)return true;const ci=new Set(d.ci&&d.ci.le
   if(S.cmode==='exact')return want.length===ci.size&&want.every(c=>ci.has(c));
   if(S.cmode==='within')return [...ci].every(c=>S.colors.has(c));
   return want.every(c=>ci.has(c))}
-function matches(d,q){if(!colorOk(d))return false;if(!q)return true;const hay=[d.name,d.display,d.bracket==='cEDH'?'cedh':'bracket '+d.bracket,(d.ci||[]).join(''),...(d.tags||[])].join(' ').toLowerCase();
+function matches(d,q){if(!colorOk(d))return false;if(!q)return true;const eb=effBracket(d);const hay=[d.name,d.display,eb==='cEDH'?'cedh':'bracket '+eb,d.bracket!==eb?'set bracket '+d.bracket:'',S.decks[d.slug]?.list?.length?'has list':'no list missing list',(d.ci||[]).join(''),...(d.tags||[])].join(' ').toLowerCase();
   return q.split(/\s+/).every(t=>{if(/^[wubrg]{1,5}$/.test(t)){const want=t.toUpperCase().split('');const ci=d.ci||[];return want.every(c=>ci.includes(c))&&ci.length===want.length||hay.includes(t)}return hay.includes(t)})}
 
 
@@ -506,7 +518,7 @@ async function refreshPrices(force){if(P.busy)return;P.busy=true;P.err=null;
       for(const c of slow){const r=await regularPrint(c.name);P.m[norm(c.name)]=entryOf(c,r?r.usd:c.usd);await sleep(110)}
       for(const n of chunk)if(!seen.has(norm(n))&&!P.m[norm(n)])P.m[norm(n)]={u:null,gc:false,et:false,mld:false,t:now,nf:1};
       P.done=Math.min(need.length,i+75);lsSet('prices',JSON.stringify({v:1,m:P.m}));renderHomeSoon()}
-  }catch(e){P.err=e.message}finally{P.busy=false;renderHomeSoon();if(S.cur&&S.tab==='list')renderCost(S.cur)}}
+  }catch(e){P.err=e.message}finally{P.busy=false;renderHomeSoon();if(S.cur&&S.tab==='list'){renderCost(S.cur);renderBracketBox(S.cur);brHint(S.cur)}}}
 let rhT=null;function renderHomeSoon(){clearTimeout(rhT);rhT=setTimeout(()=>{if(!$('#home').hidden)renderHome()},250)}
 /** totals for one deck: list (+ commander if the list doesn't hold it) */
 function deckStats(d){const dk=S.decks[d.slug];if(!dk||!dk.list||!dk.list.length)return null;
@@ -514,11 +526,34 @@ function deckStats(d){const dk=S.decks[d.slug];if(!dk||!dk.list||!dk.list.length
   let usd=0,missing=0,known=0;const gc=new Set(),et=new Set(),mld=new Set();
   for(const n of names){const e=P.m[norm(n)];if(!e){missing++;continue}if(e.u==null)missing++;else{usd+=e.u;known++}if(e.gc)gc.add(n);if(e.et)et.add(n);if(e.mld)mld.add(n)}
   if(!known)return null;return{usd,missing,n:names.length,gc:[...gc],et:[...et],mld:[...mld]}}
-/** the bracket the list looks like by the official rules we can check: Game Changers, mass land denial, extra turns (2-card combos aren't detected) */
-function suggestBracket(d,st){if(!st||d.bracket==='cEDH')return null;const g=st.gc.length;let b='2';const why=[];
-  if(g)why.push(g+' Game Changer'+(g>1?'s':'')+': '+st.gc.join(', '));if(st.mld.length)why.push('mass land denial: '+st.mld.join(', '));if(st.et.length>1)why.push(st.et.length+' extra-turn cards (chaining them is B4)');
-  if(g>3||st.mld.length)b='4';else if(g)b='3';
-  return{b,over:+b>+d.bracket,why:why.join(' · ')||'no Game Changers, mass land denial or extra-turn chains found'}}
+// ---------- two-card combos (Commander Spellbook, refreshed weekly by a GitHub Action) ----------
+const CB={m:null,n:0,ts:null,err:null,p:null};
+function loadCombos(){if(CB.p)return CB.p;CB.p=(async()=>{try{const r=await fetch('data/combos.json?w='+Math.floor(Date.now()/6048e5));if(!r.ok)throw new Error('HTTP '+r.status);const j=await r.json();const m=new Map();
+    for(const row of j.c||[])for(const k of [norm(row[0]),norm(row[1])]){if(!m.has(k))m.set(k,[]);m.get(k).push(row)}CB.m=m;CB.n=j.n||0;CB.ts=j.timestamp||null}catch(e){CB.err=e.message}renderHomeSoon();if(S.cur&&S.tab==='list')renderBracketBox(S.cur)})();return CB.p}
+const BR_NAME={'1':'Exhibition','2':'Core','3':'Upgraded','4':'Optimized','cEDH':'cEDH'};
+/** Bracket by the official criteria that can be counted (Commander Brackets beta, Oct 2025 update: tutors no longer count).
+ *  The brackets also judge intent and game speed, so this is a floor, not a ceiling. */
+function assessBracket(d){const dk=S.decks[d.slug]||{};if(!dk.list||!dk.list.length)return null;
+  const cmd=commanderNames(d);const all=[...new Set([...dk.list,d.name])];const names=new Set([...all.map(norm),...cmd]);
+  let pending=0;const gc=[],mld=[],et=[];for(const n of all){const e=P.m[norm(n)];if(!e){pending++;continue}if(e.gc)gc.push(n);if(e.mld)mld.push(n);if(e.et)et.push(n)}
+  const combos=[];if(CB.m){const seen=new Set();for(const n of names)for(const r of CB.m.get(n)||[]){const id=r[0]+'|'+r[1];if(!seen.has(id)&&names.has(norm(r[0]))&&names.has(norm(r[1]))){seen.add(id);combos.push(r)}}}
+  const early=combos.filter(r=>r[2]!=null&&r[2]<=4),late=combos.filter(r=>!early.includes(r));
+  const rows=[
+    {k:'gc',label:'Game Changers',items:gc,lvl:gc.length>3?4:gc.length?3:2,rule:'Bracket 2: none · Bracket 3: up to 3 · Bracket 4: any number'},
+    {k:'combo',label:'Two-card infinite combos',items:combos,lvl:early.length?4:late.length?3:2,rule:'Bracket 2: none · Bracket 3: none that can go off early (Spellbook: assembled with 4 or less mana) · Bracket 4: any'},
+    {k:'mld',label:'Mass land denial',items:mld,lvl:mld.length?4:2,rule:'Not allowed below Bracket 4'},
+    {k:'et',label:'Extra-turn cards',items:et,lvl:et.length>=3?4:2,rule:'Brackets 2–3: a few, never chained or looped (3+ cards counts as chaining here)'}];
+  const det=Math.max(...rows.map(r=>r.lvl));const dec=d.bracket;
+  const eff=dec==='cEDH'?'cEDH':String(Math.max(+dec,det));
+  return{rows,det:String(det),dec,eff,over:dec!=='cEDH'&&det>+dec,under:dec!=='cEDH'&&det<+dec,pending,combosReady:!!CB.m,early,late,gc,mld,et}}
+/** the bracket a deck is grouped under: what its list proves, never lower than what you set */
+function effBracket(d){const a=assessBracket(d);return a?a.eff:d.bracket}
+/** what it would take to bring a deck down to bracket b */
+function fixesFor(a,b){const out=[];b=+b;
+  if(b<4){if(b===3&&a.gc.length>3)out.push(`Cut ${a.gc.length-3} of the ${a.gc.length} Game Changers`);if(b<3&&a.gc.length)out.push(`Cut all ${a.gc.length} Game Changers`);
+    if(a.mld.length)out.push('Cut mass land denial: '+a.mld.join(', '));if(a.et.length>=3)out.push(`Cut extra-turn cards down to 2 (now ${a.et.length})`);
+    const brk=b===3?a.early:[...a.early,...a.late];if(brk.length)out.push(`Break ${brk.length===1?'this combo':'these '+brk.length+' combos'} by cutting one piece of each: `+brk.map(r=>r[0]+' + '+r[1]).join('; '))}
+  return out}
 const GUILD={W:'Mono-White',U:'Mono-Blue',B:'Mono-Black',R:'Mono-Red',G:'Mono-Green',C:'Colourless',WU:'Azorius',UB:'Dimir',BR:'Rakdos',RG:'Gruul',WG:'Selesnya',WB:'Orzhov',UR:'Izzet',BG:'Golgari',WR:'Boros',UG:'Simic',WUB:'Esper',UBR:'Grixis',BRG:'Jund',WRG:'Naya',WUG:'Bant',WBG:'Abzan',WUR:'Jeskai',UBG:'Sultai',WBR:'Mardu',URG:'Temur',UBRG:'Glint (no W)',WBRG:'Dune (no U)',WURG:'Ink (no B)',WUBG:'Witch (no R)',WUBR:'Yore (no G)',WUBRG:'Five-colour'};
 const WUBRG='WUBRG';
 function ciOrd(ci){return (ci&&ci.length?[...ci]:['C']).sort((a,b)=>WUBRG.indexOf(a)-WUBRG.indexOf(b)).join('')}
@@ -527,17 +562,18 @@ function summaryHtml(){const act=active();const withList=act.filter(d=>S.decks[d
   let tot=0,missing=0,priced=0;const rows=[];for(const d of act){const st=deckStats(d);if(st){tot+=st.usd;missing+=st.missing;priced++;rows.push([d,st])}}
   const ret=S.index.filter(d=>d.retired).map(d=>deckStats(d)).filter(Boolean).reduce((s,x)=>s+x.usd,0);
   const col={W:0,U:0,B:0,R:0,G:0,C:0};const combo=new Map();const br=new Map();
-  let unk=0;for(const d of act){if(!(d.ci&&d.ci.length)&&!S.cmdr[d.slug]){unk++;continue}const k=ciOrd(d.ci);combo.set(k,(combo.get(k)||0)+1);for(const c of (k==='C'?['C']:k.split('')))col[c]++;br.set(d.bracket,(br.get(d.bracket)||0)+1)}
-  const over=act.map(d=>[d,suggestBracket(d,deckStats(d))]).filter(([,s])=>s&&s.over);
+  let unk=0;for(const d of act){if(!(d.ci&&d.ci.length)&&!S.cmdr[d.slug]){unk++;continue}const k=ciOrd(d.ci);combo.set(k,(combo.get(k)||0)+1);for(const c of (k==='C'?['C']:k.split('')))col[c]++}
+  for(const d of act){const b=effBracket(d);br.set(b,(br.get(b)||0)+1)}
+  const over=act.map(d=>[d,assessBracket(d)]).filter(([,s])=>s&&s.over);
   const prog=P.busy&&P.todo?` <span class="note">pricing ${P.done}/${P.todo} cards…</span>`:'';
   const fxNote=`USD→SGD ${(P.fx||FX_FALLBACK).toFixed(4)}${P.fxLive?' ('+esc(P.fxDate)+')':' (offline estimate)'}`;
-  return `<details class="sum" id="sumbox"><summary><span>Collection</span><b>${priced?sgd(tot):'—'}</b><span class="note">${withList.length?`${priced} of ${withList.length} lists priced`:`no decklists saved in this browser${syncTok()?'':' — turn on Sync to bring them over from your other devices'}`}${missing?' · '+missing+' card'+(missing>1?'s':'')+' unpriced':''}</span>${over.length?`<span class="tag warn">${over.length} deck${over.length>1?'s':''} above their bracket</span>`:''}${prog}</summary>
+  return `<details class="sum" id="sumbox"><summary><span>Collection</span><b>${priced?sgd(tot):'—'}</b><span class="note">${withList.length?`${priced} of ${withList.length} lists priced`:`no decklists saved in this browser${syncTok()?'':' — turn on Sync to bring them over from your other devices'}`}${missing?' · '+missing+' card'+(missing>1?'s':'')+' unpriced':''}</span>${over.length?`<span class="tag warn">${over.length} deck${over.length>1?'s':''} play above the bracket you set</span>`:''}${prog}</summary>
    <div class="sumbody">
     <div><h4>Cost by deck</h4><table>${rows.sort((a,b)=>b[1].usd-a[1].usd).map(([d,st])=>`<tr><td>${esc(d.display||d.name)}</td><td class="r">${sgd(st.usd)}</td></tr>`).join('')||'<tr><td class="note">Save a list to see its cost.</td></tr>'}${ret?`<tr><td class="note">Retired decks</td><td class="r note">${sgd(ret)}</td></tr>`:''}</table></div>
     <div><h4>Colours <small class="note">decks playing each${unk?` · ${unk} still loading`:''}</small></h4><table>${['W','U','B','R','G','C'].map(c=>`<tr><td><i class="pip ${c}" style="display:inline-block;vertical-align:-1px"></i> ${({W:'White',U:'Blue',B:'Black',R:'Red',G:'Green',C:'Colourless'})[c]}</td><td class="r">${col[c]}</td></tr>`).join('')}</table>
      <h4 style="margin-top:10px">Combinations</h4><table>${[...combo].sort((a,b)=>b[1]-a[1]||a[0].length-b[0].length).map(([k,n])=>`<tr><td><span class="pips">${k.split('').map(c=>`<i class="pip ${c}"></i>`).join('')}</span> ${esc(GUILD[k]||k)}</td><td class="r">${n}</td></tr>`).join('')}</table></div>
     <div><h4>Brackets</h4><table>${[['2','Bracket 2'],['3','Bracket 3'],['4','Bracket 4'],['cEDH','cEDH']].map(([b,l])=>`<tr><td>${l}</td><td class="r">${br.get(b)||0}</td></tr>`).join('')}</table>
-     ${over.length?`<h4 style="margin-top:10px">Above their bracket</h4><table>${over.map(([d,s])=>`<tr><td title="${esc(s.why)}">${esc(d.display||d.name)} <span class="note">B${esc(d.bracket)} → looks B${s.b}</span><div class="note" style="font-size:.76rem">${esc(s.why)}</div></td></tr>`).join('')}</table>`:''}</div>
+     ${over.length?`<h4 style="margin-top:10px">Playing above the bracket you set</h4><table>${over.map(([d,s])=>`<tr><td>${esc(d.display||d.name)} <span class="note">set B${esc(s.dec)} → plays B${s.det}</span><div class="note" style="font-size:.76rem">${esc(s.rows.filter(r=>r.lvl>+s.dec).map(r=>r.label+': '+(r.k==='combo'?r.items.map(x=>x[0]+' + '+x[1]).join('; '):r.items.join(', '))).join(' · '))}</div></td></tr>`).join('')}</table><button class="chip sm" id="brapply" style="margin-top:6px">Set all ${over.length} to the bracket they play at</button>`:''}</div>
     <div class="note" style="grid-column:1/-1">Prices: TCGplayer market via Scryfall, regular printing (no showcase/borderless/promo), non-foil, NM, converted at ${fxNote}. Singapore stores often differ — each card links to <a href="https://gishathfetch.com/" target="_blank" rel="noopener">Gishath Fetch</a> in the deck's list tab. Prices refresh weekly. <button class="chip sm" id="pricego" ${P.busy?'disabled':''}>Refresh prices now</button>${P.err?` <span class="err">${esc(P.err)}</span>`:''}</div>
    </div></details>`}
 
@@ -551,19 +587,24 @@ function sortDecks(arr){const k=S.sort||'name';return [...arr].sort((a,b)=>{
   if(k==='colors'){const ka=colorOrder(a),kb=colorOrder(b);if(ka!==kb)return ka<kb?-1:1}
   return (a.display||a.name).localeCompare(b.display||b.name)})}
 function deckCard(d){const dk=S.decks[d.slug]||{};const n=(d.lists?.newcards||[]).length;const u=updatedAt(d);
-  return`<button class="deck ${d.retired?'retired':''}" data-slug="${esc(d.slug)}">${d.art?`<img src="${esc(d.art)}" alt="" loading="lazy">`:'<div class="ph"></div>'}<div><h3>${esc(d.display||d.name)}</h3><div class="meta"><span class="pips">${(d.ci&&d.ci.length?d.ci:['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span>${d.retired?'<span class="tag">retired</span>':''}${d.custom?'<span class="tag">added by you</span>':d.unresolved?'<span class="tag">no EDHREC page</span>':d.decks?`<span class="num">${fmt(d.decks)} decks</span>`:''}${dk.list?`<span class="tag">${dk.list.length} cards</span>`:''}${(()=>{const st=deckStats(d);if(!st)return'';const sb=suggestBracket(d,st);return `<span class="price" title="${st.missing?st.missing+' cards without a price':'regular printing, non-foil, NM'}">${sgd(st.usd)}</span>`+(sb&&sb.over?`<span class="tag warn" title="${esc(sb.why)}">looks B${sb.b}</span>`:'')})()}${n?`<span class="hits">${n} new on EDHREC</span>`:''}${u?`<span class="upd">updated ${ago(u)}</span>`:''}</div></div></button>`}
+  return`<button class="deck ${d.retired?'retired':''}" data-slug="${esc(d.slug)}">${d.art?`<img src="${esc(d.art)}" alt="" loading="lazy">`:'<div class="ph"></div>'}<div><h3>${esc(d.display||d.name)}</h3><div class="meta"><span class="pips">${(d.ci&&d.ci.length?d.ci:['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span>${d.retired?'<span class="tag">retired</span>':''}${d.custom?'<span class="tag">added by you</span>':d.unresolved?'<span class="tag">no EDHREC page</span>':d.decks?`<span class="num">${fmt(d.decks)} decks</span>`:''}${d.retired?'':dk.list&&dk.list.length?`<span class="lst ok" title="${dk.list.length} cards · list saved ${dk.listAt?esc(new Date(dk.listAt).toLocaleDateString('en-CA')):'(date unknown)'}${dk.listAtApprox?' (approx.)':''}">✓ list${dk.listAt?' · '+ago(dk.listAt):''}</span>`:'<span class="lst no" title="No decklist saved for this deck">✗ no list</span>'}${(()=>{const st=deckStats(d);const a=assessBracket(d);return (st?`<span class="price" title="${st.missing?st.missing+' cards without a price':'regular printing, non-foil, NM'}">${sgd(st.usd)}</span>`:'')+(a&&a.over?`<span class="tag warn" title="${esc(a.rows.filter(r=>r.lvl>+a.dec).map(r=>r.label).join(', '))}">set B${a.dec} · plays B${a.det}</span>`:'')})()}${n?`<span class="hits">${n} new on EDHREC</span>`:''}${u?`<span class="upd">updated ${ago(u)}</span>`:''}</div></div></button>`}
 function renderHome(){
-  const act=active();const list=S.index.filter(d=>S.brackets.has(d.bracket)&&matches(d,S.q));
+  loadCombos();const act=active();const list=S.index.filter(d=>S.brackets.has(effBracket(d))&&matches(d,S.q));
   const live=list.filter(d=>!d.retired),ret=list.filter(d=>d.retired);
   $('#count').textContent=`${live.length} shown`;$('#cap').textContent=`${act.length} / ${cap()} active`;
-  const groups=[['2','Bracket 2'],['3','Bracket 3'],['4','Bracket 4'],['cEDH','cEDH']];
-  let h=summaryHtml()+groups.map(([b,label])=>{const ds=sortDecks(live.filter(d=>d.bracket===b));if(!ds.length)return'';
-    return`<div class="sect">${label}<small>${ds.length}</small></div><div class="grid">${ds.map(deckCard).join('')}</div>`}).join('');
+  const groups=[['2','Bracket 2 · Core'],['3','Bracket 3 · Upgraded'],['4','Bracket 4 · Optimized'],['cEDH','cEDH']];
+  const noList=act.filter(d=>!(S.decks[d.slug]?.list?.length));
+  const miss=noList.length?`<div class="missing"><b>${noList.length} active deck${noList.length>1?'s have':' has'} no decklist:</b>${noList.map(d=>`<button class="chip sm" data-open="${esc(d.slug)}">${esc(d.display||d.name)}</button>`).join('')}<span class="note">Tap to open it and paste the list in Your list.</span></div>`:'';
+  let h=summaryHtml()+miss+groups.map(([b,label])=>{const ds=sortDecks(live.filter(d=>effBracket(d)===b));if(!ds.length)return'';
+    const moved=ds.filter(d=>d.bracket!==b).length;
+    return`<div class="sect">${label}<small>${ds.length}${moved?` · ${moved} moved up from the bracket you set`:''}</small></div><div class="grid">${ds.map(deckCard).join('')}</div>`}).join('');
   if(ret.length)h+=`<div class="sect">Retired<small>${ret.length} — dismantled, kept for reference</small></div><div class="grid">${sortDecks(ret).map(deckCard).join('')}</div>`;
   if(!live.length&&!ret.length)h=summaryHtml()+'<div class="empty">No deck matches. Try part of a commander name, a bracket, or colors like "BG".</div>';
   $('#home').innerHTML=h;const sm=$('#sumbox');if(sm){sm.open=!!S.sumOpen;sm.ontoggle=()=>{S.sumOpen=sm.open}}
   $('#pricego')?.addEventListener('click',()=>refreshPrices(true));
   $('#home').querySelectorAll('.deck').forEach(b=>b.onclick=()=>openDeck(b.dataset.slug));
+  $('#home').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{openDeck(b.dataset.open).then(()=>{S.tab='list';renderTab()})});
+  $('#brapply')?.addEventListener('click',async()=>{for(const d of active()){const a=assessBracket(d);if(a&&a.over)await saveDeck(d.slug,{bracket:a.det})}buildIndex();renderHome()});
 }
 
 // ---------- add / dismantle (one in, one out) ----------
@@ -661,7 +702,27 @@ async function rebuildDeck(slug){if(active().length>=cap()){$('#addpanel').hidde
   await saveDeck(slug,{retired:false,rebuiltAt:new Date().toISOString()});buildIndex();$('#back').click()}
 
 // ---------- detail ----------
-function brHint(d){const el=$('#brhint');if(!el)return;const s=suggestBracket(d,deckStats(d));el.innerHTML=s?(s.over?`<span class="tag warn" title="${esc(s.why)}">looks like Bracket ${s.b}</span>`:`<span class="note" title="${esc(s.why)}">${s.b===d.bracket||+s.b<+d.bracket?'✓ fits':''}</span>`):'';if(s&&s.over)el.querySelector('.tag').onclick=()=>alert(s.why)}
+function brHint(d){const el=$('#brhint');if(!el)return;const a=assessBracket(d);
+  el.innerHTML=!a?'<span class="lst no">✗ no list</span>':a.over?`<button class="chip sm" id="brwhy" style="color:var(--warn);border-color:var(--warn)">plays as Bracket ${a.det} — why?</button>`:'<span class="note">✓ fits</span>';
+  $('#brwhy')?.addEventListener('click',()=>{S.tab='list';renderTab()})}
+/** Your list → why this deck is in its bracket, criterion by criterion */
+function renderBracketBox(d){const el=$('#brbox');if(!el)return;const dk=S.decks[d.slug]||{};const a=assessBracket(d);
+  const status=dk.list&&dk.list.length?`<span class="lst ok">✓ List saved ${dk.listAt?ago(dk.listAt)+' ('+esc(new Date(dk.listAt).toLocaleDateString('en-CA'))+(dk.listAtApprox?', approx.':'')+')':''}</span> <span class="note">${dk.list.length} cards</span>`:'<span class="lst no">✗ No list yet</span> <span class="note">Paste it below and save; the bracket check runs on the saved list.</span>';
+  if(!a){el.innerHTML=`<div class="brbox">${status}</div>`;return}
+  const bl=b=>b==='cEDH'?'cEDH':'Bracket '+b+' ('+BR_NAME[b]+')';
+  const head=a.dec==='cEDH'?`<h4>cEDH — set by you</h4><div class="note">The counted criteria below can't tell Bracket 4 from cEDH; cEDH is about intent and the competitive meta.</div>`
+    :a.over?`<h4 class="over">Plays as ${bl(a.det)} — you set ${bl(a.dec)}</h4>`
+    :a.under?`<h4>${bl(a.dec)} — set by you</h4><div class="note">Nothing counted here forces it above ${bl(a.det)}. You rated it higher, which is right if it wins fast or plays tight; the brackets judge intent and speed too.</div>`
+    :`<h4>${bl(a.dec)} — fits</h4>`;
+  const item=(r)=>r.k==='combo'?`<ul>${r.items.map(x=>`<li>${esc(x[0])} + ${esc(x[1])} → ${esc(x[3])} <span class="note">${x[2]!=null?'· needs '+x[2]+' mana'+(x[2]<=4?' (early)':''):''} · <a href="https://commanderspellbook.com/combo/${encodeURIComponent(x[4])}/" target="_blank" rel="noopener">Spellbook</a></span></li>`).join('')}</ul>`:`<div>${r.items.map(esc).join(', ')}</div>`;
+  const rows=a.rows.map(r=>`<tr><td class="lv ${r.lvl>2&&r.lvl>(+a.dec||5)?'hi':r.items.length?'':'okc'}">${r.items.length?(r.lvl>2?'→ B'+r.lvl:'ok'):'✓ none'}</td><td><b>${r.label}${r.items.length?' ('+r.items.length+')':''}</b>${r.items.length?item(r):''}<div class="note">${esc(r.rule)}</div></td></tr>`).join('');
+  const fixes=a.over?fixesFor(a,a.dec):[];
+  const caveats=[a.pending?`Still checking ${a.pending} card${a.pending>1?'s':''} for Game Changer status…`:'',!a.combosReady?(CB.err?'Combo list unavailable ('+esc(CB.err)+'), so two-card combos are not counted.':'Loading the combo list…'):''].filter(Boolean);
+  el.innerHTML=`<div class="brbox">${status}${head}<table>${rows}</table>
+   ${fixes.length?`<div class="fix"><b>To fit ${bl(a.dec)}:</b><ul>${fixes.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div><div class="row"><button class="chip" id="brmove">Move it to ${bl(a.det)}</button></div>`:''}
+   ${caveats.length?`<div class="note">${caveats.join(' ')}</div>`:''}
+   <div class="note">Counted from the official Commander Brackets criteria (Oct 2025 update, which dropped the tutor rule). Two-card combos come from Commander Spellbook${CB.n?' ('+CB.n.toLocaleString()+' combos)':''}. The brackets also weigh intent and how fast games end, so treat this as the minimum.</div></div>`;
+  $('#brmove')?.addEventListener('click',async()=>{await saveDeck(d.slug,{bracket:a.det});buildIndex();S.cur=S.index.find(x=>x.slug===d.slug)||d;const sel=$('#brsel');if(sel)sel.value=a.det;brHint(S.cur);renderBracketBox(S.cur)})}
 /** change the commander (new card, flavour/alt-art name, or just a different printing) without losing the list, shortlist or history */
 function openCmdEdit(d){const box=$('#cmdedit');if(!box.hidden){box.hidden=true;return}box.hidden=false;const dk=S.decks[d.slug]||{};const pr=dk.cmdrPrint||'';
   box.innerHTML=`<div class="edit"><b>Edit commander</b>
@@ -698,7 +759,7 @@ async function openDeck(slug){
    <div class="hero">${d.img?`<img src="${esc(d.img)}" alt="">`:'<div class="ph"></div>'}<div><h2>${esc(d.display||d.name)}</h2><div class="meta"><span class="pips">${(d.ci||['C']).map(c=>`<i class="pip ${c}"></i>`).join('')}</span><select id="brsel" aria-label="Bracket">${['2','3','4','cEDH'].map(b=>`<option value="${b}" ${d.bracket===b?'selected':''}>${b==='cEDH'?'cEDH':'Bracket '+b}</option>`).join('')}</select><span id="brhint"></span>${d.realName?`<span class="tag" title="Printed as a flavor name; rules name shown">= ${esc(d.realName)}</span>`:''}${d.retired?'<span class="tag">retired</span>':''}${d.decks?`<span class="num">${fmt(d.decks)} EDHREC decks${d.rank?' · rank #'+fmt(d.rank):''}</span>`:''}${(d.tags||[]).slice(0,4).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}${d.was?`<span class="tag" title="Commander changed">was ${esc(d.was)}</span>`:''}<button class="retire" id="editcmd">Edit commander</button><button class="retire" id="retirebtn" style="margin-left:0">${d.retired?'Rebuild':'Dismantle'}</button></div></div></div>
    <div id="cmdedit" hidden></div>
    <div id="confirm" hidden></div>
-   <div class="tabs" role="tablist"><button role="tab" data-t="new">New cards</button><button role="tab" data-t="edh">EDHREC picks</button><button role="tab" data-t="list">Your list</button><button role="tab" data-t="kept">Shortlist</button></div>
+   <div class="tabs" role="tablist"><button role="tab" data-t="new">New cards</button><button role="tab" data-t="edh">EDHREC picks</button><button role="tab" data-t="list">Your list${(S.decks[d.slug]?.list?.length)?'':'<span class="dot" title="No list saved"></span>'}</button><button role="tab" data-t="kept">Shortlist</button></div>
    <div id="pane"><div class="empty">Loading…</div></div>`;
   $('#back').onclick=()=>{S.cur=null;$('#detail').hidden=true;$('#home').hidden=false;renderHome();window.scrollTo(0,0)};
   $('#detail').querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{S.tab=b.dataset.t;renderTab()});
@@ -727,13 +788,13 @@ async function renderTab(){
   $('#detail').querySelectorAll('[role=tab]').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===S.tab));
   const dk=S.decks[d.slug]||{};const own=new Set((dk.list||[]).map(norm));const dismissed=dk.dismissed||{};const kept=dk.kept||{};
   if(S.tab==='list'){
-    pane.innerHTML=`<p class="note">Paste an export from Archidekt (Export → Text), Moxfield (More → Export → any text option) or a plain list. Quantities, set codes, foil marks, Moxfield #tags and Archidekt [categories] are stripped automatically. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
+    pane.innerHTML=`<div id="brbox"></div><p class="note">Paste an export from Archidekt (Export → Text), Moxfield (More → Export → any text option) or a plain list. Quantities, set codes, foil marks, Moxfield #tags and Archidekt [categories] are stripped automatically. Commander lines are fine; the page filters recommendations against this list and uses it to suggest cuts. Saved in this browser; use Export/Import to move it between devices.</p>
       <textarea id="lst" aria-label="Decklist">${esc(listText(dk))}</textarea>
       <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg"></span></div>
       <div id="costbox"></div>
       <div id="lstgrid"></div>`;
-    $('#savelist').onclick=async()=>{const full=parseListFull($('#lst').value);await saveDeck(d.slug,{list:full.map(x=>x.name),prints:printsOf(full),_enriched:null});renderDeckGrid(d,stale);await refreshPrices();renderCost(d);brHint(d)};
-    if(dk.list&&dk.list.length){renderDeckGrid(d,stale);renderCost(d)}
+    $('#savelist').onclick=async()=>{const full=parseListFull($('#lst').value);await saveDeck(d.slug,{list:full.map(x=>x.name),prints:printsOf(full),_enriched:null});$('#detail [data-t=list] .dot')?.remove();renderBracketBox(d);renderDeckGrid(d,stale);await refreshPrices();renderCost(d);brHint(d);renderBracketBox(d)};
+    loadCombos();renderBracketBox(d);if(dk.list&&dk.list.length){renderDeckGrid(d,stale);renderCost(d)}
     return;
   }
   pane.innerHTML='<div class="empty">Fetching cards…</div>';

@@ -387,6 +387,9 @@ class Table {
   shouldStop(ctx) {
     const me = this.me, g = this.game;
     if (ctx.step === 'stack') {
+      const top0 = ctx.stack[ctx.stack.length - 1];
+      // a triggered ability on top (yours or theirs): stop if you can do something real in response — crack a fetch, copy it, counter it, kill the source
+      if (top0 && top0.trig && this.s.stops !== 'minimal' && !(this.passUntilTurn && ctx.active !== me) && ctx.options.some(o => !(o.ab && o.ab.mana))) return true;
       const theirs = ctx.stack.filter(o => o.caster !== me); if (!theirs.length) return this.s.stops === 'all';
       if (ctx.stack[ctx.stack.length - 1].caster === me && this.s.stops !== 'all') return false; // you just acted: keep going unless someone answers
       const aimed = theirs.some(o => this.aimedAtMe(o) || g.threatTo(me, o).length);
@@ -732,6 +735,7 @@ class Table {
   /** what a stack object will do, in plain words */
   stackVerb(o) {
     const c = o.card, t = o.target;
+    if (o.kind === 'ability') return `${o.trig ? 'resolve a triggered ability' : 'resolve an activated ability'}${o.copy ? ' (copy)' : ''}${o.ab && o.ab.ops && this.game.describeOps ? ': ' + this.game.describeOps(o.ab.ops) : ''}`;
     if (c.roles.includes('counter') && t && t.spell) return `counter ${t.spell.card.name}${c.counter && c.counter.unless ? ` unless ${short(t.spell.caster.name)} pays {${c.counter.unless}}` : ''}`;
     if (c.redirect && t && t.spell) return `change the target of ${t.spell.card.name}`;
     if (t && t.card) return `${c.roles.includes('removal') ? 'remove' : 'target'} ${t.card.name} (${short((this.game.ownerOf(t) || {}).name || '')})`;

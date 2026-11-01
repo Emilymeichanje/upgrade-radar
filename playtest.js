@@ -649,6 +649,30 @@ function tagAbilities(card) {
     if (/^(i|ii|iii|iv|v|vi)(, (i|ii|iii|iv|v|vi))* — /.test(raw)) continue; // saga chapters are handled by tagSaga
     l = raw.replace(/^[a-z' ]+ — (?=[{a-z])/, s => /^(landfall|addendum|renew|adamant|grand summon|max speed|raid|ronso rage|blitzball captain|medicus ministorum|mold earth|lieutenant|time lord's prerogative|dualcast|battalion|strive|treasure hunter|hero's sundering|enthralling performance|shooting star|cheer|steal|unlock ability|the will of the hive mind|flashback|escape|unearth|cycling|embalm|eternalize|scavenge|metalcraft|imprint) — $/.test(s) ? s : ''); // drop ability words like "Raid — "
     let m;
+    // ==== fixes b1 (parse) ====
+    // ---- end b1 (parse)
+    //
+    // ==== fixes b2 (parse) ====
+    // ---- end b2 (parse)
+    //
+    // ==== fixes b3 (parse) ====
+    // ---- end b3 (parse)
+    //
+    // ==== fixes b4 (parse) ====
+    // ---- end b4 (parse)
+    //
+    // ==== fixes b5 (parse) ====
+    // ---- end b5 (parse)
+    //
+    // ==== fixes b6 (parse) ====
+    // ---- end b6 (parse)
+    //
+    // ==== fixes b7 (parse) ====
+    // ---- end b7 (parse)
+    //
+    // ==== fixes b8 (parse) ====
+    // ---- end b8 (parse)
+    //
     // ---- batch 7 (rules check 2026-10-30: Avengers, blink, superfriends, lands, wizards decks)
     { let hit = true; const Lw = l;
       if (/^whenever another hero you control enters, it gains vigilance and haste until end of turn\. put a \+1\/\+1 counter on that hero and a \+1\/\+1 counter on this card/.test(Lw)) TR('creatureEnters', [{ op: 'enteredKw', kws: ['vigilance', 'haste'] }, { op: 'counterOnEntered', n: 1 }, { op: 'counters', n: 1, to: 'this card' }], { filter: 'hero', another: true, yours: true });
@@ -3110,6 +3134,30 @@ class Game {
     (this.trigQueue = this.trigQueue || []).push({ q, srcCard, ops, ctx, label });
     if (!this.trigHold && !this.stackBusy) await this.settleTriggers();
   }
+  // ==== fixes b1 (methods) ====
+  // ---- end b1 (methods)
+  //
+  // ==== fixes b2 (methods) ====
+  // ---- end b2 (methods)
+  //
+  // ==== fixes b3 (methods) ====
+  // ---- end b3 (methods)
+  //
+  // ==== fixes b4 (methods) ====
+  // ---- end b4 (methods)
+  //
+  // ==== fixes b5 (methods) ====
+  // ---- end b5 (methods)
+  //
+  // ==== fixes b6 (methods) ====
+  // ---- end b6 (methods)
+  //
+  // ==== fixes b7 (methods) ====
+  // ---- end b7 (methods)
+  //
+  // ==== fixes b8 (methods) ====
+  // ---- end b8 (methods)
+  //
   /** "modified": has counters, is equipped, or is enchanted by an Aura its controller controls */
   isModified(p, b) { if ((b.counters || 0) > 0 || Object.values(b.ck || {}).some(v => v > 0) || (b.charge || 0) > 0) return true; return p.battlefield.some(e => e.attachedTo === b.id && !e.neutral && (e.card.equip || /\bAura\b/.test(e.card.type))); }
   /** exile a permanent and return it at once (blink); tokens stay exiled. Returns the new permanent */
@@ -4500,6 +4548,30 @@ class Game {
         case 'extraTurn': { const t = ctx.target && !ctx.target.card ? ctx.target : p; t.extraTurns = (t.extraTurns || 0) + 1; this.say(`— ${t.name} will take an extra turn`, p); break; }
         case 'copyLastAbility': { { const o = await this.pickStackObj(p, src, this.copyPool(p, op), 'copy'); if (o) { this.copyAbilityObj(p, o); break; } } if (op.enchantment) { const e = p.lastEnchAb; if (!e || e.turn !== this.turn) break; this.say(`— copies ${e.card.name}'s ability`, p); await this.runOps(p, e.ops, e.card, { ...(e.ctx || {}), perm: e.perm }); break; } const l = p.lastCLAb; if (!l || l.turn !== this.turn) break; this.say(`— copies ${l.card.name}'s ability`, p); await this.runOps(p, l.ops, l.card, { perm: l.perm, x: l.x }); break; }
         case 'defExile': { const d = ctx.defender; if (!d || d.dead) break; for (let k = 0; k < op.n && d.battlefield.length; k++) { const v = d.ai ? [...d.battlefield].sort((a, b) => d.ai.permBase(a) - d.ai.permBase(b))[0] : (await this.pickPerm(d, src, d.battlefield, { dest: 'exile' })) || d.battlefield[0]; d.battlefield.splice(d.battlefield.indexOf(v), 1); await this.emit({ type: 'destroy', owner: d, perm: v, quiet: true }); if (!v.card.token) (v.card.isCommander ? d.command : d.exile).push(v.card.orig || v.card); this.say(`— ${d.name} exiles ${v.card.name}`, d); await this.leftBattlefield(d, v); } break; }
+        // ==== fixes b1 (ops) ====
+        // ---- end b1 (ops)
+        //
+        // ==== fixes b2 (ops) ====
+        // ---- end b2 (ops)
+        //
+        // ==== fixes b3 (ops) ====
+        // ---- end b3 (ops)
+        //
+        // ==== fixes b4 (ops) ====
+        // ---- end b4 (ops)
+        //
+        // ==== fixes b5 (ops) ====
+        // ---- end b5 (ops)
+        //
+        // ==== fixes b6 (ops) ====
+        // ---- end b6 (ops)
+        //
+        // ==== fixes b7 (ops) ====
+        // ---- end b7 (ops)
+        //
+        // ==== fixes b8 (ops) ====
+        // ---- end b8 (ops)
+        //
         case 'enteredKw': { const t = ctx.entered; if (t) { (t.kwTurn === this.turn ? t.kwT : (t.kwT = [])).push(...op.kws); t.kwTurn = this.turn; if (op.kws.includes('haste')) t.summoning = false; this.refreshStatics(); } break; }
         case 'treasureDmg': await this.makeArtifactTokens(p, 'treasure', ctx.dmg || 0); break;
         case 'drawModified': { const n = p.battlefield.filter(b => b.card.isCreature && this.isModified(p, b)).length; if (n) await this.draw(p, n); break; }
@@ -6078,6 +6150,30 @@ class AI {
       case 'damage': v += typeof op.n === 'number' ? op.n * 0.8 : 2; break;
       case 'tokens': v += (typeof op.n === 'number' ? op.n : 2) * ((op.pt || [1, 1])[0] + (op.pt || [1, 1])[1]) / 2; break;
       case 'artifactTokens': v += (op.n || 1) * (op.kind === 'treasure' ? 1.5 : op.kind === 'clue' ? 1.8 : 1); break;
+      // ==== fixes b1 (ai) ====
+      // ---- end b1 (ai)
+      //
+      // ==== fixes b2 (ai) ====
+      // ---- end b2 (ai)
+      //
+      // ==== fixes b3 (ai) ====
+      // ---- end b3 (ai)
+      //
+      // ==== fixes b4 (ai) ====
+      // ---- end b4 (ai)
+      //
+      // ==== fixes b5 (ai) ====
+      // ---- end b5 (ai)
+      //
+      // ==== fixes b6 (ai) ====
+      // ---- end b6 (ai)
+      //
+      // ==== fixes b7 (ai) ====
+      // ---- end b7 (ai)
+      //
+      // ==== fixes b8 (ai) ====
+      // ---- end b8 (ai)
+      //
       case 'treasureDmg': case 'manaDmg': v += 2; break;
       case 'blinkAny': case 'blinkOne': case 'blinkMany': case 'blinkSelfNow': v += game.allPerms(b => game.ownerOf(b) === me && b.card.etbOps && !b.card.token).length ? 3 : -2; break;
       case 'kazaReduce': v += me.hand.some(c => (c.isInstant || c.isSorcery) && c.cmc >= 2) ? 2 : -1; break;

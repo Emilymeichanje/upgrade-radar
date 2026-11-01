@@ -659,6 +659,40 @@ function tagAbilities(card) {
     // ---- end b3 (parse)
     //
     // ==== fixes b4 (parse) ====
+    if (/^choose target creature\. you lose 2 life\. until end of turn, that creature gains "when this (?:creature|card) dies, return it to the battlefield tapped under its owner's control\."/.test(l)) { card.spellOpsX = [{ op: 'lose', n: 2 }, { op: 'b4_retTapped' }]; continue; }
+    if (/^at the beginning of your first main phase, mill a card, then exile a card from your graveyard at random\. you may play the exiled card this turn/.test(l)) { TR('main1', [{ op: 'mill', n: 1 }, { op: 'gyRandomPlay' }]); continue; }
+    if (/^\{t\}: put a card exiled with this card into its owner's graveyard\. if it's a land card, create a treasure token\. if it's a nonland card, create a 2\/2 black rogue creature token/.test(l)) { AB('', [{ op: 'b4_converter' }], { tap: true, b4Req: 'held' }); continue; }
+    if (/^when this card enters, destroy up to one target artifact or enchantment with mana value x or less\. if x is 5 or more, you draw a card\. if x is 10 or more, double the number of \+1\/\+1 counters on any number of other target creatures/.test(l)) { ETB([{ op: 'b4_kineticOoze' }]); card.roles = card.roles.filter(r => r !== 'removal'); continue; }
+    if (/^add \{r\} for each tapped land your opponents control/.test(l)) { card.spellOpsX = [{ op: 'b4_manaGeyser' }]; continue; }
+    if (/^when this card enters, draw a card for each green creature you control/.test(l)) { ETB([{ op: 'draw', n: { $: 'count', f: 'green creature' } }]); continue; }
+    if (/^\{2\}\{g\}, \{t\}, put a verse counter on this card: search your library for a creature card with mana value equal to the number of verse counters on this card, put it onto the battlefield, then shuffle/.test(l)) { AB('{2}{G}', [{ op: 'b4_yisan' }], { tap: true, b4Pay: 'verse' }); card.noTutor = true; continue; }
+    if (/^destroy all creatures you don't control and all planeswalkers you don't control/.test(l)) { card.spellOpsX = [{ op: 'b4_destroyOppPw' }]; continue; }
+    if (/^target creature gets \+1\/\+0 until end of turn and can't be blocked this turn/.test(l)) { card.spellOpsX = [{ op: 'b4_pumpUnblock', pp: 1, tt: 0 }]; continue; }
+    if (/^each player discards their hand, then draws cards equal to the greatest number of cards a player discarded this way/.test(l)) { card.spellOpsX = [{ op: 'wheel', greatest: true }]; continue; }
+    if (/^whenever this card enters or attacks, put a blight counter on it\. then for each blight counter on it, each opponent loses 4 life unless that player sacrifices a nonland permanent of their choice or discards a card/.test(l)) { ETB([{ op: 'b4_viper' }]); TR('attack', [{ op: 'b4_viper' }], { who: 'this card' }); continue; }
+    if (/^whenever this card attacks, it deals x damage to each opponent and you gain x life, where x is the number of creatures you control with power 2 or less/.test(l)) { TR('attack', [{ op: 'b4_arabella' }], { who: 'this card' }); continue; }
+    if (/^during your turn, your opponents can't cast spells or activate abilities of artifacts, creatures, or enchantments/.test(l)) { ST('castLock', 'yourTurn'); ST('b4AbLock', true); continue; }
+    if (/^whenever this card attacks, create x 1\/1 colorless soldier artifact creature tokens, where x is the number of soldiers you control/.test(l)) { TR('attack', [{ op: 'tokens', n: { $: 'count', f: 'soldier' }, pt: [1, 1], kw: [], artifact: true, types: 'Soldier', tcolors: [] }], { who: 'this card' }); continue; }
+    if (/^equipped creature has nonbasic landwalk/.test(l)) { ST('b4NonbasicWalk', true); card.__lateE = { pump: [0, 0], kws: [] }; continue; }
+    if (/^exile target creature you control, then return that card to the battlefield under its owner's control\. if it's a spirit, put a \+1\/\+1 counter on it/.test(l)) { card.spellOpsX = [{ op: 'b4_flux' }]; continue; }
+    if (/^\{2\}, \{t\}: choose target enchantment you control that doesn't have the same name as another permanent you control\. create a token that's a copy of it, except it isn't legendary\. if the token is an aura, untap this card, then scry 2\. activate only as a sorcery/.test(l)) { AB('{2}', [{ op: 'b4_yenna' }], { tap: true, speed: 'sorcery', b4Req: 'yenna' }); continue; }
+    if (/^\{t\}: put a \+1\/\+1 counter on target creature for each elf you control/.test(l)) { AB('', [{ op: 'counters', n: { $: 'count', f: 'elf' }, to: 'target creature' }], { tap: true }); continue; }
+    if (/^\{3\}\{g\}\{g\}: creatures you control get \+x\/\+x until end of turn, where x is the greatest power among creatures you control/.test(l)) { AB('{3}{G}{G}', [{ op: 'b4_pumpMaxPow' }]); continue; }
+    if (/^(?:landfall — )?whenever a land you control enters, put a quest counter on this card\. when you do, if it has four or more quest counters on it, put a \+1\/\+1 counter on target creature you control\. it gains trample until end of turn/.test(l)) { TR('landfall', [{ op: 'b4_quest' }]); continue; }
+    if (/^whenever this card or another ally you control enters, you gain 1 life\. if this is the second time this ability has resolved this turn, draw a card/.test(l)) { TR('creatureEnters', [{ op: 'gain', n: 1 }, { op: 'b4_secondDraw' }], { yours: true, another: false, filter: 'ally' }); continue; }
+    if (/^create a 1\/1 green elf warrior creature token for each elf you control/.test(l)) { card.spellOpsX = [{ op: 'tokens', n: { $: 'count', f: 'elf' }, pt: [1, 1], kw: [], types: 'Elf Warrior', tcolors: ['G'] }]; continue; }
+    if (/^\+1: exile the top card of your library\. you may cast that card\. if you don't, this card deals 2 damage to each opponent/.test(l)) { PW('+1', [{ op: 'b4_chandraExile' }, { op: 'damage', n: 2, to: 'each opponent', b4cond: 'notCast' }]); continue; }
+    if (/^whenever you attack, you may remove a \+1\/\+1 counter from each of two creatures you control\. if you do, draw a card and create a 2\/2 colorless robot artifact creature token/.test(l)) { TR('attack', [{ op: 'b4_dyadrine' }, { op: 'draw', n: 1, b4cond: 'paid' }, { op: 'tokens', n: 1, pt: [2, 2], kw: [], artifact: true, types: 'Robot', tcolors: [], b4cond: 'paid' }], { who: 'you' }); continue; }
+    if (/^whenever this card attacks, defending player loses x life and you create x treasure tokens, where x is the number of creatures in your party/.test(l)) { TR('attack', [{ op: 'b4_defenderLoses', n: { $: 'party' } }, { op: 'artifactTokens', n: { $: 'party' }, kind: 'treasure', tapped: false }], { who: 'this card' }); continue; }
+    if (/^\{2\}\{b\}, \{t\}, remove four oil counters from this card: return target creature card from your graveyard to the battlefield\. activate only as a sorcery/.test(l)) { AB('{2}{B}', [{ op: 'reanim', filter: 'creature', n: 1 }], { tap: true, speed: 'sorcery', b4Req: 'oil4', b4Pay: 'oil4' }); card.noReanimate = true; continue; }
+    if (/^destroy target creature or enchantment an opponent controls\. you lose life equal to that permanent's mana value/.test(l)) { card.spellOpsX = [{ op: 'b4_loseTargetMV' }]; continue; }
+    if (/^whenever you cast a noncreature spell, this card gets \+1\/\+1 until end of turn and deals 1 damage to each opponent/.test(l)) { TR('cast', [{ op: 'selfPumpEOT', n: 1 }, { op: 'damage', n: 1, to: 'each opponent' }], { filter: 'noncreature' }); continue; }
+    if (/^destroy target artifact\. it can't be regenerated\. create x 1\/1 green saproling creature tokens, where x is that artifact's mana value/.test(l)) { card.spellOpsX = [{ op: 'tokens', n: { $: 'mv', of: 'target' }, pt: [1, 1], kw: [], types: 'Saproling', tcolors: ['G'] }]; continue; }
+    if (/^create x 1\/1 black rat creature tokens with "this token can't block\." creatures you control gain haste until end of turn/.test(l)) { card.spellOpsX = [{ op: 'b4_tokensCantBlock', n: { $: 'x' }, pt: [1, 1], kw: [], types: 'Rat', tcolors: ['B'] }, { op: 'pumpAll', n: 0, kws: ['haste'] }]; continue; }
+    if (/^search your library for a card, put that card into your hand, discard a card at random, then shuffle/.test(l)) { card.spellOpsX = [{ op: 'b4_discardRandom', n: 1 }]; continue; }
+    if (/^choose a card name\. exile the top six cards of your library, then reveal cards from the top of your library until you reveal a card with the chosen name\. put that card into your hand and exile all other cards revealed this way/.test(l)) { card.spellOpsX = [{ op: 'b4_consult', n: 6 }]; card.roles = card.roles.filter(r => r !== 'wipe' && r !== 'removal'); continue; }
+    if (/^at the beginning of each upkeep, create a 1\/1 black and green pest creature token with "when this token dies, you gain 1 life\."/.test(l)) { TR('upkeep', [{ op: 'b4_tokensCantBlock', n: 1, pt: [1, 1], kw: [], types: 'Pest', tcolors: ['B', 'G'], diesGain: 1, canBlock: true }], { each: true }); continue; }
+    if (/^proliferate, then choose any number of permanents you control that had a counter put on them this way\. those permanents phase out/.test(l)) { card.spellOpsX = [{ op: 'b4_ripples' }]; card.b4NoDoProtect = true; continue; }
     // ---- end b4 (parse)
     //
     // ==== fixes b5 (parse) ====
@@ -2537,6 +2571,7 @@ class Game {
     const alt = p.battlefield.find(b => b.card.altar && !b.neutral);
     if (alt) for (const t of p.battlefield.filter(b => b.card.isCreature && b.card.token)) out.push({ kind: 'altar', b: t, amount: alt.card.altar.amount, colors: alt.card.altar.colors, pen: 6, via: alt.card });
     if (!p.hand.filter(c => c !== card).length) for (const b of p.battlefield.filter(b => b.card.manaAb && b.card.manaAb.led)) out.push({ kind: 'led', b, amount: 3, colors: ALLC.slice(), pen: 9 });
+    if (card && card.isLegendary) this.b4_manaSrcs(p, out);
     return out;
   }
   availableMana(p) { return this.manaSrcs(p).reduce((s, x) => s + x.amount, 0); }
@@ -2620,7 +2655,7 @@ class Game {
       if (s.kind === 'hand') { const i = p.hand.indexOf(s.c); if (i >= 0) { p.hand.splice(i, 1); p.exile.push(s.c); this.say(`— exiles ${s.c.name} from hand for mana`, p); } continue; }
       if (s.kind === 'altar') { const i = p.battlefield.indexOf(s.b); if (i >= 0) { p.battlefield.splice(i, 1); this.say(`— sacrifices ${s.b.card.name} to ${s.via.name}`, p); (this.pendingSac = this.pendingSac || []).push([p, s.b]); } continue; }
       if (s.kind === 'led') { const i = p.battlefield.indexOf(s.b); if (i >= 0) { p.graveyard.push(...p.hand); p.hand = []; p.battlefield.splice(i, 1); p.graveyard.push(s.b.card); this.say(`— discards their hand and sacrifices ${s.b.card.name} for mana`, p); } continue; }
-      const b = s.b; b.tapped = true; const S = b.card.statics || {};
+      const b = s.b; b.tapped = true; const S = b.card.statics || {}; if (s.b4also) s.b4also.tapped = true;
       if (/^\{T\}, Pay 1 life: Add \{B\}\. Put a hatchling counter on this land\./.test(b.card.oracle || '')) { (b.ck = b.ck || {}).hatchling = (b.ck.hatchling || 0) + 1; p.life -= 1; }
       if (b.card.isCreature && !b.card.isLand && b.tyvarTurn !== this.turn && p.battlefield.some(x => x.card.statics && x.card.statics.tyvarMana && !x.neutral)) { b.tyvarTurn = this.turn; b.counters = (b.counters || 0) + this.counterAmt(p, s.amount || 1); }
       if (b.card.grandSummon) { p.grandTurn = this.turn; p.grandN = (p.grandN || 0) + b.card.grandSummon; }
@@ -3144,6 +3179,26 @@ class Game {
   // ---- end b3 (methods)
   //
   // ==== fixes b4 (methods) ====
+  b4_cond(p, c, ctx) { if (c === 'notCast') return !ctx.b4Cast; if (c === 'paid') return !!ctx.b4Paid; return true; }
+  b4_yennaPool(q) { return q.battlefield.filter(b => b.card.isEnchantment && !b.neutral && !q.battlefield.some(x => x !== b && x.card.name === b.card.name)); }
+  b4_abOk(q, src, ab) {
+    if (ab.b4Req === 'held' && !((src.held || []).some(c => this.players.some(o => o.exile.includes(c))))) return false;
+    if (ab.b4Req === 'yenna' && !this.b4_yennaPool(q).length) return false;
+    if (ab.b4Req === 'oil4' && !(((src.ck && src.ck.oil) || 0) >= 4)) return false;
+    const c = src && src.card; if (c && (c.isArtifact || c.isCreature || c.isEnchantment) && !ab.mana) { const act = this.players[this.active]; if (act !== q && this.opponentsOf(q).includes(act) && act.battlefield.some(x => x.card.statics && x.card.statics.b4AbLock && !x.neutral)) return false; }
+    return true;
+  }
+  b4_abPay(q, perm, ab) { perm.ck = perm.ck || {}; if (ab.b4Pay === 'verse') perm.ck.verse = (perm.ck.verse || 0) + 1; else if (ab.b4Pay === 'oil4') perm.ck.oil = Math.max(0, (perm.ck.oil || 0) - 4); }
+  b4_evade(b, a) { const ao = this.ownerOf(a), bo = this.ownerOf(b); if (!ao || !bo) return false;
+    if (ao.battlefield.some(e => e.attachedTo === a.id && e.card.statics && e.card.statics.b4NonbasicWalk && !e.neutral) && bo.battlefield.some(x => x.card.isLand && !/\bBasic\b/.test(x.card.type || ''))) return true;
+    return false; }
+  b4_manaSrcs(p, out) { // Great Hall of the Citadel: {1},{T}: two mana of any colors for legendary spells (pairs the hall with one other one-mana source)
+    for (const hall of p.battlefield.filter(b => b.card.isLand && !b.tapped && !b.neutral && b.card.__lateMana && b.card.__lateMana.legendOnly && b.card.__lateMana.payGeneric)) {
+      const hi = out.findIndex(s => s.kind === 'perm' && s.b === hall); if (hi < 0) continue;
+      const cand = out.map((s, i) => [s, i]).filter(([s]) => s.kind === 'perm' && s.b !== hall && s.amount === 1 && !s.sac && !s.b4also).sort((x, y) => (x[0].colors.length - y[0].colors.length) || ((y[0].colors[0] === 'C') - (x[0].colors[0] === 'C')))[0]; if (!cand) continue;
+      const [ps] = cand; out.splice(Math.max(hi, cand[1]), 1); out.splice(Math.min(hi, cand[1]), 1); out.push({ kind: 'perm', b: hall, amount: 2, colors: ALLC.slice(), pen: 2, b4also: ps.b });
+    } }
+  async b4_retTapped(owner, perm) { const c = perm.card.orig || perm.card; if (perm.card.token || !owner.graveyard.includes(c)) return false; owner.graveyard.splice(owner.graveyard.indexOf(c), 1); const pm = await this.enterPerm(owner, c, { tapped: true }); if (!pm) return false; pm.tapped = true; this.say(`— ${c.name} returns to the battlefield tapped`, owner); if (c.etbOps) await this.trigger(owner, pm, c.etbOps, { perm: pm }, 'ETB'); if (c.isCreature) await this.creatureEntered(owner, pm); return true; }
   // ---- end b4 (methods)
   //
   // ==== fixes b5 (methods) ====
@@ -3527,7 +3582,7 @@ class Game {
       await this.emit({ type: 'tokens', p, n, card });
       for (const t of p.battlefield.slice(-n)) await this.creatureEntered(p, t);
     }
-    if (card.roles.includes('protect') && card.isInstant) this.doProtect(p, card);
+    if (card.roles.includes('protect') && card.isInstant && !card.b4NoDoProtect) this.doProtect(p, card);
     if (card.tutor && (!perm || /when(?:ever)? [^.]*enters[^.]*search your library/i.test(card.oracle)) && ![...(card.spellOps || []), ...(card.etbOps || [])].some(o => /^(tutorTo|landToBf|landToHand|tutorAll|tutorTop)$/.test(o.op))) await this.doTutor(p, card, spell);
     if (card.addendum && this.players[this.active] === p && /main/.test(this.phase)) await this.runOps(p, card.addendum, card, {});
     if (card.spellOps) await this.runOps(p, card.spellOps, card, { spell, x: spell.x, kicked: spell.kicked, gift: spell.gift, bargained: spell.bargained, target });
@@ -3684,6 +3739,7 @@ class Game {
     const dead = perm.card;
     if (perm._gisa) return;
     if (dead.isCreature && this.torporDies()) return;
+    if (perm.b4RetTapTurn === this.turn && !perm.card.token && await this.b4_retTapped(owner, perm)) return;
     { const c = dead.orig || dead; if (perm.returnHandTurn === this.turn && owner.graveyard.includes(c)) { owner.graveyard.splice(owner.graveyard.indexOf(c), 1); owner.hand.push(c); this.say(`— ${c.name} returns to its owner's hand`, owner); }
       else if (dead.isCreature && !dead.token && !(dead.kw || []).includes('flying') && owner.graveyard.includes(c) && owner.battlefield.some(b => b !== perm && b.card.statics && b.card.statics.broodmoth && !b.neutral)) { owner.graveyard.splice(owner.graveyard.indexOf(c), 1); const pm = await this.enterPerm(owner, c); if (pm) { pm.kwPerm = ['flying']; this.refreshStatics(); this.say(`— ${c.name} returns with a flying counter (Luminous Broodmoth)`, owner); if (c.etbOps) await this.trigger(owner, pm, c.etbOps, { perm: pm }, 'ETB'); await this.creatureEntered(owner, pm); } } }
     { const c = dead.orig || dead; const kws = dead.kw || []; const plus = (perm.counters || 0) > 0, minus = (perm.counters || 0) < 0;
@@ -3820,6 +3876,7 @@ class Game {
       if (op.maxMV && typeof op.maxMV === 'object' && op.maxMV.$) op = { ...op, maxMV: this.numSpec(p, op.maxMV, ctx, src) };
       if (op.lesserMV && typeof op.lesserMV === 'object' && op.lesserMV.$) op = { ...op, lesserMV: this.numSpec(p, op.lesserMV, ctx, src) };
       if (op.req && !this.reqOk(p, ctx.perm, op.req, ctx)) continue;
+      if (op.b4cond && !this.b4_cond(p, op.b4cond, ctx)) continue;
       if (op.pp && typeof op.pp === 'object' && op.pp.$) op = { ...op, pp: this.numSpec(p, op.pp, ctx, src) };
       if (op.tt && typeof op.tt === 'object' && op.tt.$) op = { ...op, tt: this.numSpec(p, op.tt, ctx, src) };
       try { await this.runOpsCore(p, [op], src, ctx); }
@@ -3856,7 +3913,7 @@ class Game {
     n = n * (s.k || 1) + (s.add || 0); if (s.half) n = Math.ceil(n / 2); if (s.max != null) n = Math.min(n, s.max); return Math.max(0, n);
   }
   partySize(p) { const roles = ['cleric', 'rogue', 'warrior', 'wizard']; const cs = p.battlefield.filter(b => b.card.isCreature); const used = new Set(); let n = 0;
-    for (const r of roles) { const c = cs.find(b => !used.has(b) && matchesFilter(b.card, r)); if (c) { used.add(c); n++; } } return n; }
+    const best = (i, used) => i >= roles.length ? 0 : Math.max(best(i + 1, used), ...cs.filter(b => !used.has(b) && matchesFilter(b.card, roles[i])).slice(0, 6).map(b => 1 + best(i + 1, new Set([...used, b])))); n = best(0, used); return n; }
   async runOpsCore(p, ops, src, ctx = {}) {
     for (let op of ops) {
       if (p.dead || this.winner) return;
@@ -4558,6 +4615,63 @@ class Game {
         // ---- end b3 (ops)
         //
         // ==== fixes b4 (ops) ====
+        case 'b4_retTapped': { const t = ctx.target && ctx.target.card && ctx.target.card.isCreature && this.ownerOf(ctx.target) ? ctx.target : p.ai ? [...p.battlefield.filter(b => b.card.isCreature)].sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0] : await this.pickPerm(p, src, this.allPerms(b => b.card.isCreature)); if (t) { t.b4RetTapTurn = this.turn; this.say(`— ${t.card.name} will return tapped if it dies this turn`, p); } break; }
+        case 'b4_converter': { const pm = ctx.perm; if (!pm) break; const held = (pm.held || []).filter(c => this.players.some(q => q.exile.includes(c))); const c = p.human && held.length > 1 ? (await this.chooseFromList(p, src, held, 1, 'graveyard'))[0] : held.find(c => !c.isLand) || held[0]; if (!c) break; pm.held = pm.held.filter(x => x !== c); const o = this.players.find(q => q.exile.includes(c)); o.exile.splice(o.exile.indexOf(c), 1); o.graveyard.push(c); this.say(`— puts ${c.name} into ${o.name}'s graveyard`, p); if (c.isLand) await this.makeArtifactTokens(p, 'treasure', 1, false); else await this.runOpsCore(p, [{ op: 'tokens', n: 1, pt: [2, 2], kw: [], types: 'Rogue', tcolors: ['B'] }], src, ctx); break; }
+        case 'b4_kineticOoze': { const x = this.xFor ? this.xFor(ctx) : (ctx.x || 0); const ok = b => (b.card.isArtifact || b.card.isEnchantment) && (b.card.cmc || 0) <= x; let hit = null;
+          if (p.ai) { const t = p.ai.bestTarget(this, p, ok); hit = t && t.perm; } else { const pool = this.allPerms(ok); hit = await this.pickPerm(p, src, pool, { harmful: true }); }
+          if (hit && this.ownerOf(hit)) await this.destroy(this.ownerOf(hit), hit);
+          if (x >= 5) await this.draw(p, 1);
+          if (x >= 10) for (const b of p.battlefield.filter(b => b !== ctx.perm && b.card.isCreature && (b.counters || 0) > 0)) { const n = b.counters; b.counters += n; await this.countersPut(p, b, n); }
+          break; }
+        case 'b4_manaGeyser': { const n = this.opponentsOf(p).reduce((s, q) => s + q.battlefield.filter(b => b.card.isLand && b.tapped).length, 0); if (n) this.addMana(p, Array(n).fill('R')); break; }
+        case 'b4_yisan': { const pm = ctx.perm; const n = pm ? (pm.ck && pm.ck.verse) || 0 : 0; const pool = p.library.filter(c => c.isCreature && (c.cmc || 0) === n); const c = p.ai ? [...pool].sort((a, z) => p.ai.castValueRaw(this, p, z) - p.ai.castValueRaw(this, p, a))[0] : (await this.chooseFromList(p, src, pool, 1, 'battlefield'))[0]; if (c) { p.library.splice(p.library.indexOf(c), 1); const e = await this.enterPerm(p, c); this.say(`— puts ${c.name} onto the battlefield`, p); if (e) { if (c.etbOps) await this.trigger(p, e, c.etbOps, { perm: e }, 'ETB'); await this.creatureEntered(p, e); } } shuffle(p.library, this.rng); break; }
+        case 'b4_destroyOppPw': { for (const q of this.opponentsOf(p)) for (const b of q.battlefield.filter(b => b.card.isPlaneswalker && !b.card.isCreature && b.protTurn !== this.turn && !this.isIndestructible(b))) await this.destroy(q, b); break; }
+        case 'b4_pumpUnblock': { const t0 = ctx.target && ctx.target.card && ctx.target.card.isCreature && this.ownerOf(ctx.target) ? ctx.target : null; const pool = p.battlefield.filter(b => b.card.isCreature); const t = t0 || (p.ai ? [...pool].sort((a, z) => ((this.curAttackers || []).includes(z) - (this.curAttackers || []).includes(a)) || this.powerOf(p, z) - this.powerOf(p, a))[0] : await this.pickPerm(p, src, this.allPerms(b => b.card.isCreature))); if (!t) break; await this.runOpsCore(p, [{ op: 'pumpT', pp: op.pp, tt: op.tt, kws: [], mine: false }], src, { ...ctx, target: t }); t.unblockTurn = this.turn; break; }
+        case 'b4_viper': { const pm = ctx.perm; if (!pm || !p.battlefield.includes(pm)) break; pm.ck = pm.ck || {}; pm.ck.blight = (pm.ck.blight || 0) + 1; const n = pm.ck.blight; this.say(`— blight counter on ${pm.card.name} (${n})`, p);
+          for (let k = 0; k < n; k++) for (const q of this.opponentsOf(p)) { if (q.dead) continue; const perms = q.battlefield.filter(b => !b.card.isLand); let pick = 'life';
+            if (q.human && this.hooks.humanMay) { if (q.hand.length && await this.hooks.humanMay({ p: q, card: src, question: `${src.name}: discard a card rather than lose 4 life?` })) pick = 'discard'; else if (perms.length && await this.hooks.humanMay({ p: q, card: src, question: `${src.name}: sacrifice a nonland permanent rather than lose 4 life?` })) pick = 'sac'; }
+            else if (q.ai) { if (q.hand.length) pick = 'discard'; else if (perms.some(b => b.card.token) || (perms.length && q.life <= 12)) pick = 'sac'; }
+            if (pick === 'discard') { const d = q.ai ? q.ai.chooseDiscard(this, q) : (this.hooks.humanDiscard ? await this.hooks.humanDiscard(q) : q.hand[0]); if (d) { await this.discardCard(q, d); continue; } }
+            if (pick === 'sac') { const v = q.ai ? q.ai.chooseSacVictim(this, q, perms) : await this.pickPerm(q, src, perms, { dest: 'sacrifice' }); if (v) { this.say(`— ${q.name} sacrifices ${v.card.name}`, q); await this.sacrifice(q, v); continue; } }
+            await this.changeLife(q, -4, src); }
+          break; }
+        case 'b4_arabella': { const n = p.battlefield.filter(b => b.card.isCreature && this.powerOf(p, b) <= 2).length; if (!n) break; for (const q of this.opponentsOf(p)) { if (this.protFromPlayer(q, p)) continue; await this.damagePlayer(q, this.dmgAmt(p, n, { red: (src.colors || []).includes('R') }), src, { by: p }); } await this.changeLife(p, n, src); break; }
+        case 'b4_flux': { const t0 = ctx.target && ctx.target.card && ctx.target.card.isCreature && p.battlefield.includes(ctx.target) ? ctx.target : null; const pool = p.battlefield.filter(b => b.card.isCreature); const v = t0 || (p.ai ? [...pool].sort((a, z) => ((z.card.etbOps ? 5 : 0) + (z.tapped ? 1 : 0)) - ((a.card.etbOps ? 5 : 0) + (a.tapped ? 1 : 0)))[0] : await this.pickPerm(p, src, pool)); if (!v) break;
+          const base = v.card.orig || v.card; p.battlefield.splice(p.battlefield.indexOf(v), 1); await this.emit({ type: 'destroy', owner: p, perm: v, quiet: true }); await this.leftBattlefield(p, v);
+          if (v.card.token) { this.say(`— ${v.card.name} is exiled (tokens don't return)`, p); break; }
+          const ow = this.players[v.owner != null ? v.owner : this.players.indexOf(p)] || p; const pm = await this.enterPerm(ow, base, { summoning: base.isCreature }); this.say(`— flickers ${base.name}`, p); if (!pm) break;
+          if (matchesFilter(pm.card, 'spirit')) { const cn = this.counterAmt(ow, 1); pm.counters = (pm.counters || 0) + cn; await this.countersPut(ow, pm, cn); }
+          if (pm.card.etbOps) for (let k = this.etbTimes(ow, pm); k > 0; k--) await this.trigger(ow, pm, pm.card.etbOps, { perm: pm }, 'ETB');
+          await this.creatureEntered(ow, pm); this.refreshStatics(); break; }
+        case 'b4_yenna': { const pool = this.b4_yennaPool(p); const t = p.ai ? [...pool].sort((a, z) => (z.card.cmc || 0) - (a.card.cmc || 0))[0] : await this.pickPerm(p, src, pool); if (!t) break;
+          const c = { ...t.card, uid: UID++, token: true, isCommander: false, isLegendary: false, type: (t.card.type || '').replace(/\bLegendary\s+/, '') }; const pm = { id: UID++, card: c, tapped: false, summoning: true, counters: 0, enteredTurn: this.turn }; if (/\bAura\b/.test(c.type) && t.attachedTo != null) pm.attachedTo = t.attachedTo; p.battlefield.push(pm); this.say(`— creates a token copy of ${t.card.name}`, p);
+          await this.emit({ type: 'tokens', p, n: 1, card: src }); await this.tokenEvent(p); if (c.etbOps) await this.trigger(p, pm, c.etbOps, { perm: pm }, 'ETB'); if (c.isCreature) await this.creatureEntered(p, pm); await this.permEntered(p, pm); this.refreshStatics();
+          if (/\bAura\b/.test(c.type)) { if (ctx.perm) ctx.perm.tapped = false; await this.runOpsCore(p, [{ op: 'scry', n: 2 }], src, ctx); } break; }
+        case 'b4_pumpMaxPow': { const n = Math.max(0, ...p.battlefield.filter(b => b.card.isCreature).map(b => this.powerOf(p, b))); await this.runOpsCore(p, [{ op: 'pumpAll', n, kws: [] }], src, ctx); break; }
+        case 'b4_quest': { const pm = ctx.perm; if (!pm) break; pm.ck = pm.ck || {}; pm.ck.quest = (pm.ck.quest || 0) + 1; this.say(`— quest counter on ${pm.card.name} (${pm.ck.quest})`, p); if (pm.ck.quest < 4) break;
+          const pool = p.battlefield.filter(b => b.card.isCreature); const t = p.ai ? [...pool].sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0] : await this.pickPerm(p, src, pool); if (!t) break; await this.runOpsCore(p, [{ op: 'counters', n: 1, to: 'target creature', kws: ['trample'] }], src, { ...ctx, target: t }); break; }
+        case 'b4_secondDraw': { const pm = ctx.perm; if (!pm) break; if (pm.b4ResTurn !== this.turn) { pm.b4ResTurn = this.turn; pm.b4Res = 0; } pm.b4Res++; if (pm.b4Res === 2) await this.draw(p, 1); break; }
+        case 'b4_chandraExile': { ctx.b4Cast = false; const c = p.library.pop(); if (!c) break; p.exile.push(c); this.say(`— exiles ${c.name}`, p); if (c.isLand) break;
+          const cost = this.costOf(p, c, 'hand'); if (!this.canPayCost(p, cost)) break;
+          const go = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: c, question: `cast ${c.name}?` })) : !!p.ai; if (!go) break;
+          let tgt = !c.roles.includes('removal') ? null : p.ai ? (p.ai.bestTarget(this, p, b => b.card.isCreature) || {}).perm || null : await this.pickPerm(p, c, this.oppPerms(p, b => b.card.isCreature), { harmful: true }); if (c.roles.includes('removal') && !tgt && /any target|target player|target opponent/i.test(c.oracle || '')) tgt = [...this.opponentsOf(p)].sort((a, z) => a.life - z.life)[0] || null; if (c.roles.includes('removal') && !tgt) break;
+          this.payCost(p, cost); p.exile.splice(p.exile.indexOf(c), 1); p.hand.push(c); await this.cast(p, c, 'hand', tgt, { free: true }); if (p.hand.includes(c)) { p.hand.splice(p.hand.indexOf(c), 1); p.exile.push(c); } else ctx.b4Cast = true; break; }
+        case 'b4_dyadrine': { ctx.b4Paid = false; const pool = p.battlefield.filter(b => b.card.isCreature && (b.counters || 0) > 0); if (pool.length < 2) break;
+          let picks; if (p.human) { if (!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: src, question: `${src.name}: remove a +1/+1 counter from each of two creatures to draw a card and create a Robot?` }))) break; picks = (await this.chooseFromList(p, src, pool.map(b => b.card), 2, 'counters')).map(c => pool.find(b => b.card === c)).filter(Boolean); if (picks.length < 2) break; }
+          else picks = [...pool].sort((a, z) => z.counters - a.counters).slice(0, 2);
+          for (const b of picks) b.counters--; ctx.b4Paid = true; this.refreshStatics(); this.say(`— removes a +1/+1 counter from ${picks.map(b => b.card.name).join(' and ')}`, p); break; }
+        case 'b4_defenderLoses': { const d = ctx.defender; if (!d || d.dead || d.card) break; await this.changeLife(d, -op.n, src); break; }
+        case 'b4_loseTargetMV': { const t = ctx.target; if (!t || !t.card) break; const n = t.card.cmc || 0; if (n) await this.changeLife(p, -n, src); break; }
+        case 'b4_tokensCantBlock': { const before = new Set(p.battlefield); await this.runOpsCore(p, [{ ...op, op: 'tokens' }], src, ctx); for (const b of p.battlefield.filter(b => !before.has(b) && b.card.token)) { if (!op.canBlock) { b.card.statics = { ...(b.card.statics || {}), cantBlock: true }; b.card.oracle = "This token can't block."; } if (op.diesGain) { b.card.triggers = [...(b.card.triggers || []), { when: 'dies', zone: 'self', ops: [{ op: 'gain', n: op.diesGain }] }]; b.card.oracle = `When this token dies, you gain ${op.diesGain} life.`; } } break; }
+        case 'b4_discardRandom': { for (let k = 0; k < (op.n || 1) && p.hand.length; k++) { const c = p.hand[Math.floor(this.rng() * p.hand.length)]; this.say(`— discards ${c.name} at random`, p); await this.discardCard(p, c); } break; }
+        case 'b4_consult': { const named = p.human ? (await this.chooseFromList(p, src, [...new Map(p.library.map(c => [c.name, c])).values()], 1, 'name'))[0] : [...p.library].filter(c => !c.isLand).sort((a, z) => (p.ai ? p.ai.castValueRaw(this, p, z) - p.ai.castValueRaw(this, p, a) : 0))[0];
+          const six = p.library.splice(-Math.min(op.n || 6, p.library.length)); p.exile.push(...six); const nm = named && named.name; this.say(`— names ${nm || 'a card'}; exiles the top ${six.length}`, p); if (!nm) break;
+          const rev = []; let got = null; while (p.library.length) { const c = p.library.pop(); if (c.name === nm) { got = c; break; } rev.push(c); } p.exile.push(...rev); if (got) { p.hand.push(got); this.say(`— reveals ${got.name} after ${rev.length} other cards`, p); } else this.say(`— never reveals ${nm}; exiles the rest of the library`, p); break; }
+        case 'b4_ripples': { const sum = b => Object.values(this.counterKinds(b)).reduce((s, x) => s + x, 0) + ((b.ck && b.ck.stun) || 0); const before = new Map(p.battlefield.map(b => [b, sum(b)])); await this.runOpsCore(p, [{ op: 'proliferate' }], src, ctx);
+          const got = p.battlefield.filter(b => before.has(b) && sum(b) > before.get(b)); if (!got.length) break;
+          const threat = b => this.stack.some(o => o.kind !== 'ability' && o.caster !== p && (o.target === b || (o.card.roles || []).includes('wipe')));
+          const picks = p.human ? (await this.chooseFromList(p, src, got.map(b => b.card), got.length, 'phase out')).map(c => got.find(b => b.card === c)).filter(Boolean) : got.filter(threat);
+          for (const t of picks) { t.protTurn = this.turn; t.phasedTurn = this.turn; this.say(`— ${t.card.name} phases out`, p); } break; }
         // ---- end b4 (ops)
         //
         // ==== fixes b5 (ops) ====
@@ -4775,6 +4889,7 @@ class Game {
     if (ab.sacCost && this.sacPool(q, ab.sacCost, src).length < (ab.sacCost.n === 'x' ? 1 : ab.sacCost.n)) return false;
     if (ab.removeCounter && !((src.counters || 0) >= ab.removeCounter)) return false;
     if (ab.removeKind && !((src[ab.removeKind] || 0) > 0)) return false;
+    if (!this.b4_abOk(q, src, ab)) return false;
     if (ab.removeAny) { const tot = q.battlefield.filter(b => !b.card.isLand && (!ab.removeOthers || b !== src) && (!ab.removeOthers || b.card.isArtifact || b.card.isCreature || b.card.isPlaneswalker)).reduce((s, b) => s + Object.values(this.counterKinds(b)).reduce((x, y) => x + y, 0), 0); if (tot < ab.removeAny) return false; }
     for (const o of ab.ops) if ((o.op === 'copyLastAbility' || o.op === 'copyTrigger') && !this.copyPool(q, o).length) return false;
     if (ab.exileCreature && !q.battlefield.some(b => b.card.isCreature)) return false;
@@ -4869,6 +4984,7 @@ class Game {
     opt.tapped = tapped;
     if (ab.xcost) await this.payXcost(q, perm, ab.xcost, opt, card);
     if (ab.removeKind && perm) perm[ab.removeKind]--;
+    if (ab.b4Pay && perm) this.b4_abPay(q, perm, ab);
     if (ab.removeAny) { for (let k = 0; k < ab.removeAny; k++) { const pool = q.battlefield.filter(b => !b.card.isLand && (!ab.removeOthers || b !== perm) && (!ab.removeOthers || b.card.isArtifact || b.card.isCreature || b.card.isPlaneswalker) && this.hasCounters(b)); const b = q.human && pool.length > 1 ? (await this.pickPerm(q, card, pool, { dest: 'remove a counter' })) || pool[0] : pool.sort((x, z) => ((z.charge || 0) + (z.suspect || 0)) - ((x.charge || 0) + (x.suspect || 0)) || Object.values(this.counterKinds(z)).reduce((a, c) => a + c, 0) - Object.values(this.counterKinds(x)).reduce((a, c) => a + c, 0))[0]; if (!b) break; const kk = this.takeCounter(b); this.say(`— removes a ${kk} counter from ${b.card.name}`, q); } }
     if (ab.sacCost) { const pool = this.sacPool(q, ab.sacCost, perm); let n = ab.sacCost.n === 'x' ? (q.ai ? Math.min(pool.length, 3) : pool.length) : ab.sacCost.n; const vs = q.human && n < pool.length ? (await this.chooseFromList(q, card, pool.map(b => b.card), n, 'sacrifice')).map(c => pool.find(b => b.card === c)).filter(Boolean) : [...pool].sort((a, b) => (b.card.token - a.card.token) || (q.ai ? q.ai.permBase(a) - q.ai.permBase(b) : 0)).slice(0, n); opt.x = vs.length; for (const v of vs) { this.say(`sacrifices ${v.card.name}`, q); await this.sacrifice(q, v); } }
     if (ab.exileCreature) { const pool = q.battlefield.filter(b => b.card.isCreature); const v = [...pool].sort((a, b) => (b.card.token - a.card.token) || (q.ai ? q.ai.permBase(a) - q.ai.permBase(b) : 0))[0]; if (v) { q.battlefield.splice(q.battlefield.indexOf(v), 1); if (!v.card.token) q.exile.push(v.card.orig || v.card); this.say(`exiles ${v.card.name}`, q); await this.leftBattlefield(q, v); } }
@@ -4972,14 +5088,14 @@ class Game {
   }
   async bounce(owner, perm, by) {
     const i = owner.battlefield.indexOf(perm); if (i < 0) return; await this.emit({ type: 'destroy', owner, perm, quiet: true }); owner.battlefield.splice(i, 1);
-    if (perm.card.token) { this.say(`— ${perm.card.name} is bounced and vanishes`, by); return; }
+    if (perm.card.token) { this.say(`— ${perm.card.name} is bounced and vanishes`, by); await this.leftBattlefield(owner, perm); return; }
     if ((perm.card.orig || perm.card).isCommander) owner.command.push(perm.card.orig || perm.card); else owner.hand.push(perm.card.orig || perm.card);
     this.say(`— ${perm.card.name} returns to ${owner.name}'s ${(perm.card.orig || perm.card).isCommander ? 'command zone' : 'hand'}`, by);
     await this.leftBattlefield(owner, perm);
   }
   async tuck(owner, perm, by, top) {
     const i = owner.battlefield.indexOf(perm); if (i < 0) return; await this.emit({ type: 'destroy', owner, perm, quiet: true }); owner.battlefield.splice(i, 1);
-    if (perm.card.token) return;
+    if (perm.card.token) { await this.leftBattlefield(owner, perm); return; }
     if ((perm.card.orig || perm.card).isCommander) { owner.command.push(perm.card.orig || perm.card); this.say(`— ${perm.card.name} goes to the command zone`, by); return; }
     if (top) owner.library.push(perm.card.orig || perm.card); else owner.library.splice(Math.floor(this.rng() * (owner.library.length + 1)), 0, perm.card.orig || perm.card);
     this.say(`— ${perm.card.name} goes into ${owner.name}'s library`, by);
@@ -5314,6 +5430,7 @@ class Game {
     { const bo = this.ownerOf(b); if (bo && bo.noBlockUntil != null && bo.noBlockUntil.turn === this.turn) return false; if (bo && bo.noBlockAll === this.turn) return false; if (b.cantBlockUntil && (this.ownerOf(b) || {}).turnCount < b.cantBlockUntil.n) {} }
     if (this.blockRule && !this.blockRule(b, a)) return false;
     if (a.unblockTurn === this.turn) return false;
+    if (this.b4_evade(b, a)) return false;
     if (a.gingerTurn === this.turn && !(b.card.kw || []).includes('haste')) return false;
     if (a.ringBearer) { const ao = this.ownerOf(a), bo = this.ownerOf(b); if (ao && (ao.ringLevel || 0) >= 1 && bo && this.powerOf(bo, b) > this.powerOf(ao, a)) return false; }
     if (b.lockUntil && (b.lockUntil.by.turnCount || 0) < b.lockUntil.n) return false;
@@ -6138,7 +6255,7 @@ class AI {
   /** rough value of running some ops for `me` (modal triggers, unknown spells) */
   opsValue(game, me, ops, src) {
     let v = 0; const opps = game.opponentsOf(me);
-    for (const op of ops || []) switch (op.op) {
+    for (const op of (ops || []).map(o => o && o.n && typeof o.n === 'object' && o.n.$ ? { ...o, n: (() => { try { return game.numSpec(me, o.n, {}, src); } catch (e) { return 2; } })() } : o)) switch (op.op) {
       case 'draw': v += 2.5 * (op.n || 1); break;
       case 'drawX': v += 3; break;
       case 'lose': v -= (op.n || 1) * (me.life < 15 ? 1 : 0.4); break;
@@ -6160,6 +6277,28 @@ class AI {
       // ---- end b3 (ai)
       //
       // ==== fixes b4 (ai) ====
+      case 'b4_retTapped': v += 2; break;
+      case 'b4_converter': v += 2; break;
+      case 'b4_kineticOoze': v += 3; break;
+      case 'b4_manaGeyser': v += opps.reduce((s, q) => s + q.battlefield.filter(b => b.card.isLand && b.tapped).length, 0) * 0.8; break;
+      case 'b4_yisan': v += 5; break;
+      case 'b4_destroyOppPw': v += opps.reduce((s, q) => s + q.battlefield.filter(b => b.card.isPlaneswalker).length, 0) * 4; break;
+      case 'b4_pumpUnblock': v += 2; break;
+      case 'b4_viper': v += opps.length * 3; break;
+      case 'b4_arabella': v += me.battlefield.filter(b => b.card.isCreature && game.powerOf(me, b) <= 2).length * (opps.length * 0.8 + 0.3); break;
+      case 'b4_flux': v += 2; break;
+      case 'b4_yenna': v += 4; break;
+      case 'b4_pumpMaxPow': v += me.battlefield.filter(b => b.card.isCreature).length * 2; break;
+      case 'b4_quest': v += 1; break;
+      case 'b4_secondDraw': v += 0.8; break;
+      case 'b4_chandraExile': v += 1.5; break;
+      case 'b4_dyadrine': v += 0.5; break;
+      case 'b4_defenderLoses': v += (op.n || 1) * 0.9; break;
+      case 'b4_loseTargetMV': v -= me.life < 15 ? 3 : 1.5; break;
+      case 'b4_tokensCantBlock': v += (typeof op.n === 'number' ? op.n : 2) * 0.8; break;
+      case 'b4_discardRandom': v -= 2; break;
+      case 'b4_consult': v += 3; break;
+      case 'b4_ripples': v += 2; break;
       // ---- end b4 (ai)
       //
       // ==== fixes b5 (ai) ====

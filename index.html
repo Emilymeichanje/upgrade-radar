@@ -498,8 +498,8 @@ const P={m:{},fx:null,fxDate:null,fxLive:false,busy:false,done:0,todo:0,err:null
 try{const j=JSON.parse(localStorage.getItem('prices')||'null');if(j&&j.v===1)P.m=j.m||{}}catch(e){}
 try{const f=JSON.parse(localStorage.getItem('fx')||'null');if(f){P.fx=f.rate;P.fxDate=f.date;P.fxLive=!!f.live}}catch(e){}
 const FX_FALLBACK=1.30;
-const sgd=usd=>usd==null?'—':'S$'+(usd*(P.fx||FX_FALLBACK)).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0});
-const sgd2=usd=>usd==null?'—':'S$'+(usd*(P.fx||FX_FALLBACK)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const sgd=usd=>usd==null?'—':'SGD $'+(usd*(P.fx||FX_FALLBACK)).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0});
+const sgd2=usd=>usd==null?'—':'SGD $'+(usd*(P.fx||FX_FALLBACK)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const gishath=n=>'https://gishathfetch.com/?s='+encodeURIComponent(n).replace(/%20/g,'+');
 const BASIC=/^Basic( Snow)? Land/;
 function isRegular(c){return !c.promo&&(c.border==='black'||c.border==='white')&&!(c.fx||[]).some(f=>/showcase|extendedart|inverted|etched|fullart|textless/.test(f))&&(!c.full||BASIC.test(c.type))}

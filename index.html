@@ -896,12 +896,19 @@ async function openPlaytest(){
   try{await loadPlaytest()}catch(e){el.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return}
   const ds=decksWithLists();
   if(ds.length<2){el.innerHTML=`<h2 style="font-size:1.4rem">Playtest</h2><div class="empty">Playtest needs at least 2 decks with a saved list of 60+ cards (you have ${ds.length}). Open a deck in <b>Decks</b> → "Your list" → paste your Archidekt or Moxfield export → Save, then come back.</div>`;return}
-  const opt=ds.map(d=>`<option value="${esc(d.slug)}">${esc(d.display||d.name)}</option>`).join('');
+  let ptSort='bracket';try{ptSort=localStorage.getItem('ptSort')||'bracket'}catch(e){}
+  const nm=d=>d.display||d.name,cmpName=(a,b)=>nm(a).localeCompare(nm(b));
+  const BR=['2','3','4','cEDH'],brOf=d=>effBracket(d)||d.bracket||'3';
+  const optHtml=()=>{if(ptSort==='alpha')return [...ds].sort(cmpName).map(d=>`<option value="${esc(d.slug)}">${esc(nm(d))} · ${brOf(d)==='cEDH'?'cEDH':'B'+esc(brOf(d))}</option>`).join('');
+    const order=[...BR,...[...new Set(ds.map(brOf))].filter(b=>!BR.includes(b))];
+    return order.map(b=>{const g=ds.filter(d=>brOf(d)===b).sort(cmpName);return g.length?`<optgroup label="${b==='cEDH'?'cEDH':'Bracket '+esc(b)}">${g.map(d=>`<option value="${esc(d.slug)}">${esc(nm(d))}</option>`).join('')}</optgroup>`:''}).join('')};
+  const opt=optHtml();
   const lv=id=>`<select id="${id}"><option value="casual">Casual</option><option value="focused">Focused</option><option value="cutthroat">Cutthroat</option><option value="expert" selected>Expert</option></select>`;
   const prev=PT.cfg||{};
   el.innerHTML=`<h2 style="font-size:1.4rem;margin-bottom:4px">Playtest</h2>
    <p class="note" style="max-width:760px">Four-player Commander table. You pilot seat 1 against three AI opponents running your other decks. The AI counters spells it judges dangerous, removes attackers at instant speed, holds mana up and blocks to survive. The engine reads card types, costs, colours, power/toughness, keywords and roles (ramp, draw, removal, wipes, counterspells, tokens, pump), but <b>not</b> each card's unique text, so engines and combos don't run. Use it to test curve, speed and interaction.</p>
    <div class="pt-setup">
+    <div class="row" style="margin-bottom:6px"><label class="note" for="ptsort">Sort decks by</label> <select id="ptsort"><option value="bracket" ${ptSort==='bracket'?'selected':''}>Bracket</option><option value="alpha" ${ptSort==='alpha'?'selected':''}>Name (A–Z)</option></select></div>
     <div class="seat"><h3>Seat 1 — you</h3><div class="row"><select id="s0">${opt}</select><label class="note"><input type="checkbox" id="watch" ${prev.watch?'checked':''}> AI pilots this seat too (watch mode)</label></div><div class="row" id="w0" ${prev.watch?'':'hidden'}>${lv('l0')}</div></div>
     ${[1,2,3].map(i=>`<div class="seat"><h3>Seat ${i+1} — AI</h3><div class="row"><select id="s${i}">${opt}</select>${lv('l'+i)}</div></div>`).join('')}
     <div class="row"><button class="chip" id="ptrand">Randomize AI decks</button><button class="chip" id="ptrandall">Randomize all decks</button><button class="chip" id="ptlvl">Randomize difficulty</button><button class="chip pri" id="ptstart">Start game</button></div>
@@ -911,6 +918,7 @@ async function openPlaytest(){
   if(prev.slugs){prev.slugs.forEach((s,i)=>{if(ds.some(d=>d.slug===s))$('#s'+i).value=s});prev.levels.forEach((l,i)=>{if(l&&$('#l'+i))$('#l'+i).value=l})}else pick();
   $('#ptrand').onclick=pick;$('#ptrandall').onclick=()=>{$('#s0').value=ds[Math.floor(Math.random()*ds.length)].slug;pick()};$('#ptlvl').onclick=()=>{for(const i of [1,2,3])$('#l'+i).value=['casual','focused','cutthroat','expert'][Math.floor(Math.random()*4)]};
   $('#watch').onchange=()=>{$('#w0').hidden=!$('#watch').checked};
+  $('#ptsort').onchange=()=>{ptSort=$('#ptsort').value;try{localStorage.setItem('ptSort',ptSort)}catch(e){}const h=optHtml();for(const i of [0,1,2,3]){const sel=$('#s'+i),v=sel.value;sel.innerHTML=h;sel.value=v}};
   $('#ptstart').onclick=()=>{PT.cfg={slugs:[0,1,2,3].map(i=>$('#s'+i).value),levels:[0,1,2,3].map(i=>$('#l'+i)?$('#l'+i).value:null),watch:$('#watch').checked};startGame(PT.cfg)};
 }
 /** EDHREC popularity (share of decks running a card) for every commander's lists: the AI treats widely played cards as strong */

@@ -10,7 +10,7 @@ const short = n => String(n || '').replace(/^(You|AI) · /, '');
 const done = (a, ms) => Promise.race([a.finished.catch(() => {}), new Promise(r => setTimeout(r, ms + 80))]);
 
 // ---------------- settings ----------------
-const DEFAULTS = { anim: !matchMedia('(prefers-reduced-motion: reduce)').matches, sound: true, volume: 0.5, speed: 'normal', stops: 'smart', zoom: 1 };
+const DEFAULTS = { anim: !matchMedia('(prefers-reduced-motion: reduce)').matches, sound: true, volume: 0.5, speed: 'normal', stops: 'smart', zoom: 1, sfxStyle: 'classic', music: 'off', musicVol: 0.35, fx: 'normal' };
 const ZOOMS = [0.75, 0.85, 1, 1.15, 1.3, 1.5, 1.75, 2];
 function loadSettings() { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('pt-settings') || '{}') }; } catch (e) { return { ...DEFAULTS }; } }
 function saveSettings(s) { try { localStorage.setItem('pt-settings', JSON.stringify(s)); } catch (e) {} }
@@ -49,12 +49,43 @@ class Sfx {
   constructor(settings) { this.s = settings; this.ctx = null; }
   init() { if (this.ctx) return; try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); this.master = this.ctx.createGain(); this.master.connect(this.ctx.destination); } catch (e) { this.ctx = null; } }
   vol() { if (this.master) this.master.gain.value = this.s.volume; }
-  tone(f, dur, { type = 'sine', gain = 0.3, attack = 0.005, slide = null, delay = 0 } = {}) {
-    const c = this.ctx, t = c.currentTime + delay, o = c.createOscillator(), g = c.createGain();
-    o.type = type; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(this.master); o.start(t); o.stop(t + dur + 0.02);
+  /** sound style: changes oscillator character, pitch and layering of every effect */
+  get style() { return this.s.sfxStyle || 'classic'; }
+  tone(f, dur, { type = 'sine', gain = 0.3, attack = 0.005, slide = null, delay = 0, raw = false } = {}) {
+    const c = this.ctx, st = raw ? 'classic' : this.style; let t = c.currentTime + delay;
+    if (st === 'retro') { type = type === 'sine' ? 'square' : type === 'triangle' ? 'square' : 'sawtooth'; gain *= 0.55; dur = Math.max(0.05, Math.round(dur / 0.06) * 0.06); }
+    if (st === 'cinematic') { f *= 0.5; if (slide) slide *= 0.5; dur *= 1.6; attack = Math.max(attack, 0.02); }
+    if (st === 'arcane') { dur *= 1.4; attack = Math.max(attack, 0.03); }
+    const mk = (freq, det, gn) => { const o = c.createOscillator(), g = c.createGain(); o.type = type; o.detune.value = det; o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gn, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); o.connect(g); g.connect(this.master); o.start(t); o.stop(t + dur + 0.02); };
+    mk(f, 0, gain);
+    if (st === 'arcane') { mk(f, 9, gain * 0.5); mk(f, -9, gain * 0.5); mk(f * 2, 0, gain * 0.12); }
+    if (st === 'cinematic') { mk(f * 0.5, 0, gain * 0.5); }
   }
+  // ---- generative music: off / ambient / tavern / battle (nothing downloaded; a scheduler plays chords from a key) ----
+  musicStart() {
+    this.musicStop(); const mode = this.s.music; if (!mode || mode === 'off' || !this.ctx) return;
+    const c = this.ctx; if (c.state === 'suspended') c.resume();
+    const bus = this.musicBus = c.createGain(); bus.gain.value = this.s.musicVol ?? 0.35; const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = mode === 'battle' ? 3200 : 1800; bus.connect(lp); lp.connect(c.destination);
+    const root = [110, 123.47, 130.81, 146.83, 164.81][Math.floor(Math.random() * 5)]; const minor = mode !== 'tavern';
+    const scale = minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]; const deg = i => root * Math.pow(2, scale[((i % 7) + 7) % 7] / 12) * Math.pow(2, Math.floor(i / 7));
+    const prog = minor ? [0, 5, 3, 4] : [0, 3, 4, 0]; let bar = 0, step = 0; const bpm = mode === 'battle' ? 128 : mode === 'tavern' ? 96 : 50; const beat = 60 / bpm;
+    const voice = (f, t, d, type, g, det = 0) => { const o = c.createOscillator(), e = c.createGain(); o.type = type; o.frequency.value = f; o.detune.value = det; e.gain.setValueAtTime(0.0001, t); e.gain.exponentialRampToValueAtTime(g, t + Math.min(0.4, d * 0.3)); e.gain.exponentialRampToValueAtTime(0.0001, t + d); o.connect(e); e.connect(bus); o.start(t); o.stop(t + d + 0.05); };
+    const perc = (t, hi) => { const n = Math.floor(c.sampleRate * 0.08), b = c.createBuffer(1, n, c.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n); const src = c.createBufferSource(), f = c.createBiquadFilter(), e = c.createGain(); src.buffer = b; f.type = hi ? 'highpass' : 'lowpass'; f.frequency.value = hi ? 5000 : 200; e.gain.value = hi ? 0.08 : 0.5; src.connect(f); f.connect(e); e.connect(bus); src.start(t); };
+    let next = c.currentTime + 0.1;
+    const tickFn = () => {
+      while (next < c.currentTime + 0.6) {
+        const chord = prog[bar % prog.length]; const t = next;
+        if (mode === 'ambient') { if (step % 8 === 0) { for (const i of [0, 2, 4]) voice(deg(chord + i), t, beat * 8, 'sine', 0.09, (Math.random() - 0.5) * 8); voice(deg(chord) / 2, t, beat * 8, 'triangle', 0.07); } if (step % 8 === 4 && Math.random() < 0.6) voice(deg(chord + [2, 4, 6, 7][Math.floor(Math.random() * 4)]) * 2, t, beat * 3, 'sine', 0.04); }
+        else if (mode === 'tavern') { const arp = [0, 2, 4, 2, 0, 4, 2, 4]; voice(deg(chord + arp[step % 8]) * 2, t, beat * 0.9, 'triangle', 0.09); if (step % 4 === 0) voice(deg(chord) / 2, t, beat * 2, 'triangle', 0.1); if (step % 8 === 6 && Math.random() < 0.5) voice(deg(chord + 7) * 2, t, beat * 1.5, 'sine', 0.05); }
+        else { voice(deg(chord) / 2, t, beat * 0.5, 'sawtooth', 0.1); if (step % 2 === 0) perc(t, false); if (step % 2 === 1) perc(t, true); if (step % 8 === 0) for (const i of [0, 2, 4]) voice(deg(chord + i), t, beat * 4, 'sawtooth', 0.025, (Math.random() - 0.5) * 12); if (step % 8 === 4 && Math.random() < 0.7) voice(deg(chord + [4, 6, 7, 9][Math.floor(Math.random() * 4)]) * 2, t, beat, 'square', 0.03); }
+        step++; if (step % 8 === 0) bar++; next += mode === 'ambient' ? beat : beat / 2;
+      }
+    };
+    this.musicTimer = setInterval(tickFn, 200); tickFn();
+  }
+  musicStop() { if (this.musicTimer) clearInterval(this.musicTimer); this.musicTimer = null; if (this.musicBus) { try { const b = this.musicBus, c = this.ctx; b.gain.setTargetAtTime(0.0001, c.currentTime, 0.2); setTimeout(() => { try { b.disconnect(); } catch (e) {} }, 800); } catch (e) {} this.musicBus = null; } }
+  musicVol() { if (this.musicBus) this.musicBus.gain.value = this.s.musicVol ?? 0.35; }
   noise(dur, { freq = 1200, q = 0.8, gain = 0.25, type = 'bandpass', sweep = null, delay = 0 } = {}) {
     const c = this.ctx, t = c.currentTime + delay, n = Math.floor(c.sampleRate * dur), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
@@ -70,6 +101,18 @@ class Sfx {
       draw: () => T.noise(0.09, { freq: 3200, q: 1.2, gain: 0.12, sweep: 5000 }),
       land: () => { T.tone(120, 0.22, { slide: 60, gain: 0.35 }); T.noise(0.12, { freq: 300, type: 'lowpass', gain: 0.2 }); },
       cast: () => { T.tone(392, 0.18, { type: 'triangle', gain: 0.18 }); T.tone(587, 0.22, { type: 'triangle', gain: 0.16, delay: 0.07 }); T.tone(784, 0.3, { gain: 0.1, delay: 0.14 }); },
+      castCreature: () => { T.tone(146, 0.3, { type: 'triangle', slide: 220, gain: 0.25 }); T.noise(0.18, { freq: 400, type: 'lowpass', gain: 0.15, delay: 0.05 }); T.tone(440, 0.25, { gain: 0.1, delay: 0.18 }); },
+      castInstant: () => { T.tone(900, 0.08, { type: 'triangle', slide: 1800, gain: 0.14 }); T.noise(0.12, { freq: 2500, sweep: 6000, gain: 0.1 }); },
+      castSorcery: () => { T.tone(330, 0.3, { type: 'triangle', gain: 0.16 }); T.tone(494, 0.3, { type: 'triangle', gain: 0.12, delay: 0.1 }); T.tone(659, 0.4, { gain: 0.1, delay: 0.2 }); },
+      castArtifact: () => { T.tone(1200, 0.06, { type: 'square', gain: 0.07 }); T.tone(1800, 0.05, { type: 'square', gain: 0.05, delay: 0.07 }); T.noise(0.15, { freq: 4000, q: 4, gain: 0.12, delay: 0.02 }); },
+      castEnchantment: () => [0, 0.05, 0.1, 0.15].forEach((d, i) => T.tone([659, 830, 988, 1319][i], 0.5, { gain: 0.06, delay: d })),
+      castPlaneswalker: () => { T.tone(262, 0.5, { type: 'triangle', gain: 0.14 }); T.tone(392, 0.5, { type: 'triangle', gain: 0.12, delay: 0.12 }); T.tone(523, 0.6, { gain: 0.12, delay: 0.24 }); T.tone(784, 0.7, { gain: 0.08, delay: 0.36 }); },
+      bigHit: () => { T.tone(60, 0.5, { slide: 30, gain: 0.6 }); T.noise(0.4, { freq: 300, type: 'lowpass', gain: 0.35 }); T.noise(0.25, { freq: 3000, sweep: 500, gain: 0.12, delay: 0.05 }); },
+      lifeLoss: () => T.tone(300, 0.15, { type: 'triangle', slide: 200, gain: 0.08 }),
+      tap: () => T.noise(0.05, { freq: 2200, q: 2, gain: 0.08 }),
+      equip: () => { T.noise(0.1, { freq: 5000, q: 3, gain: 0.12 }); T.tone(1500, 0.08, { type: 'square', gain: 0.05, delay: 0.04 }); },
+      exile: () => { T.tone(1200, 0.5, { slide: 2400, gain: 0.08 }); T.noise(0.5, { freq: 1000, sweep: 8000, gain: 0.12 }); },
+      shuffle: () => [0, 0.06, 0.12, 0.18, 0.24].forEach(d => T.noise(0.05, { freq: 2800, q: 1.5, gain: 0.07, delay: d })),
       resolve: () => { T.tone(988, 0.25, { gain: 0.14 }); T.tone(1480, 0.3, { gain: 0.06, delay: 0.02 }); },
       counterCast: () => { T.tone(740, 0.15, { type: 'sawtooth', gain: 0.08 }); T.tone(554, 0.2, { type: 'triangle', gain: 0.14, delay: 0.06 }); },
       counter: () => { T.tone(660, 0.35, { type: 'sawtooth', slide: 110, gain: 0.14 }); T.noise(0.3, { freq: 2000, sweep: 300, gain: 0.18 }); },
@@ -129,6 +172,21 @@ const STYLE = `
 .gc .ctr b{color:var(--accent)}
 .gc .pt small{font-size:.6em;opacity:.85;margin-left:1px}
 .gs-meta .cdm{color:var(--accent)}
+.fx{position:fixed;z-index:60;pointer-events:none;transform:translate(-50%,-50%)}
+.fx.burst{width:40px;height:40px;border-radius:50%;box-shadow:0 0 0 0 var(--c),0 0 30px 6px var(--c);animation:fxburst .7s ease-out forwards}
+@keyframes fxburst{0%{transform:translate(-50%,-50%) scale(.3);opacity:1}100%{transform:translate(-50%,-50%) scale(5);opacity:0;box-shadow:0 0 0 2px var(--c),0 0 60px 20px transparent}}
+.fx.slash{width:120px;height:4px;background:linear-gradient(90deg,transparent,#ff4040,#fff,#ff4040,transparent);transform:translate(-50%,-50%) rotate(-30deg) scaleX(0);animation:fxslash .5s ease-out forwards}
+@keyframes fxslash{30%{transform:translate(-50%,-50%) rotate(-30deg) scaleX(1.2);opacity:1}100%{transform:translate(-50%,-50%) rotate(-30deg) scaleX(1.4);opacity:0}}
+.fx.flash{background:rgba(255,40,40,.18);animation:fxflash .3s ease-out forwards}
+@keyframes fxflash{to{opacity:0}}
+body.fx-shake{animation:fxshake .45s linear}
+@keyframes fxshake{10%{transform:translate(-5px,3px)}30%{transform:translate(5px,-4px)}50%{transform:translate(-4px,-2px)}70%{transform:translate(4px,3px)}90%{transform:translate(-2px,1px)}100%{transform:none}}
+.fx.bolt svg{width:40px;height:120px;filter:drop-shadow(0 0 8px #9fd0ff)}.fx.bolt path{fill:#e6f3ff;stroke:#5aa9ff;stroke-width:2;animation:fxbolt .45s steps(3) forwards}
+@keyframes fxbolt{0%{opacity:0}20%{opacity:1}60%{opacity:.4}80%{opacity:1}100%{opacity:0}}
+.fx.shards i{position:absolute;width:8px;height:10px;background:var(--accent);opacity:.9;clip-path:polygon(50% 0,100% 60%,70% 100%,0 70%);animation:fxshard .7s ease-out forwards}
+@keyframes fxshard{to{transform:translate(var(--dx),var(--dy)) rotate(var(--r));opacity:0}}
+.fx.confetti{inset:0;transform:none}.fx.confetti i{position:absolute;top:-10px;width:8px;height:12px;background:var(--c);animation:fxconf var(--d) ease-in forwards}
+@keyframes fxconf{to{transform:translate(var(--x),105vh) rotate(720deg)}}
 .pool .pip{display:inline-block;min-width:16px;padding:0 3px;margin-left:2px;border-radius:999px;color:#111;font:700 .7rem/16px var(--mono,monospace);text-align:center}
 .gc.t{transform:rotate(90deg) scale(.78)}
 .gc.sick{filter:saturate(.55) brightness(.9)}
@@ -304,7 +362,7 @@ class Table {
     this.stackView = []; this.attacking = new Map(); this.blocking = new Map(); this.prompt = null; this.mode = null; this.ff = false; this.busy = false; this.logLines = [];
   }
   async start() {
-    injectCSS(); this.sfx.init();
+    injectCSS(); this.sfx.init(); if (this.s.music && this.s.music !== 'off') { const kick = () => { this.sfx.musicStart(); document.removeEventListener('pointerdown', kick); }; document.addEventListener('pointerdown', kick); }
     this.el.innerHTML = `<div class="gt"><div class="gt-main"><div class="gt-board" id="gtb"></div><aside class="gt-side"><div class="pv" id="gtpv"><div class="ty">Hover a card to read it.</div></div><div class="gl" id="gtlog"></div></aside></div></div>`;
     this.board = this.el.querySelector('#gtb'); this.pv = this.el.querySelector('#gtpv'); this.logEl = this.el.querySelector('#gtlog');
     this.applyZoom();
@@ -380,6 +438,15 @@ class Table {
     const mid = this.q('.gt-mid'); if (!mid || !this.dur(800)) return; const b = document.createElement('div'); b.className = 'banner'; b.textContent = text; mid.appendChild(b);
     await done(b.animate([{ opacity: 0, transform: 'translate(-60px,-50%)' }, { opacity: 1, transform: 'translate(0,-50%)', offset: .25 }, { opacity: 1, transform: 'translate(0,-50%)', offset: .75 }, { opacity: 0, transform: 'translate(60px,-50%)' }], { duration: this.dur(1000) }), this.dur(1000)); b.remove();
   }
+  castSound(c) { if (!c) return 'cast'; if (c.isCreature) return 'castCreature'; if (c.isPlaneswalker) return 'castPlaneswalker'; if (c.isInstant) return 'castInstant'; if (c.isSorcery) return 'castSorcery'; if (c.isArtifact) return 'castArtifact'; if (c.isEnchantment) return 'castEnchantment'; return 'cast'; }
+  // ---------- visual effects (fx setting: off / normal / arena) ----------
+  get arena() { return this.s.fx === 'arena' && this.s.anim && !this.ff; }
+  fxEl(cls, rect, ms, html = '') { if (!rect) return; const d = document.createElement('div'); d.className = 'fx ' + cls; d.innerHTML = html; d.style.left = rect.left + rect.width / 2 + 'px'; d.style.top = rect.top + rect.height / 2 + 'px'; document.body.appendChild(d); setTimeout(() => d.remove(), ms); return d; }
+  fxCast(card, from) { if (!this.arena || !from) return; const col = { W: '#f3e9c4', U: '#6fa8ff', B: '#a78bd0', R: '#ff6b57', G: '#5ccc6a' }[(card.colors || [])[0]] || '#d9d9d9'; const d = this.fxEl('burst', from, 700); if (d) d.style.setProperty('--c', col); }
+  fxHit(defender, dmg) { if (!this.arena) return; const el = this.q(`[data-life="${defender.i}"]`); const r = el && el.getBoundingClientRect(); this.fxEl('slash', r, 500); if (dmg >= 8) { document.body.classList.add('fx-shake'); setTimeout(() => document.body.classList.remove('fx-shake'), 450); this.fxEl('flash', { left: 0, top: 0, width: innerWidth * 2, height: innerHeight * 2 }, 300); } }
+  fxLightning(el) { if (!this.arena || !el) return; const r = el.getBoundingClientRect(); this.fxEl('bolt', r, 450, '<svg viewBox="0 0 40 120"><path d="M22 0 L8 52 L20 52 L12 120 L34 44 L21 44 Z"/></svg>'); }
+  fxShatter(el) { if (!this.arena || !el) return; const r = el.getBoundingClientRect(); const bits = [...Array(10)].map(() => `<i style="--dx:${(Math.random() - 0.5) * 140}px;--dy:${(Math.random() - 0.2) * 140}px;--r:${Math.random() * 360}deg"></i>`).join(''); this.fxEl('shards', r, 700, bits); }
+  fxConfetti() { if (!this.arena) return; const bits = [...Array(60)].map(() => `<i style="left:${Math.random() * 100}vw;--d:${1.5 + Math.random() * 1.5}s;--c:hsl(${Math.random() * 360},90%,60%);--x:${(Math.random() - 0.5) * 200}px"></i>`).join(''); const d = document.createElement('div'); d.className = 'fx confetti'; d.innerHTML = bits; document.body.appendChild(d); setTimeout(() => d.remove(), 3500); }
   // ---------- events from the engine ----------
   async onEvent(e) {
     if (this.aborted) throw new Error('abort');
@@ -388,20 +455,20 @@ class Table {
       case 'turn': if (e.p === me) this.passUntilTurn = false; this.attacking.clear(); this.blocking.clear(); this.render(); S('turn'); await this.banner(e.p === me ? 'Your turn' : short(e.p.name) + "'s turn"); break;
       case 'draw': { this.render(); if (e.p === me) { S('draw'); const cards = [...this.board.querySelectorAll('.gt-hand .hcd')].slice(-e.n); for (const c of cards) this.anim(c, [{ transform: 'translateX(-60px)', opacity: 0 }, { transform: 'none', opacity: 1 }], 300); await this.wait(250); } break; }
       case 'land': { const from = this.srcRect(e.p, e.card); this.render(); S('land'); await this.flyTo(from, this.q(`[data-lg="${e.p.i}:${CSS.escape(e.card.name)}"]`), e.card, { dur: 360 }); await this.wait(e.p === me ? 50 : 250); break; }
-      case 'cast': { const from = this.srcRect(e.p, e.card); this.render(); S(e.depth ? 'counterCast' : 'cast');
+      case 'cast': { const from = this.srcRect(e.p, e.card); this.render(); S(e.depth ? 'counterCast' : this.castSound(e.card)); this.fxCast(e.card, from);
         await this.flyTo(from, this.q(`[data-sid="${e.obj ? e.obj.id : ''}"] .si-img`) || this.uidEl(e.card.uid), e.card, { dur: 460 }); await this.wait(e.p === me ? 200 : 700); break; }
       case 'resolving': { const row = this.q(`[data-sid="${e.obj.id}"]`); this.lastResolveRect = this.rect(row && row.querySelector('.si-img')); if (row) await this.anim(row, [{ boxShadow: '0 0 0 0 var(--accent)' }, { boxShadow: '0 0 0 3px var(--accent)' }], 260); break; }
       case 'fizzle': { const row = this.q(`[data-sid="${e.obj.id}"]`); S('counter'); if (row) await this.anim(row, [{ opacity: 1 }, { opacity: .25, filter: 'grayscale(1)' }], 380); this.render(); break; }
       case 'retarget': { this.render(); S('counterCast'); await this.wait(e.p === me ? 200 : 600); break; }
-      case 'countered': { const el = (e.obj && this.q(`[data-sid="${e.obj.id}"]`)) || this.uidEl(e.card.uid); S('counter'); await this.anim(el, [{ transform: 'rotate(0) scale(1)', opacity: 1, filter: 'none' }, { transform: 'rotate(-6deg) scale(1.05)', filter: 'brightness(2)', offset: .2 }, { transform: 'rotate(10deg) scale(.4)', opacity: 0, filter: 'grayscale(1)' }], 520); this.render(); break; }
+      case 'countered': { const el = (e.obj && this.q(`[data-sid="${e.obj.id}"]`)) || this.uidEl(e.card.uid); S('counter'); this.fxLightning(el); await this.anim(el, [{ transform: 'rotate(0) scale(1)', opacity: 1, filter: 'none' }, { transform: 'rotate(-6deg) scale(1.05)', filter: 'brightness(2)', offset: .2 }, { transform: 'rotate(10deg) scale(.4)', opacity: 0, filter: 'grayscale(1)' }], 520); this.render(); break; }
       case 'resolve': { const from = this.lastResolveRect || this.rect(this.uidEl(e.card.uid)); this.lastResolveRect = null; this.render(); S('resolve'); if (e.perm) await this.flyTo(from, this.permEl(e.perm.id), e.card, { dur: 380 }); else await this.wait(150); break; }
-      case 'destroy': { const el = this.permEl(e.perm.id); if (!e.quiet) S('destroy'); await this.anim(el, [{ transform: 'scale(1)', opacity: 1, filter: 'none' }, { filter: 'brightness(2) sepia(1) hue-rotate(-40deg)', offset: .3 }, { transform: 'scale(.3) rotate(12deg)', opacity: 0 }], e.quiet ? 260 : 460); break; }
+      case 'destroy': { const el = this.permEl(e.perm.id); if (!e.quiet) { S('destroy'); this.fxShatter(el); } await this.anim(el, [{ transform: 'scale(1)', opacity: 1, filter: 'none' }, { filter: 'brightness(2) sepia(1) hue-rotate(-40deg)', offset: .3 }, { transform: 'scale(.3) rotate(12deg)', opacity: 0 }], e.quiet ? 260 : 460); break; }
       case 'wipe': { S('wipe'); this.board.querySelectorAll('.gs').forEach(s => s.classList.add('flash')); await this.wait(650); this.board.querySelectorAll('.gs').forEach(s => s.classList.remove('flash')); break; }
       case 'attack': { for (const a of e.assignments) this.attacking.set(a.attacker.id, a.defender.i); this.render(); S('attack');
         await Promise.all(e.assignments.map(a => { const el = this.permEl(a.attacker.id), d = this.seatEl(a.defender); if (!el || !d) return; const r1 = el.getBoundingClientRect(), r2 = d.getBoundingClientRect(); const dx = (r2.left + r2.width / 2 - r1.left - r1.width / 2) * .25, dy = (r2.top + r2.height / 2 - r1.top - r1.height / 2) * .25; return this.anim(el, [{ translate: '0 0' }, { translate: `${dx}px ${dy}px` }, { translate: '0 0' }], 520, 'ease-in-out'); })); break; }
       case 'block': { this.blocking.set(e.blocker.id, e.attacker.id); this.render(); S('block'); await Promise.all([this.anim(this.permEl(e.blocker.id), [{ scale: 1 }, { scale: 1.15 }, { scale: 1 }], 300), this.anim(this.permEl(e.attacker.id), [{ scale: 1 }, { scale: 1.1 }, { scale: 1 }], 300)]); break; }
-      case 'hit': { S('hit'); await this.anim(this.seatEl(e.defender), [{ translate: '0 0' }, { translate: '-6px 0' }, { translate: '6px 0' }, { translate: '0 0' }], 260); break; }
-      case 'life': { this.render(); if (e.delta > 0) S('gain'); await this.floatText(this.q(`[data-life="${e.p.i}"]`), (e.delta > 0 ? '+' : '') + e.delta, e.delta > 0 ? 'var(--good)' : 'var(--bad)'); break; }
+      case 'hit': { S(e.dmg >= 8 ? 'bigHit' : 'hit'); this.fxHit(e.defender, e.dmg); await this.anim(this.seatEl(e.defender), [{ translate: '0 0' }, { translate: '-6px 0' }, { translate: '6px 0' }, { translate: '0 0' }], 260); break; }
+      case 'life': { this.render(); if (e.delta > 0) S('gain'); else if (e.delta < 0 && !e.combat) S('lifeLoss'); await this.floatText(this.q(`[data-life="${e.p.i}"]`), (e.delta > 0 ? '+' : '') + e.delta, e.delta > 0 ? 'var(--good)' : 'var(--bad)'); break; }
       case 'step': this.render(); break;
       case 'trigger': { this.render(); S('cast'); const el = e.perm ? this.permEl(e.perm.id) : null; if (el) { el.classList.remove('ping'); void el.offsetWidth; el.classList.add('ping'); } await this.wait(e.p === me ? 250 : 350); break; }
       case 'mill': this.render(); S('draw'); await this.wait(200); break;
@@ -412,7 +479,7 @@ class Table {
       case 'combatEnd': this.attacking.clear(); this.blocking.clear(); this.render(); break;
       case 'tokens': { this.render(); S('token'); const tiles = [...(this.seatEl(e.p)?.querySelectorAll('.gs-bf .gc') || [])].slice(-e.n); await Promise.all(tiles.map(t => this.anim(t, [{ scale: 0, opacity: 0 }, { scale: 1.15, opacity: 1 }, { scale: 1 }], 320))); break; }
       case 'dies': this.render(); S(e.p === me ? 'lose' : 'die'); await this.wait(700); if (e.p === me && !g.winner) { this.ff = true; this.mode = null; this.addLog('You are out. Fast-forwarding the rest of the game.'); if (this.endTurn) setTimeout(() => this.endTurn && this.endTurn(), 0); } break;
-      case 'win': this.render(); S(e.p === me ? 'win' : (me && !me.dead ? 'lose' : 'win')); break;
+      case 'win': this.render(); S(e.p === me ? 'win' : (me && !me.dead ? 'lose' : 'win')); if (e.p === me) this.fxConfetti(); this.sfx.musicStop(); break;
       case 'combo': { S('combo'); const mid = this.q('.gt-mid'); if (mid) { const b = document.createElement('div'); b.className = 'banner'; b.style.color = 'var(--warn)'; b.textContent = e.card.name + ' goes off!'; mid.appendChild(b); await this.wait(1200); b.remove(); } break; }
       case 'paid': this.addLog(`${short(e.p.name)} pays {${e.n}}`); await this.wait(200); break;
       default: this.render();
@@ -726,7 +793,7 @@ class Table {
     if (a === 'settings') { this.showSettings = true; this.render(); return; }
     if (a === 'close-settings') { this.showSettings = false; saveSettings(this.s); this.render(); return; }
     if (a === 'ff') { this.ff = !this.ff; this.render(); return; }
-    if (a === 'leave') { this.aborted = true; if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
+    if (a === 'leave') { this.aborted = true; this.sfx.musicStop(); if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
     if (a === 'cancel') { this.mode = null; this.render(); return; }
     if (a === 'tap-col' && this.mode && this.mode.kind === 'mana') { this.doTap(this.mode.perm, btn.dataset.c); return; }
     if (a === 'abil-pick' && this.mode && this.mode.kind === 'abil') { const m = this.mode; this.mode = null; const o = m.opts[+btn.dataset.i]; if (o) m.run(o); return; }
@@ -768,9 +835,9 @@ class Table {
     if (a === 'mull-yes' && P && P.kind === 'mull' && P.confirm) { P.confirm = false; g.mulligan(me); P.n++; this.render(); return; }
     if (a === 'bottom-back' && P && P.kind === 'mull-bottom') { this.prompt = P.from; this.render(); return; }
     if (a === 'bottom-go' && P && P.kind === 'mull-bottom' && P.sel.length === P.n) { g.bottomCards(me, P.sel); const done = P.done; this.prompt = null; done(); return; }
-    if (a === 'rematch') { this.opts.onRematch && this.opts.onRematch(); return; }
+    if (a === 'rematch') { this.sfx.musicStop(); this.opts.onRematch && this.opts.onRematch(); return; }
     if (a === 'export-log') { this.exportLog(); return; }
-    if (a === 'setup') { this.opts.onExit && this.opts.onExit(); return; }
+    if (a === 'setup') { this.sfx.musicStop(); this.opts.onExit && this.opts.onExit(); return; }
   }
   // ---------- rendering ----------
   tile(b, owner, opts = {}) {
@@ -960,10 +1027,14 @@ class Table {
       <label>Animation speed <select id="st-speed"><option value="normal" ${this.s.speed === 'normal' ? 'selected' : ''}>Normal</option><option value="fast" ${this.s.speed === 'fast' ? 'selected' : ''}>Fast</option></select></label>
       <label>Sound effects <input type="checkbox" id="st-sound" ${this.s.sound ? 'checked' : ''}></label>
       <label>Volume <input type="range" id="st-vol" min="0" max="1" step="0.05" value="${this.s.volume}"></label>
+      <label>Sound style <select id="st-sfx">${[['classic', 'Classic'], ['arcane', 'Arcane (soft, layered)'], ['retro', 'Retro 8-bit'], ['cinematic', 'Cinematic (deep)']].map(([k, l]) => `<option value="${k}" ${(this.s.sfxStyle || 'classic') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Music <select id="st-music">${[['off', 'Off'], ['ambient', 'Ambient (slow pads)'], ['tavern', 'Tavern (plucked)'], ['battle', 'Battle (driving)']].map(([k, l]) => `<option value="${k}" ${(this.s.music || 'off') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Music volume <input type="range" id="st-mvol" min="0" max="1" step="0.05" value="${this.s.musicVol ?? 0.35}"></label>
+      <label>Visual effects <select id="st-fx">${[['normal', 'Normal'], ['arena', 'Arena (bursts, shards, lightning, confetti)']].map(([k, l]) => `<option value="${k}" ${(this.s.fx || 'normal') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Board zoom <input type="range" id="st-zoom" min="0.75" max="2" step="0.05" value="${this.s.zoom || 1}"> <b id="st-zoom-v">${Math.round((this.s.zoom || 1) * 100)}%</b></label>
       <label>Priority stops <select id="st-stop"><option value="smart" ${this.s.stops === 'smart' ? 'selected' : ''}>Smart</option><option value="all" ${this.s.stops === 'all' ? 'selected' : ''}>Full control</option><option value="minimal" ${this.s.stops === 'minimal' ? 'selected' : ''}>Minimal</option></select></label>
       <p class="note" style="margin:0">Smart stops at opponents' end steps, combats you're in, and the end step before your turn (for fetchlands). Full control stops at every step where you have a legal play. Minimal only stops for counterspells, attacks and blocks. Steps where you have nothing legal are always skipped.</p>
-      <p class="note" style="margin:0">Sounds are generated in your browser; no audio files are downloaded.</p>
+      <p class="note" style="margin:0">Sounds and music are generated in your browser with the Web Audio API — nothing is downloaded and nothing needs a licence. Music is procedural: a key and progression are picked each game.</p>
       <div class="gt-ctl" style="justify-content:flex-end"><button class="chip pri" data-act="close-settings">Done</button></div></div></div>` : '';
     this.board.innerHTML = `
       <div class="gt-bar"><span class="ph">Round <b>${g.round}</b> · <b>${esc(short(active.name))}</b></span><span class="steps">${[['upkeep', 'Upkeep'], ['draw', 'Draw'], ['main1', 'Main'], ['combat', 'Combat'], ['main2', 'Main 2'], ['end', 'End']].map(([k, l]) => `<span class="${(g.phase === k || (k === 'combat' && g.phase === 'combat')) ? 'on' : ''}">${l}</span>`).join('')}</span>
@@ -979,7 +1050,8 @@ class Table {
     requestAnimationFrame(() => this.drawArrows());
     if (this.showSettings) {
       const bind = (id, k, f = v => v) => { const el = this.board.querySelector('#' + id); el.onchange = el.oninput = () => { this.s[k] = f(el.type === 'checkbox' ? el.checked : el.value); saveSettings(this.s); if (k === 'volume') this.sfx.vol(); }; };
-      bind('st-anim', 'anim'); bind('st-speed', 'speed'); bind('st-sound', 'sound'); bind('st-vol', 'volume', Number); bind('st-stop', 'stops');
+      bind('st-anim', 'anim'); bind('st-speed', 'speed'); bind('st-sound', 'sound'); bind('st-vol', 'volume', Number); bind('st-stop', 'stops'); bind('st-fx', 'fx');
+      { const el = this.board.querySelector('#st-sfx'); el.onchange = () => { this.s.sfxStyle = el.value; saveSettings(this.s); this.sfx.play('cast'); }; const mu = this.board.querySelector('#st-music'); mu.onchange = () => { this.s.music = mu.value; saveSettings(this.s); this.sfx.musicStart(); }; const mv = this.board.querySelector('#st-mvol'); mv.oninput = () => { this.s.musicVol = Number(mv.value); this.sfx.musicVol(); }; mv.onchange = () => saveSettings(this.s); }
       { const z = this.board.querySelector('#st-zoom'); z.oninput = () => { this.s.zoom = Number(z.value); this.applyZoom(); const v = this.board.querySelector('#st-zoom-v'); if (v) v.textContent = Math.round(this.s.zoom * 100) + '%'; }; z.onchange = () => saveSettings(this.s); }
     }
   }

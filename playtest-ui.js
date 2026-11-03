@@ -125,7 +125,11 @@ const STYLE = `
 .gc img{width:100%;height:100%;object-fit:cover;border-radius:5px;display:block;pointer-events:none}
 .gc .cd{position:absolute;left:50%;top:-9px;transform:translateX(-50%);z-index:3;white-space:nowrap;font:600 .62rem/1.3 var(--mono,monospace);padding:1px 5px;border-radius:999px;background:var(--panel);border:1px solid var(--accent);color:var(--fg);pointer-events:none}
 .gc .cd.hot{border-color:#e5484d;color:#ff8c8c}
+.gc .ctr{position:absolute;left:2px;bottom:2px;z-index:2;font:600 .6rem/1.2 var(--mono,monospace);padding:1px 4px;border-radius:4px;background:rgba(20,22,26,.9);border:1px solid var(--line);color:var(--fg);pointer-events:none;white-space:nowrap}
+.gc .ctr b{color:var(--accent)}
+.gc .pt small{font-size:.6em;opacity:.85;margin-left:1px}
 .gs-meta .cdm{color:var(--accent)}
+.pool .pip{display:inline-block;min-width:16px;padding:0 3px;margin-left:2px;border-radius:999px;color:#111;font:700 .7rem/16px var(--mono,monospace);text-align:center}
 .gc.t{transform:rotate(90deg) scale(.78)}
 .gc.sick{filter:saturate(.55) brightness(.9)}
 .gc.cmdr{box-shadow:0 0 0 2px #d4a63a}
@@ -457,7 +461,7 @@ class Table {
   }
   engineNotes(c) {
     const bits = [];
-    for (const t of c.triggers || []) bits.push(({ upkeep: 'upkeep', end: 'end step', landfall: 'landfall', dies: 'death' })[t.when] + ' trigger' + (t.zone === 'graveyard' ? ' (from graveyard)' : '') + ': ' + t.ops.map(o => o.op).join(', '));
+    for (const t of c.triggers || []) bits.push((({ upkeep: 'upkeep', end: 'end step', landfall: 'landfall', dies: 'death', combatStart: 'beginning of combat', combatDamage: 'combat damage', attack: 'attack', main1: 'first main phase', eachEnd: 'each end step', creatureEnters: 'creature enters', targeted: 'becomes targeted' })[t.when] || t.when) + ' trigger' + (t.zone === 'graveyard' ? ' (from graveyard)' : '') + ': ' + t.ops.map(o => o.op).join(', '));
     if (c.etbOps) bits.push('enters: ' + c.etbOps.map(o => o.op).join(', '));
     for (const a of c.abilities || []) bits.push((a.zone === 'battlefield' ? 'ability' : a.zone + ' ability') + ': ' + this.optLabel({ kind: 'ability', ab: a }));
     if (c.gyCast) bits.push('castable from graveyard: ' + c.gyCast.kind);
@@ -657,6 +661,7 @@ class Table {
     const lg = t.closest('[data-lg]'); if (lg && me && +lg.dataset.lg.split(':')[0] === me.i) {
       const perm = me.battlefield.find(b => b.card.fetch && b.card.name === lg.dataset.lg.slice(lg.dataset.lg.indexOf(':') + 1) && g.canActivate(me, b));
       if (perm) { if (P && P.kind === 'priority') return P.res({ kind: 'fetch', perm }); if (this.myTurn && !this.busy && !P) return this.act(() => g.activateFetch(me, perm)); }
+      { const nm = lg.dataset.lg.slice(lg.dataset.lg.indexOf(':') + 1); const land = me.battlefield.find(b => b.card.name === nm && !b.tapped); if (land) this.tapClick(land); }
       return;
     }
     const pe = t.closest('[data-pid]'); if (pe) {
@@ -664,12 +669,41 @@ class Table {
       if (!perm) return;
       if (this.mode && this.mode.kind === 'target') { if (this.validTarget(perm, owner)) { perm.owner = owner.i; this.finishTarget(perm); } return; }
       if (this.mode && this.mode.kind === 'attack' && owner === me && g.canAttackWith(me, perm)) { const m = this.mode.map; if (m.has(perm)) m.delete(perm); else m.set(perm, this.mode.def); this.render(); return; }
+      if (owner === me && !this.mode && (!P || P.kind === 'priority') && !perm.card.isLand && !perm.tapped && this.tapClick(perm)) return;
       if (P && P.kind === 'block') {
         if (owner === me && P.blockers.includes(perm)) { for (const [a, bs] of P.map) { const i = bs.indexOf(perm); if (i >= 0) { bs.splice(i, 1); if (!bs.length) P.map.delete(a); } } P.warn = null; const si = P.sel.indexOf(perm); if (si >= 0) P.sel.splice(si, 1); else P.sel.push(perm); this.render(); return; }
         const atk = P.attacks.find(a => a.attacker === perm); if (atk && P.sel.length) { const can = P.sel.filter(b => g.canBlock(b, perm)), cant = P.sel.filter(b => !g.canBlock(b, perm)); if (can.length) P.map.set(perm, [...(P.map.get(perm) || []), ...can]); P.sel = []; P.warn = cant.length ? `${cant.map(b => b.card.name).join(', ')} can't block ${perm.card.name}.` : null; this.render(); }
       }
     }
   }
+  /** full game log as text: header (engine version, seats, result) then every engine line grouped by turn — for sharing a game to review */
+  logText() {
+    const g = this.game; if (!g) return '';
+    const ver = ((document.querySelector('script[src*="playtest.js"]') || {}).src || '').match(/v=(\d+)/); const lines = [];
+    lines.push(`MTG Dashboard playtest log · engine ${ver ? 'v' + ver[1] : '?'} · ${new Date().toISOString()}`);
+    for (const p of g.players) lines.push(`seat ${p.i + 1}: ${p.name} — ${p.deckName}${p.level ? ' · ' + p.level : ''}${p.dead ? ' · defeated' : ' · life ' + p.life}`);
+    lines.push(`result: ${g.winner ? short(g.winner.name) + ' wins' : 'in progress'} · round ${g.round} · turn ${g.turn}`);
+    lines.push('');
+    let t = null; for (const l of g.log) { if (l.t !== t) { t = l.t; lines.push(`== turn ${t} ==`); } lines.push(l.m); }
+    return lines.join('\n');
+  }
+  exportLog() {
+    const txt = this.logText(); if (!txt) return; const g = this.game;
+    const name = `playtest-${(g.players[0].deckName || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.txt`;
+    try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); } catch (e) {}
+    try { if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => {}); } catch (e) {}
+    this.banner && this.banner('Log saved (and copied)');
+  }
+  /** can I float mana right now? (my main phase with nothing pending, or while holding priority) */
+  canTapMana() { const P = this.prompt; return !!this.me && !this.busy && ((this.myTurn && !P) || (P && P.kind === 'priority')); }
+  /** click on one of my untapped mana permanents: tap it (single colour) or ask which colour */
+  tapClick(perm) {
+    if (!this.canTapMana()) return false; const g = this.game, me = this.me; const s = g.manualSrcs(me).find(x => x.b === perm); if (!s) return false;
+    const cols = [...new Set(s.colors)]; if (cols.length === 1) { this.doTap(perm, cols[0]); return true; }
+    this.mode = { kind: 'mana', perm, colors: cols }; this.render(); return true;
+  }
+  doTap(perm, col) { const g = this.game, me = this.me; this.mode = null; if (this.prompt && this.prompt.kind === 'priority') { g.tapForMana(me, perm, col).then(() => this.render()); return; } this.act(() => g.tapForMana(me, perm, col)); }
+  poolHtml() { const me = this.me; const pool = (me && me.pool) || []; if (!pool.length) return ''; const PIP = { W: '#f3e9c4', U: '#9ec5ff', B: '#b9a7c7', R: '#ff9a8a', G: '#9fd79a', C: '#cfcfcf', A: '#ffd27a' }; return `<span class="pool" title="floating mana (empties when the step ends)">pool ${pool.map(m => `<i class="pip" style="background:${PIP[m.c] || PIP.C}">${m.c === 'A' ? '★' : m.c}</i>`).join('')}</span>`; }
   finishTarget(target) {
     const m = this.mode; this.mode = null;
     if (m.respond && this.prompt) return this.prompt.res(this.prompt.kind === 'priority' ? { kind: 'cast', card: m.card, target, zone: m.zone } : { card: m.card, target });
@@ -684,6 +718,7 @@ class Table {
     if (a === 'ff') { this.ff = !this.ff; this.render(); return; }
     if (a === 'leave') { this.aborted = true; if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
     if (a === 'cancel') { this.mode = null; this.render(); return; }
+    if (a === 'tap-col' && this.mode && this.mode.kind === 'mana') { this.doTap(this.mode.perm, btn.dataset.c); return; }
     if (a === 'undo' && this.myTurn && !this.busy && !P) { this.undo(); return; }
     if (a === 'end' && this.myTurn && !this.busy && !P) { this.endTurn({ action: this.turnPhase === 'main1' ? 'end' : 'done' }); return; }
     if (a === 'to-main2' && this.myTurn && !this.busy && !P) { this.endTurn({ action: 'attack', assignments: [] }); return; }
@@ -723,6 +758,7 @@ class Table {
     if (a === 'bottom-back' && P && P.kind === 'mull-bottom') { this.prompt = P.from; this.render(); return; }
     if (a === 'bottom-go' && P && P.kind === 'mull-bottom' && P.sel.length === P.n) { g.bottomCards(me, P.sel); const done = P.done; this.prompt = null; done(); return; }
     if (a === 'rematch') { this.opts.onRematch && this.opts.onRematch(); return; }
+    if (a === 'export-log') { this.exportLog(); return; }
     if (a === 'setup') { this.opts.onExit && this.opts.onExit(); return; }
   }
   // ---------- rendering ----------
@@ -740,8 +776,9 @@ class Table {
     else if (this.attacking.has(b.id)) badge = `<span class="bd">→ ${esc(short(g.players[this.attacking.get(b.id)].name).slice(0, 10))}</span>`;
     if (P && P.kind === 'block') { for (const [a, bl] of P.map) if (bl.includes(b)) badge = `<span class="bd" style="background:var(--accent)">blocks ${esc(a.card.name.slice(0, 10))}</span>`; }
     let pt = '';
-    if (c.isCreature) { const pw = g.powerOf(owner, b), tg = g.toughOf(owner, b); pt = `<span class="pt ${pw > c.power ? 'up' : ''}">${pw}/${tg}</span>`; }
+    if (c.isCreature) { const pw = g.powerOf(owner, b), tg = g.toughOf(owner, b); pt = `<span class="pt ${pw > c.power ? 'up' : ''}" title="${(b.counters || 0) > 0 ? b.counters + ' +1/+1 counter' + (b.counters === 1 ? '' : 's') : ''}">${pw}/${tg}${(b.counters || 0) > 0 ? `<small>+${b.counters}</small>` : ''}</span>`; }
     if (c.isPlaneswalker) pt = `<span class="pt">◆${b.loyalty || 0}</span>`;
+    { const kinds = g.counterKinds(b); delete kinds.loyalty; if (c.isCreature) delete kinds['+1/+1']; const ks = Object.entries(kinds); if (ks.length) { const ICON = { '+1/+1': '+1', '-1/-1': '−1', quest: 'Q', lore: 'ch', charge: '⚡', oil: 'oil', stun: 'stun', shield: '🛡', time: 't', age: 'age', hatchling: 'egg', indestructible: '∞', flying: 'fly', suspect: '?' }; pt += `<span class="ctr" title="${esc(ks.map(([k, v]) => v + ' ' + k + ' counter' + (v === 1 ? '' : 's')).join(', '))}">${ks.slice(0, 3).map(([k, v]) => `<b>${v}</b>${esc(ICON[k] || k.slice(0, 4))}`).join(' ')}</span>`; } }
     const att = g.players.flatMap(q => q.battlefield).filter(x => x.attachedTo === b.id);
     if (b.neutral || b.pacified) { cls.push('neut'); badge = badge || `<span class="bd">${b.neutral ? 'neutralised' : "can't attack/block"}</span>`; }
     else if (att.length && !badge) badge = `<span class="bd" title="${esc(att.map(x => x.card.name).join(', '))}">+${esc(att.length === 1 ? att[0].card.name.split(/[ ,]/)[0].slice(0, 10) : att.length + ' attached')}</span>`;
@@ -844,12 +881,12 @@ class Table {
         prm = `<div class="prm"><h4>Respond? Top of the stack: ${esc((top.shownCard && top.caster !== this.me ? top.shownCard : top.card).name)} — ${esc(short(top.caster.name))} wants to ${esc(this.stackVerb(top))}</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass <kbd>Space</kbd></button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn <kbd>6</kbd></button>` : ''}<span class="msg hint">Counterspells can target anything on the stack, not just the top: pick one, then click its row.</span></div></div>`; }
       else if (P.kind === 'retarget') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a new target for ${esc(P.obj.card.name)} (now: ${esc(this.game.targetName(P.obj.target))})</h4><div class="opts">${P.candidates.map((t, i) => t.spell ? `<button class="chip" data-rt="${i}">${esc(t.spell.card.name)} (on the stack)</button>` : t.card ? `<div class="opt" data-rt="${i}" data-uid="${t.card.uid}">${t.card.img ? `<img src="${esc(big(t.card.img))}" alt="${esc(t.card.name)}">` : esc(t.card.name)}<span class="olab">${esc(short((this.game.ownerOf(t) || {}).name || ''))}</span></div>` : `<button class="chip" data-rt="${i}">${esc(short(t.name))} (${t.life} life)</button>`).join('')}</div><div class="gt-ctl"><button class="chip" data-act="rt-keep">Keep the current target</button></div></div>`;
       else if (P.kind === 'priority') { const stepN = { upkeep: 'upkeep', draw: 'draw step', beginCombat: 'beginning of combat', declareAttackers: 'declare attackers', declareBlockers: 'declare blockers', end: 'end step' }[P.step] || P.step; const whose = P.active === me ? 'your' : esc(short(P.active.name)) + "'s";
-        prm = `<div class="prm"><h4>Priority — ${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}. Use an effect?</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass</button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn</button>` : ''}<span class="msg hint">Fetchlands, instants, flash cards, abilities and graveyard spells are used here.</span></div></div>`; }
+        prm = `<div class="prm"><h4>Priority — ${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}. Use an effect?</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass</button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn</button>` : ''}<span class="msg hint">Fetchlands, instants, flash cards, abilities and graveyard spells are used here. Tap a land first to float specific mana.${this.poolHtml() ? ' · ' + this.poolHtml() : ''}</span></div></div>`; }
       else if (P.kind === 'fetch') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a land to put onto the battlefield</h4><div class="opts">${opts}</div></div>`;
       else if (P.kind === 'etb') { const en = P.enables || []; const thumbs = en.map(c => `<div class="opt" data-uid="${c.uid}" style="cursor:default">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`).join('');
         prm = `<div class="prm"><h4>${esc(P.card.name)}: pay ${P.life} life so it enters untapped? (you're at ${me.life})</h4>${en.length ? `<div class="opts">${thumbs}</div>` : ''}<div class="gt-ctl"><button class="chip ${en.length ? 'pri' : ''}" data-act="etb-pay">Pay ${P.life} life</button><button class="chip ${en.length ? '' : 'pri'}" data-act="etb-tap">Enter tapped</button><span class="msg">${en.length ? `Untapped, it lets you cast ${en.map(c => esc(c.name)).join(', ')} this turn.` : `The extra mana doesn't make anything castable ${this.game.players[this.game.active] === me ? 'this turn' : 'right now'}; it untaps on your turn anyway.`}</span></div></div>`; }
       else if (P.kind === 'unless' && P.tax) prm = `<div class="prm"><h4>${esc(P.why)}</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Don't pay</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
-      else if (P.kind === 'payopt') { const nm = { evoke: 'Evoke', dash: 'Dash', bestow: 'Bestow', life: 'Pay life instead', cheap: 'Alternative cost', sacCreature: 'Sacrifice a creature instead', pitch: 'Exile a card instead', faceDown: P.card.morph && P.card.morph.kind === 'disguise' ? 'Cast face down (disguise, ward 2)' : 'Cast face down as a 2/2', blitz: 'Blitz', adventure: P.card.adventure ? (P.card.adventure.kind === 'omen' ? 'Omen: ' : 'Adventure: ') + P.card.adventure.spell.name : 'Adventure', webSling: 'Web-slinging (return a tapped creature)', freerun: 'Freerunning', mutate: 'Mutate', awaken: 'Awaken', warp: 'Warp' }; prm = `<div class="prm"><h4>${esc(P.card.name)}: how do you want to pay?</h4><div class="gt-ctl">${P.normal ? `<button class="chip pri" data-act="pay-normal">Normal cost ${esc(P.card.manaCost || '')}</button>` : ''}${P.alts.map((a, i) => `<button class="chip" data-act="pay-alt" data-i="${i}">${esc(nm[a.kind] || a.kind)}${a.cost && a.cost.total ? ' {' + a.cost.total + '}' : ''}${a.life ? ' (' + a.life + ' life)' : ''}</button>`).join('')}<button class="chip" data-act="pay-cancel">Cancel</button></div></div>`; }
+      else if (P.kind === 'payopt') { const nm = { evoke: 'Evoke', dash: 'Dash', bestow: 'Bestow', life: 'Pay life instead', cheap: 'Alternative cost', sacCreature: 'Sacrifice a creature instead', pitch: 'Exile a card instead', faceDown: P.card.morph && P.card.morph.kind === 'disguise' ? 'Cast face down (disguise, ward 2)' : 'Cast face down as a 2/2', blitz: 'Blitz', adventure: P.card.adventure ? (P.card.adventure.kind === 'omen' ? 'Omen: ' : 'Adventure: ') + P.card.adventure.spell.name : 'Adventure', webSling: 'Web-slinging (return a tapped creature)', freerun: 'Freerunning', mutate: 'Mutate', awaken: 'Awaken', warp: 'Warp' }; prm = `<div class="prm"><h4>${esc(P.card.name)}: how do you want to pay?</h4><div class="gt-ctl">${P.normal ? `<button class="chip pri" data-act="pay-normal">Normal cost ${esc(P.card.manaCost || '')}</button>` : ''}${P.alts.map((a, i) => `<button class="chip" data-act="pay-alt" data-i="${i}">${a.kind === 'phy' ? 'Pay ' + a.life + ' life for ' + a.phyPaid.map(c => '{' + c + '/P}').join('') + (a.cost.total ? ' + {' + a.cost.total + '} mana' : '') : esc(nm[a.kind] || a.kind) + (a.cost && a.cost.total ? ' {' + a.cost.total + '}' : '') + (a.life ? ' (' + a.life + ' life)' : '')}</button>`).join('')}<button class="chip" data-act="pay-cancel">Cancel</button></div></div>`; }
       else if (P.kind === 'num') prm = `<div class="prm"><h4>${esc(P.card.name)}: ${esc(P.question)}</h4><div class="gt-ctl">${Array.from({ length: P.max - P.min + 1 }, (_, i) => P.min + i).map(n => `<button class="chip ${n === P.max ? 'pri' : ''}" data-act="num-pick" data-n="${n}">${n}</button>`).join('')}</div></div>`;
       else if (P.kind === 'modes') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.min === P.max ? P.max : P.min + '–' + P.max} mode${P.max > 1 ? 's' : ''}${P.modes.some(m => m.cost) ? ' (each adds its cost)' : ''}</h4><div class="opts">${P.modes.map((m, i) => `<button class="chip ${P.sel.includes(m.card) ? 'pri' : ''}" data-act="mode-tog" data-i="${i}" style="text-align:left;white-space:normal">${P.sel.includes(m.card) ? '✓ ' : ''}${m.cost && m.cost.total ? '{' + m.cost.total + '} ' : ''}${esc(m.text.charAt(0).toUpperCase() + m.text.slice(1))}</button>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="modes-go" ${P.sel.length >= P.min ? '' : 'disabled'}>Done (${P.sel.length}/${P.max})</button></div></div>`;
       else if (P.kind === 'unless') prm = `<div class="prm"><h4>${esc(P.counter.name)} will counter your ${esc(P.spell.card.name)} unless you pay {${P.n}}.</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Let it be countered</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
@@ -872,7 +909,8 @@ class Table {
     }
     // controls
     let ctl = '';
-    if (this.mode && this.mode.kind === 'target') ctl = `<div class="gt-ctl"><span class="msg">Choose a target for <b>${esc(this.mode.card.name)}</b>${this.mode.spells ? ' — click a highlighted row on the stack' : this.mode.players ? ' (a permanent or an opponent\'s life total)' : ''}.</span><button class="chip" data-act="cancel">Cancel</button></div>`;
+    if (this.mode && this.mode.kind === 'mana') ctl = `<div class="gt-ctl"><span class="msg">Tap <b>${esc(this.mode.perm.card.name)}</b> for:</span>${this.mode.colors.map(c => `<button class="chip" data-act="tap-col" data-c="${c}">{${c}}</button>`).join('')}<button class="chip" data-act="cancel">Cancel</button></div>`;
+    else if (this.mode && this.mode.kind === 'target') ctl = `<div class="gt-ctl"><span class="msg">Choose a target for <b>${esc(this.mode.card.name)}</b>${this.mode.spells ? ' — click a highlighted row on the stack' : this.mode.players ? ' (a permanent or an opponent\'s life total)' : ' — click a highlighted creature (opponents\' are in the seats above)'}.</span><button class="chip" data-act="cancel">Cancel</button></div>`;
     else if (this.mode && this.mode.kind === 'attack') ctl = `<div class="gt-ctl"><span class="msg">Attack:</span>${g.opponentsOf(me).map(q => `<button class="chip" data-act="def" data-p="${q.i}" aria-pressed="${this.mode.def === q}">${esc(short(q.name))} (${q.life})</button>` + q.battlefield.filter(b => b.card.isPlaneswalker).map(b => `<button class="chip" data-act="defpw" data-pid="${b.id}" aria-pressed="${!!(this.mode.def && this.mode.def.pw === b)}">${esc(short(b.card.name))} (${b.loyalty})</button>`).join('')).join('')}<button class="chip" data-act="atk-all">All creatures</button><button class="chip pri" data-act="atk-go" ${this.mode.map.size ? '' : 'disabled'}>Attack with ${this.mode.map.size}</button><button class="chip" data-act="cancel">Cancel</button><span class="msg">Click your creatures to toggle them.</span></div>`;
     else if (this.myTurn && !P) {
       const combatPhase = this.turnPhase === 'main1' || this.turnPhase === 'combat2';
@@ -880,7 +918,7 @@ class Table {
       const fetchHint = me.battlefield.some(b => b.card.fetch && g.canActivate(me, b)) ? (this.touch ? ' · tap a glowing fetchland to crack it' : ' · click a glowing fetchland to crack it') : '';
       this.mainOpts = this.busy ? [] : [...g.gyCastOptions(me), ...g.abilityOptions(me)];
       const abil = this.mainOpts.length ? `<div class="gt-ctl abil-row"><span class="msg">Abilities:</span>${this.mainOpts.map((o, i) => `<button class="chip abil" data-act="abil" data-i="${i}" data-uid="${o.card.uid}">${esc(short(o.card.name))} · ${esc(this.optLabel(o))}${o.card.abilities && o.ab && o.ab.zone !== 'battlefield' ? ` <small>(${o.ab.zone})</small>` : o.zone === 'gy' ? ' <small>(graveyard)</small>' : ''}</button>`).join('')}</div>` : '';
-      ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint}</span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u ? `<button class="chip" data-act="undo" ${this.busy || u.why ? 'disabled' : ''} title="${esc(u.why ? "Can't undo: " + u.why : 'Undo: ' + u.label + ' (Z)')}">↶ Undo</button>` : ''; })()}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u && u.why ? `<div class="note" style="margin-top:4px">Can't undo ${esc(u.label)}: ${esc(u.why)}.</div>` : ''; })()}`; }
+      ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open${this.poolHtml() ? ' · ' + this.poolHtml() : ''} · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint} · <span class="note">tap a land to float mana</span></span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u ? `<button class="chip" data-act="undo" ${this.busy || u.why ? 'disabled' : ''} title="${esc(u.why ? "Can't undo: " + u.why : 'Undo: ' + u.label + ' (Z)')}">↶ Undo</button>` : ''; })()}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u && u.why ? `<div class="note" style="margin-top:4px">Can't undo ${esc(u.label)}: ${esc(u.why)}.</div>` : ''; })()}`; }
     // hand
     let handBar = '';
     if (me) {
@@ -900,7 +938,7 @@ class Table {
     }
     // overlays
     let over = '';
-    if (g.winner && this.ended) { const place = me ? (g.winner === me ? 'You won' : 'You lost') : ''; over = `<div class="over"><div class="box"><h3>${esc(short(g.winner.name))} wins</h3><p class="note">${esc(g.winner.deckName)} · round ${g.round}${place ? ' · ' + place : ''}</p><div class="gt-ctl" style="justify-content:center"><button class="chip pri" data-act="rematch">Rematch</button><button class="chip" data-act="setup">New setup</button></div></div></div>`; }
+    if (g.winner && this.ended) { const place = me ? (g.winner === me ? 'You won' : 'You lost') : ''; over = `<div class="over"><div class="box"><h3>${esc(short(g.winner.name))} wins</h3><p class="note">${esc(g.winner.deckName)} · round ${g.round}${place ? ' · ' + place : ''}</p><div class="gt-ctl" style="justify-content:center"><button class="chip pri" data-act="rematch">Rematch</button><button class="chip" data-act="setup">New setup</button><button class="chip" data-act="export-log" title="Download the full game log as a text file (also copied to the clipboard)">Export log</button></div></div></div>`; }
     const settings = this.showSettings ? `<div class="set"><div class="box"><h3 style="margin:0">Table settings</h3>
       <label>Animations <input type="checkbox" id="st-anim" ${this.s.anim ? 'checked' : ''}></label>
       <label>Animation speed <select id="st-speed"><option value="normal" ${this.s.speed === 'normal' ? 'selected' : ''}>Normal</option><option value="fast" ${this.s.speed === 'fast' ? 'selected' : ''}>Fast</option></select></label>
@@ -915,7 +953,7 @@ class Table {
       <div class="gt-bar"><span class="ph">Round <b>${g.round}</b> · <b>${esc(short(active.name))}</b></span><span class="steps">${[['upkeep', 'Upkeep'], ['draw', 'Draw'], ['main1', 'Main'], ['combat', 'Combat'], ['main2', 'Main 2'], ['end', 'End']].map(([k, l]) => `<span class="${(g.phase === k || (k === 'combat' && g.phase === 'combat')) ? 'on' : ''}">${l}</span>`).join('')}</span>
         <button class="chip" data-act="ff" aria-pressed="${this.ff}" title="Skip animations until your next decision">${this.mobile ? (this.ff ? 'Skipping…' : 'Skip ▸▸') : this.ff ? 'Fast-forwarding' : 'Fast-forward'}</button>
         <span class="zm" title="Board zoom (keys: - / + / 0)"><button class="chip" data-act="zoom-out" aria-label="Zoom out">−</button><b>${Math.round((this.s.zoom || 1) * 100)}%</b><button class="chip" data-act="zoom-in" aria-label="Zoom in">+</button></span>
-        <button class="chip" data-act="settings">Settings</button><button class="chip" data-act="leave">${this.mobile ? 'Leave' : 'Leave game'}</button></div>
+        <button class="chip" data-act="export-log" title="Download the full game log so far">Export log</button><button class="chip" data-act="settings">Settings</button><button class="chip" data-act="leave">${this.mobile ? 'Leave' : 'Leave game'}</button></div>
       <div class="gt-opps">${opps.map(p => this.seat(p)).join('')}</div>
       <div class="gt-mid">${mid}</div>
       ${this.mobile ? '' : prm}

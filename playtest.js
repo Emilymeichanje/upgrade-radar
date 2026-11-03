@@ -13,16 +13,22 @@ const EVASIVE = ['flying','unblockable','menace','shadow','trample','fear','inti
 let UID = 1;
 
 function manaInfo(cost) {
-  const pips = { W: 0, U: 0, B: 0, R: 0, G: 0 }; let generic = 0, x = false;
+  const pips = { W: 0, U: 0, B: 0, R: 0, G: 0 }; let generic = 0, x = false; const phy = [];
   for (const m of (cost || '').match(/\{[^}]+\}/g) || []) {
     const s = m.slice(1, -1);
     if (/^\d+$/.test(s)) generic += +s;
     else if (s === 'X') x = true;
     else if (/^[WUBRG]$/.test(s)) pips[s]++;
-    else if (/\//.test(s)) { const c = s.split('/').find(p => /^[WUBRG]$/.test(p)); if (c) pips[c]++; else generic++; }
+    else if (/\//.test(s)) { const c = s.split('/').find(p => /^[WUBRG]$/.test(p)); if (c) { pips[c]++; if (/\bP\b/.test(s)) phy.push(c); } else generic++; }
     else generic++;
   }
-  return { generic, pips, total: generic + Object.values(pips).reduce((a, b) => a + b, 0), x };
+  const r = { generic, pips, total: generic + Object.values(pips).reduce((a, b) => a + b, 0), x }; if (phy.length) r.phy = phy; return r;
+}
+/** Phyrexian mana: each {C/P} pip may be paid with 2 life instead — one alternative per number of pips paid with life */
+function phyAlts(cost) {
+  if (!cost || !cost.phy || !cost.phy.length) return [];
+  const out = []; for (let k = 1; k <= cost.phy.length; k++) { const pips = { ...cost.pips }; const paid = cost.phy.slice(0, k); for (const c of paid) pips[c] = Math.max(0, pips[c] - 1); out.push({ kind: 'phy', life: 2 * k, phyPaid: paid, cost: { generic: cost.generic, pips, total: cost.generic + Object.values(pips).reduce((a, b) => a + b, 0), x: cost.x } }); }
+  return out;
 }
 const NUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, x: 3 };
 
@@ -490,6 +496,7 @@ function tagFlags(card, c, o, isLand) {
     card.landDyn = /add an amount of mana of that color equal to your devotion/.test(o) ? 'devotion' : /add an amount of mana of that color equal to the number of creatures you control of the chosen type/.test(o) ? 'chosenTypeCount'
       : /^\{t\}: add \{g\} for each creature you control/m.test(o) ? 'creatures' : /^12\+ \| \{g\}, \{t\}: add \{g\} for each creature you control/m.test(o) ? 'station' : /add six \{g\}\. spend this mana only to cast creature spells/.test(o) ? 'castle'
       : /if .* has a luck counter on it, instead add one mana of any color/.test(o) ? 'luck' : null;
+    if (/^\{t\}: add one mana of any color that a land an opponent controls could produce/m.test(o)) card.landDyn = 'oppLands'; else if (/^\{t\}: add one mana of any type that a land you control could produce/m.test(o)) card.landDyn = 'myLands';
     if (/^\{1\}, \{t\}: add one mana of any color\.?$/m.test(o)) card.produces = ALLC.slice();
   }
 }
@@ -2275,6 +2282,8 @@ function tagCard(c) {
     for (const col of 'WUBRG') if (new RegExp('add \\{' + col + '\\}|\\{t\\}: add \\{[^}]*' + col, 'i').test(o) || new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front)) card.produces.push(col);
     for (const mm of o.matchAll(/\{t\}(?:, pay \d+ life)?: add ([^.\n]+)/gi)) for (const s of mm[1].matchAll(/\{([wubrg])\}/gi)) { const col = s[1].toUpperCase(); if (!card.produces.includes(col)) card.produces.push(col); }
     if (/add one mana of any color|mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|path of ancestry/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
+    if (/^\{t\}: add one mana of any color that a land an opponent controls could produce/m.test(o)) card.landDyn = 'oppLands';
+    else if (/^\{t\}: add one mana of any type that a land you control could produce/m.test(o)) card.landDyn = 'myLands';
     if (/^as long as you control six or more lands, lands you control have "\{t\}: add one mana of any color\."/m.test(o)) { card.produces = ['G']; card.__worldTree = true; }
     if (!card.produces.length) card.produces = ['C'];
     { const ma = parseManaAbility(o.split('\n//\n')[0]); card.manaAmount = ma ? ma.amount : 1; }
@@ -2733,6 +2742,7 @@ class Game {
     const c = b.card; let colors = c.produces; if (f.any) colors = ALLC.slice(); else if (f.grant.length) colors = [...new Set([...colors, ...f.grant])];
     let amount = c.manaAmount || 1;
     if (f.lute && card && (card.isInstant || card.isSorcery)) { amount = Math.max(amount, 2); colors = ALLC.slice(); }
+    if (c.landDyn === 'oppLands' || c.landDyn === 'myLands') { const who = c.landDyn === 'oppLands' ? this.opponentsOf(p) : [p]; const set = new Set(); for (const q of who) for (const x of q.battlefield) if (x.card.isLand && x !== b && x.card.landDyn !== 'oppLands' && x.card.landDyn !== 'myLands') for (const col of x.card.produces || []) set.add(col); colors = [...set].filter(x => x !== 'C'); if (!colors.length) { colors = ['C']; amount = 0; } }
     if (c.landDyn === 'devotion') { const best = ALLC.map(x => [x, this.devotion(p, x)]).sort((a, z) => z[1] - a[1])[0]; if (best[1] - 2 > 1) { amount = best[1] - 2; colors = [best[0]]; } }
     else if (c.landDyn === 'chosenTypeCount') { const n = p.battlefield.filter(x => x.card.isCreature && b.chosenType && matchesFilter(x.card, b.chosenType)).length; if (n - 2 > 1) { amount = n - 2; colors = ALLC.slice(); } }
     else if (c.landDyn === 'creatures') amount = Math.max(1, p.battlefield.filter(x => x.card.isCreature).length);
@@ -2894,8 +2904,8 @@ class Game {
     return r.n || 0; }
   convokeGranted(p, card, zone) { return p.battlefield.some(b => { const g = b.card.statics && !b.neutral && b.card.statics.grantConvoke; if (!g) return false; if (g === 'exile') return !!card.impulse || zone === 'exile'; if (g === 'creature') return card.isCreature; if (g === 'multicolored') return (card.colors || []).length > 1; return matchesFilter(card, g); }); }
   canPayCost(p, cost, reserve = 0) { return !!this.manaPlan(p, cost, reserve); }
-  payCost(p, cost) {
-    const plan0 = this.manaPlan(p, cost); if (!plan0 && (cost.total || 0) > 0) return false;
+  payCost(p, cost, forcedPlan = null) {
+    const plan0 = forcedPlan || this.manaPlan(p, cost); if (!plan0 && (cost.total || 0) > 0) return false;
     const plan = plan0 || [];
     this.lastSpend = { total: cost.total || 0, c: plan.reduce((s, x) => s + ((x.colors && x.colors.length === 1 && x.colors[0] === 'C') ? (x.amount || 1) : 0), 0) };
     this.lastSpend.colors = this.b3_colorsSpent(plan, cost);
@@ -2920,6 +2930,16 @@ class Game {
     }
     if (poolIdx.length) p.pool = p.pool.filter((x, i) => !poolIdx.includes(i));
     return true;
+  }
+  /** permanents a player may tap by hand for mana right now (lands, rocks, dorks; not pitch/altar/restricted sources) */
+  manualSrcs(p) { return this.manaSrcs(p).filter(s => s.b && s.kind !== 'pool' && s.kind !== 'hand' && s.kind !== 'altar' && s.kind !== 'led' && !s.b6only && !s.b1_pwOnly && !s.b7_noGeneric && !s.b1_opal && (s.amount || 0) > 0 && !s.b4also); }
+  /** tap one permanent for a chosen colour and float the mana — lets a player keep specific lands open when casting */
+  async tapForMana(p, perm, color) {
+    const s = this.manualSrcs(p).find(x => x.b === perm); if (!s) return false;
+    const col = s.colors.includes(color) ? color : s.colors.length === 1 ? s.colors[0] : null; if (!col) return false;
+    if (!this.payCost(p, { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0 }, [{ ...s, pip: true }])) return false;
+    this.say(`taps ${perm.card.name}`, p); this.addMana(p, Array(s.amount).fill(col));
+    await this.emit({ type: 'activate', p, card: perm.card }); await this.flushPending(); return true;
   }
   /** floating mana (rituals, Lotus Cobra, Birgi...). eot: survives step changes */
   addMana(p, colors, eot = false) { p.pool = p.pool || []; for (const c of colors) p.pool.push({ c, eot }); this.say(`— adds ${colors.map(c => c === 'A' ? '{any}' : '{' + c + '}').join('')}`, p); }
@@ -2984,6 +3004,7 @@ class Game {
     if (zone === 'hand' && card.morph) alts0 = [...alts0, { kind: 'faceDown', cost: manaInfo('{3}') }];
     if (zone === 'hand' && card.adventure && !card._noAdv) alts0 = [...alts0, { kind: 'adventure', cost: card.adventure.spell.mana, sub: card.adventure.kind }];
     if (zone === 'hand' && p.battlefield.some(b => b.tapped && b.card.isCreature) && (card.webSling || (card.isLegendary && (card.colors || []).length && p.battlefield.some(b => b.card.statics && b.card.statics.webSlingLegend && !b.neutral)))) alts0 = [...alts0, { kind: 'webSling', cost: card.webSling || p.battlefield.find(b => b.card.statics && b.card.statics.webSlingLegend).card.statics.webSlingLegend }];
+    if (zone === 'hand' && card.mana && card.mana.phy) alts0 = [...alts0, ...phyAlts(card.mana)];
     if (!alts0.length || zone === 'gy') return [];
     return alts0.filter(a => {
       if (a.pitch && !p.hand.some(c => c !== card && (c.colors || []).includes(a.pitch))) return false;
@@ -3215,8 +3236,8 @@ class Game {
     delete card.impulse; delete card.plottedTurn;
     // choose how to pay: alternative cost, kicker, X, cost-carrying modes
     const extra = { x: 0, kicks: 0, gift: false, bargain: false, alt: null, modes: null };
-    if (mode === 'alt' || (mode === 'mana' && (card.alts || card.morph || card.adventure || card.webSling || card.isLegendary))) {
-      const alts = this.altOptions(p, card, zone).filter(a => mode === 'alt' || a.kind === 'blitz' || a.kind === 'freerun' || a.kind === 'mutate' || a.kind === 'awaken' || a.kind === 'dash' || a.kind === 'evoke' || a.kind === 'bestow' || a.kind === 'life' || a.kind === 'cheap' || a.kind === 'sacCreature' || a.kind === 'pitch' || a.kind === 'faceDown' || a.kind === 'adventure' || a.kind === 'webSling');
+    if (mode === 'alt' || (mode === 'mana' && (card.alts || card.morph || card.adventure || card.webSling || card.isLegendary || (card.mana && card.mana.phy)))) {
+      const alts = this.altOptions(p, card, zone).filter(a => mode === 'alt' || a.kind === 'blitz' || a.kind === 'freerun' || a.kind === 'mutate' || a.kind === 'awaken' || a.kind === 'dash' || a.kind === 'evoke' || a.kind === 'bestow' || a.kind === 'life' || a.kind === 'phy' || a.kind === 'cheap' || a.kind === 'sacCreature' || a.kind === 'pitch' || a.kind === 'faceDown' || a.kind === 'adventure' || a.kind === 'webSling');
       for (let k = alts.length - 1; k >= 0; k--) if (alts[k].cost && alts[k].cost.total > 0 && !this.canPayCost(p, { ...alts[k].cost, card })) alts.splice(k, 1);
       let pick = null;
       if (alts.length) { if (p.human) pick = this.hooks.humanPayOpt ? await this.hooks.humanPayOpt({ p, card, normal: mode === 'mana', alts }) : (mode === 'alt' ? alts[0] : null); else if (p.ai) pick = p.ai.chooseAlt(this, p, card, alts, mode === 'mana'); }
@@ -3249,7 +3270,7 @@ class Game {
       if (a.pitch) { const ex = p.hand.filter(c => c !== card && (c.colors || []).includes(a.pitch)).sort((x, y) => x.cmc - y.cmc)[0]; if (ex) { p.hand.splice(p.hand.indexOf(ex), 1); p.exile.push(ex); this.say(`exiles ${ex.name} to evoke ${card.name}`, p); } }
       if (a.kind === 'pitch') { const ex = p.hand.filter(c => (c.colors || []).includes(a.color)).sort((x, y) => x.cmc - y.cmc)[0]; if (ex) { p.hand.splice(p.hand.indexOf(ex), 1); p.exile.push(ex); this.say(`exiles ${ex.name} to cast ${card.name}`, p); } }
       if (a.kind === 'webSling') { const pool = p.battlefield.filter(b => b.tapped && b.card.isCreature); const t = p.ai ? [...pool].sort((x, z) => (!!z.card.etbOps - !!x.card.etbOps) || (p.ai.permBase(x) - p.ai.permBase(z)))[0] : await this.pickPerm(p, card, pool, { dest: 'return to hand' }); if (t) { this.say(`returns ${t.card.name} to hand (web-slinging)`, p); await this.bounce(p, t, p); } }
-      if (a.kind === 'faceDown') this.say(p.human ? `casts ${card.name} face down` : 'casts a face-down creature spell', p); else this.say(`casts ${card.name} for its ${a.kind === 'cheap' || a.kind === 'life' ? 'alternative' : a.kind} cost`, p);
+      if (a.kind === 'faceDown') this.say(p.human ? `casts ${card.name} face down` : 'casts a face-down creature spell', p); else if (a.kind === 'phy') this.say(`casts ${card.name}, paying ${a.life} life for ${a.phyPaid.map(c => '{' + c + '/P}').join('')}`, p); else this.say(`casts ${card.name} for its ${a.kind === 'cheap' || a.kind === 'life' ? 'alternative' : a.kind} cost`, p);
     }
     if (mode === 'free' && extra.extraCost && extra.extraCost.total) this.payCost(p, extra.extraCost);
     if (mode === 'mana') { const cst = this.addCosts(this.costOf(p, card, zone), extra.extraCost); Object.assign(cst, { convoke: this.costOf(p, card, zone).convoke, delve: this.costOf(p, card, zone).delve });
@@ -3370,7 +3391,7 @@ class Game {
   }
   tokenAmt(p, n, creature) { for (const b of p.battlefield) { const t = b.card.statics && b.card.statics.tokenMult; if (t && !b.neutral && (!t.creatureOnly || creature)) n *= t.mult; } return n; }
   /** every kind of counter on a permanent: { '+1/+1': n, charge, suspect, stun, shield, growth... } */
-  counterKinds(b) { const k = {}; if ((b.counters || 0) > 0) k['+1/+1'] = b.counters; if ((b.charge || 0) > 0) k.charge = b.charge; if ((b.suspect || 0) > 0) k.suspect = b.suspect; if (b.card && b.card.isPlaneswalker && (b.loyalty || 0) > 0) k.loyalty = b.loyalty; if (b.indestructibleCounter) k.indestructible = 1; for (const [kk, v] of Object.entries(b.ck || {})) if (v > 0) k[kk] = v; for (const kw of b.kwPerm || []) k[kw] = (k[kw] || 0) + 1; return k; }
+  counterKinds(b) { const k = {}; if ((b.counters || 0) > 0) k['+1/+1'] = b.counters; if ((b.charge || 0) > 0) k.charge = b.charge; if ((b.suspect || 0) > 0) k.suspect = b.suspect; if (b.card && b.card.isPlaneswalker && (b.loyalty || 0) > 0) k.loyalty = b.loyalty; if (b.indestructibleCounter) k.indestructible = 1; if ((b.quest || 0) > 0) k.quest = b.quest; if (b.card && b.card.saga && (b.lore || 0) > 0) k.lore = b.lore; if ((b.hour || 0) > 0) k.hour = b.hour; if ((b.age || 0) > 0 && b.card && b.card.statics && (b.card.statics.cumulative || b.card.statics.cumulativeLife || b.card.statics.cumulativeOppGain)) k.age = b.age; for (const [kk, v] of Object.entries(b.ck || {})) if (v > 0) k[kk] = v; for (const kw of b.kwPerm || []) k[kw] = (k[kw] || 0) + 1; return k; }
   hasCounters(b) { return Object.keys(this.counterKinds(b)).length > 0; }
   /** remove one counter (any kind) from b; prefer cheap kinds */
   takeCounter(b) { for (const kk of ['suspect', 'charge', 'growth', 'stun', '+1/+1', 'shield', 'loyalty']) { if (kk === '+1/+1' && (b.counters || 0) > 0) { b.counters--; return kk; } if (kk === 'charge' && (b.charge || 0) > 0) { b.charge--; return kk; } if (kk === 'suspect' && (b.suspect || 0) > 0) { b.suspect--; return kk; } if (kk === 'loyalty' && b.card.isPlaneswalker && (b.loyalty || 0) > 0) { b.loyalty--; return kk; } if (b.ck && b.ck[kk] > 0) { b.ck[kk]--; return kk; } } if (b.ck) for (const kk of Object.keys(b.ck)) if (b.ck[kk] > 0) { b.ck[kk]--; return kk; } return null; }
@@ -7202,6 +7223,7 @@ class AI {
       if (a.kind === 'faceDown') { if (!canNormal && card.isCreature && game.canPayCost(me, card.morph.cost) === false) return a; if (!canNormal) return a; continue; }
       if (a.kind === 'cheap') return a;
       if (a.kind === 'life' && (!canNormal || me.life > 25)) return a;
+      if (a.kind === 'phy' && (!canNormal || (me.life > 30 && a.life <= 2))) return a;
       if ((a.kind === 'sacCreature' || a.kind === 'pitch') && !canNormal) return a;
     }
     return null;

@@ -403,7 +403,8 @@ class Table {
     this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
     this.buildCardIndex();
     this.me = this.game.players.find(p => p.human) || null;
-    for (const p of this.game.players) if (p.ai) { let t = 0; while (!p.ai.keep(p.hand, t) && t < 3) { this.game.mulligan(p); t++; } if (t) this.game.bottomCards(p, p.ai.bottomChoice(p.hand, t)); }
+    for (const p of this.game.players) { const g = this.game; const all = [...p.library, ...p.hand]; const L = all.filter(c => c.isLand).length; g.say(`— deck: ${all.length + p.command.length} cards, ${L} lands${L < 30 ? ' ⚠ low land count — check the saved list for names that did not resolve' : ''}`, p); }
+    for (const p of this.game.players) if (p.ai) { let t = 0; const lands = () => p.hand.filter(c => c.isLand).length; while ((!p.ai.keep(p.hand, t) || (lands() === 0 && t < 5)) && t < 5) { this.game.mulligan(p); t++; } if (t) this.game.bottomCards(p, p.ai.bottomChoice(p.hand, t)); this.game.say(`— keeps ${p.hand.length} (${lands()} land${lands() === 1 ? '' : 's'}${t ? ', after ' + t + ' mulligan' + (t > 1 ? 's' : '') : ''})`, p); }
     if (this.me) await this.mulligan();
     this.render();
     try { await this.game.run(); } catch (e) { if (e.message !== 'abort') { console.error(e); this.addLog('Engine error: ' + e.message); } return; }

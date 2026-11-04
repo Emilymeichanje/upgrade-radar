@@ -143,7 +143,7 @@ const STYLE = `
 .gt-bar .ph b{color:var(--fg)}
 .gt-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;align-items:start}
 @media (max-width:980px){.gt-main{grid-template-columns:minmax(0,1fr)}.gt-side{order:2}}
-.gt-board{display:grid;gap:10px;position:relative;min-width:0}
+.gt-board{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;position:relative;min-width:0}
 .gt-opps{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
 @media (min-width:1200px){.gt-opps{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .gs{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;display:grid;gap:6px;min-width:0;position:relative;transition:border-color .2s,box-shadow .2s}
@@ -305,6 +305,35 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
   .gt-side .pv{display:none}
   .gl{max-height:170px;font-size:.68rem}
   .set .box{max-width:100%}
+  /* opponents: one sticky strip you page sideways, instead of three stacked boards */
+  .gt-opps-wrap{position:sticky;top:calc(env(safe-area-inset-top,0px) + 60px);z-index:12;background:var(--bg);margin:0 -4px;padding:0 4px 4px;border-bottom:1px solid var(--line);min-width:0;max-width:100vw;overflow:hidden}
+  .gt-opps{display:flex;gap:6px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .gt-opps::-webkit-scrollbar{display:none}
+  .gt-opps .gs{flex:0 0 86vw;min-width:0;max-width:86vw;scroll-snap-align:start;max-height:min(34vh,260px);overflow-y:auto}
+  .gt-opps-wrap.collapsed .gt-opps{display:none}
+  .opp-pager{display:flex;gap:4px;margin-top:4px;overflow-x:auto;scrollbar-width:none}
+  .opp-pager .op{display:inline-flex;align-items:center;gap:4px;flex:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:999px;padding:2px 8px 2px 3px;font:inherit;font-size:.72rem;min-height:28px}
+  .opp-pager .op .av{width:20px;height:20px;border-radius:50%;background:var(--soft) center/cover}
+  .opp-pager .op b{font-family:var(--mono);font-size:.8rem}
+  .opp-pager .op.act{border-color:var(--accent)}.opp-pager .op.dead{opacity:.45}
+}
+/* phone held sideways: opponents in a scrolling column on the left, your board on the right, hand along the bottom */
+@media (max-width:1000px) and (orientation:landscape) and (max-height:540px){
+  .gt{--tile-o:34px;--tile-m:44px;--tile-l:28px;--hand:58px;gap:4px}
+  .gt-main{grid-template-columns:minmax(0,1fr)}.gt-side{display:none}
+  .gt-board{display:grid;gap:4px;grid-template-columns:minmax(0,44%) minmax(0,1fr);grid-template-areas:"bar bar" "opps me" "mid mid" "dock dock";align-items:start}
+  .gt-bar{grid-area:bar;padding:3px 6px;gap:4px}.steps{order:0;flex-basis:auto}.steps span{font-size:.55rem;padding:1px 4px}.gt-bar .chip{min-height:26px;padding:2px 8px;font-size:.72rem}.gt-bar .ph{font-size:.7rem}
+  .gt-opps-wrap{grid-area:opps;position:static;margin:0;padding:0;border:0}
+  .gt-opps{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;max-height:calc(100vh - 150px);overflow-y:auto;scroll-snap-type:none}
+  .gt-opps .gs{flex:none;max-height:none;overflow:visible}
+  .opp-pager{display:none}
+  .gs.me{grid-area:me;max-height:calc(100vh - 150px);overflow-y:auto}
+  .gt-mid{grid-area:mid;min-height:24px}.gt-mid .idle{font-size:.68rem}
+  .gt-dock{grid-area:dock;max-height:46vh}
+  .gt-hand{min-height:calc(var(--hand)*1.2);padding:8px 2px 0}
+  .gs{padding:4px;gap:3px}.gs-h{grid-template-columns:24px minmax(0,1fr) auto}.gs .av{width:24px;height:24px}.gs.me .av{width:28px;height:28px}.gs .lf{font-size:1rem}.gs-meta{font-size:.58rem}
+  .prm{padding:6px 8px}.prm h4{font-size:.8rem}.prm .opt{width:52px}
+  .cz{width:48px}
 }
 .popt{position:relative}
 .olab{position:absolute;left:50%;bottom:4px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--accent);border-radius:4px;padding:0 5px;font:600 .62rem var(--mono);white-space:nowrap;max-width:96%;overflow:hidden;text-overflow:ellipsis}
@@ -637,7 +666,7 @@ class Table {
     this.el.addEventListener('mouseover', e => { const t = e.target.closest('[data-uid]'); if (t) this.preview(+t.dataset.uid, !!t.closest('.lgx')); });
     this.el.addEventListener('click', e => this.onClick(e));
     // phones: compact layout; touch: long-press any card to read it
-    const mq = window.matchMedia('(max-width:700px)'); this.mobile = mq.matches;
+    const mq = window.matchMedia('(max-width:700px), (max-height:540px) and (orientation:landscape)'); this.mobile = mq.matches;
     (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(e => { this.mobile = e.matches; this.render(); });
     this.touch = window.matchMedia('(hover: none)').matches;
     this.el.addEventListener('contextmenu', e => { const t = e.target.closest('[data-uid]'); if (!t || !this.touch) return; e.preventDefault(); this.openSheet(+t.dataset.uid); });
@@ -788,6 +817,8 @@ class Table {
   }
   action(a, btn) {
     const g = this.game, me = this.me, P = this.prompt;
+    if (a === 'goseat') { const el = this.board.querySelector(`.gt-opps .gs[data-seat="${btn.dataset.seat}"]`); if (el) { this.oppsCollapsed = false; this.board.querySelector('.gt-opps-wrap').classList.remove('collapsed'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' }); } return; }
+    if (a === 'collapse-opps') { this.oppsCollapsed = !this.oppsCollapsed; this.render(); return; }
     if (a === 'zoom-in') { this.stepZoom(1); return; }
     if (a === 'zoom-out') { this.stepZoom(-1); return; }
     if (a === 'settings') { this.showSettings = true; this.render(); return; }
@@ -1041,7 +1072,7 @@ class Table {
         <button class="chip" data-act="ff" aria-pressed="${this.ff}" title="Skip animations until your next decision">${this.mobile ? (this.ff ? 'Skipping…' : 'Skip ▸▸') : this.ff ? 'Fast-forwarding' : 'Fast-forward'}</button>
         <span class="zm" title="Board zoom (keys: - / + / 0)"><button class="chip" data-act="zoom-out" aria-label="Zoom out">−</button><b>${Math.round((this.s.zoom || 1) * 100)}%</b><button class="chip" data-act="zoom-in" aria-label="Zoom in">+</button></span>
         <button class="chip" data-act="export-log" title="Download the full game log so far">Export log</button><button class="chip" data-act="settings">Settings</button><button class="chip" data-act="leave">${this.mobile ? 'Leave' : 'Leave game'}</button></div>
-      <div class="gt-opps">${opps.map(p => this.seat(p)).join('')}</div>
+      <div class="gt-opps-wrap ${this.oppsCollapsed ? 'collapsed' : ''}"><div class="gt-opps" id="gtopps">${opps.map(p => this.seat(p)).join('')}</div>${this.mobile ? `<div class="opp-pager">${opps.map(p => `<button class="op ${p.dead ? 'dead' : ''} ${g.players[g.active] === p ? 'act' : ''}" data-act="goseat" data-seat="${p.i}"><span class="av" style="background-image:url('${esc(p.art || '')}')"></span>${esc(short(p.name).split(',')[0].slice(0, 9))} <b>${p.life}</b></button>`).join('')}<button class="op" data-act="collapse-opps" title="show / hide opponents' boards">${this.oppsCollapsed ? '▾ boards' : '▴ hide'}</button></div>` : ''}</div>
       <div class="gt-mid">${mid}</div>
       ${this.mobile ? '' : prm}
       ${me ? this.seat(me) : ''}

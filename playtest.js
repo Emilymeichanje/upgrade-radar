@@ -80,7 +80,8 @@ function parseOps(t) {
   if ((m = t.match(/(target player|target opponent|each opponent|each player) mills? (a|one|two|three|four|five|\d+) cards?/))) ops.push({ op: 'millOpp', n: numOf(m[2]), each: m[1].startsWith('each'), all: m[1] === 'each player' });
   else if ((m = t.match(/\bmills? (a|one|two|three|four|five|\d+) cards?/))) ops.push({ op: 'mill', n: numOf(m[1]) });
   if ((m = t.match(/(?:this card|[a-z' ,-]+?) deals (\d+) damage to you\b/)) && !/deals \d+ damage to you and each/.test(t)) ops.push({ op: 'lose', n: +m[1] });
-  if ((m = t.match(/\bdraws? (a|one|two|three|four|five|six|seven|\d+) cards?/)) && !/each player draws|target player draws|each opponent draws/.test(t)) ops.push({ op: 'draw', n: numOf(m[1]) });
+  if ((m = t.match(/draw cards equal to the greatest power among (non-human |[a-z]+ )?creatures you control/))) ops.push({ op: 'draw', n: { $: 'maxPow', f: (m[1] || '').trim() } });
+  else if ((m = t.match(/\bdraws? (a|one|two|three|four|five|six|seven|\d+) cards?/)) && !/each player draws|target player draws|each opponent draws/.test(t)) ops.push({ op: 'draw', n: numOf(m[1]) });
   if ((m = t.match(/(each opponent|each other player|target opponent|target player) loses (\d+|x) life/))) ops.push({ op: 'drain', n: numOf(m[2]), each: m[1].startsWith('each'), gainLost: /you gain life equal to the life lost this way/.test(t) });
   if ((m = t.match(/(?:you|and|,)(?: may)? gain (\d+|x) life/))) ops.push({ op: 'gain', n: numOf(m[1]) });
   if ((m = t.match(/(?:you|and) lose (\d+) life/))) ops.push({ op: 'lose', n: numOf(m[1]) });
@@ -268,7 +269,8 @@ function parseOps(t) {
   if (/there is an additional combat phase|additional combat phase after this/.test(t) && !ops.some(o => o.op === 'extraCombat')) ops.push({ op: 'extraCombat' });
   if ((m = t.match(/exile (?:up to one |another )?target (artifact or creature|creature|nonland permanent|permanent) you control,? then return (?:that card|it) to the battlefield/))) ops.push({ op: 'flicker', what: m[1] });
   if ((m = t.match(/exile the top (a|one|two|three|four|five|\d+)? ?cards? of your library\.? (?:until end of turn|until the end of your next turn|this turn)?,? ?you may play (?:it|them|that card|those cards)/))) ops.push({ op: 'impulse', n: m[1] ? numOf(m[1]) : 1, next: /until the end of your next turn|until the end of your next/.test(t) });
-  if ((m = t.match(/creatures you control (?:gain [a-z ,]+ and )?get \+(\d+|x)\/\+(\d+|x)(?: and gain ([a-z ,]+))? until end of turn(?:, where x is the number of creatures you control)?/))) ops.push({ op: 'pumpAll', n: m[1] === 'x' ? 'creatures' : +m[1], kws: KW.filter(k => (m[3] || t).includes(k) && /gain/.test(t)) });
+  if ((m = t.match(/(?:^|\. )(non-human|non-[a-z]+|[a-z]+) creatures you control get \+(\d+)\/\+(\d+)(?: and gain ([a-z ,]+))? until end of turn/)) && !/^(other|all|attacking|tapped|untapped)$/.test(m[1])) ops.push({ op: 'pumpFilter', filter: m[1], p: +m[2], t: +m[3], kw: m[4] ? m[4].split(/,? and |, /)[0] : null });
+  else if ((m = t.match(/creatures you control (?:gain [a-z ,]+ and )?get \+(\d+|x)\/\+(\d+|x)(?: and gain ([a-z ,]+))? until end of turn(?:, where x is the number of creatures you control)?/))) ops.push({ op: 'pumpAll', n: m[1] === 'x' ? 'creatures' : +m[1], kws: KW.filter(k => (m[3] || t).includes(k) && /gain/.test(t)) });
   if ((m = t.match(/creatures your opponents control get -(\d+)\/-(\d+) until end of turn/))) ops.push({ op: 'shrinkOpp', n: +m[2] });
   if ((m = t.match(/(destroy|exile) all (artifacts|enchantments|creatures with mana value (\d+) or less|creatures with mana value (\d+) or greater|creatures with power (\d+) or greater|nontoken creatures|creatures|planeswalkers)/)) && !/destroy all creatures\.|exile all creatures\./.test(t)) ops.push({ op: 'destroyAll', how: m[1], what: m[2] });
   if (/you may play an additional land this turn/.test(t)) ops.push({ op: 'extraLandTurn' });
@@ -579,7 +581,7 @@ function matchesFilter(c, filter) {
     if (w === 'historic') return !!(c.isArtifact || c.isLegendary || /Saga/.test(c.type || ''));
     if (w === 'multicolored') return (c.colors || []).length > 1; if (w === 'colorless') return !(c.colors || []).length;
     if (w === 'defender' || w === 'flying' || w === 'haste' || w === 'trample') return (c.kw || []).includes(w);
-    if (w.startsWith('non')) return !ty.includes(w.slice(3));
+    if (w.startsWith('non')) return !ty.includes(w.slice(3).replace(/^-/, ''));
     const sing = w.replace(/ves$/, 'f').replace(/ies$/, 'y').replace(/s$/, '');
     if ((c.changeling || c.maskwood) && /creature/.test(ty) && !/^(artifact|enchantment|land|planeswalker|instant|sorcery|legendary|basic|battle|kindred|tribal)$/.test(sing)) return true;
     return ty.includes(w) || ty.includes(sing);
@@ -4369,6 +4371,7 @@ class Game {
     let n = 0;
     switch (s.$) {
       case 'x': n = (ctx.x != null ? ctx.x : ctx.spell && ctx.spell.x) || 0; break;
+      case 'maxPow': n = Math.max(0, ...p.battlefield.filter(b => b.card.isCreature && (!s.f || matchesFilter(b.card, s.f))).map(b => this.powerOf(p, b))); break;
       case 'count': { const pools = s.who === 'all' ? this.alive() : s.who === 'opp' ? this.opponentsOf(p) : [p]; n = pools.flatMap(q => q.battlefield).filter(b => (!s.other || b !== of('self')) && matchesFilter(b.card, s.f || '') && (!s.creature || b.card.isCreature)).length; break; }
       case 'power': { const b = of(s.of); n = b && b.card ? Math.max(0, this.powerOf(this.ownerOf(b) || p, b)) : 0; break; }
       case 'tough': { const b = of(s.of); n = b && b.card ? Math.max(0, this.toughOf(this.ownerOf(b) || p, b)) : 0; break; }

@@ -81,7 +81,8 @@ function parseOps(t) {
   else if ((m = t.match(/\bmills? (a|one|two|three|four|five|\d+) cards?/))) ops.push({ op: 'mill', n: numOf(m[1]) });
   if ((m = t.match(/(?:this card|[a-z' ,-]+?) deals (\d+) damage to you\b/)) && !/deals \d+ damage to you and each/.test(t)) ops.push({ op: 'lose', n: +m[1] });
   if ((m = t.match(/draw cards equal to the greatest power among (non-human |[a-z]+ )?creatures you control/))) ops.push({ op: 'draw', n: { $: 'maxPow', f: (m[1] || '').trim() } });
-  else if ((m = t.match(/\bdraws? (a|one|two|three|four|five|six|seven|\d+) cards?/)) && !/each player draws|target player draws|each opponent draws/.test(t)) ops.push({ op: 'draw', n: numOf(m[1]) });
+  else if ((m = t.match(/each (?:other player|opponent) draws (a|one|two|three|\d+) cards?/))) ops.push({ op: 'drawEach', n: numOf(m[1]), others: true });
+  else if ((m = t.match(/\bdraws? (a|one|two|three|four|five|six|seven|\d+) cards?/)) && !/each player draws|target player draws|each opponent draws|each other player draws/.test(t)) ops.push({ op: 'draw', n: numOf(m[1]) });
   if ((m = t.match(/(each opponent|each other player|target opponent|target player) loses (\d+|x) life/))) ops.push({ op: 'drain', n: numOf(m[2]), each: m[1].startsWith('each'), gainLost: /you gain life equal to the life lost this way/.test(t) });
   if ((m = t.match(/(?:you|and|,)(?: may)? gain (\d+|x) life/))) ops.push({ op: 'gain', n: numOf(m[1]) });
   if ((m = t.match(/(?:you|and) lose (\d+) life/))) ops.push({ op: 'lose', n: numOf(m[1]) });
@@ -3943,7 +3944,7 @@ class Game {
     for (const c of q.hand) {
       if (!this.canFlash(q, c) || !this.castMode(q, c, 'hand', { instant: true })) continue;
       if (c.roles.includes('counter') && !this.stack.some(o => o.kind !== 'ability' && o.caster !== q && counterHits(c, o.card) && !this.isUncounterable(o))) continue;
-      if (c.redirect && !this.stack.some(o => o.kind !== 'ability' && o.target)) continue;
+      if (c.redirect && !this.redirectable(q)) continue;
       out.push({ kind: 'cast', card: c, zone: 'hand' });
     }
     out.push(...this.gyCastOptions(q, { instant: true }), ...this.abilityOptions(q, { instant: true }));
@@ -4489,7 +4490,7 @@ class Game {
             for (const q of this.opponentsOf(p)) { if ((q.poison || 0) > 0) { q.poison++; n++; if (q.poison >= 10) await this.kill(q, 'ten poison counters'); } for (const b of q.battlefield) if (b.ck && b.ck.stun > 0) { b.ck.stun++; n++; } }
             this.say(`— proliferates (${n})`, p); } break; }
         case 'wheel': { const most = Math.max(0, ...this.alive().map(q => q.hand.length)); for (const q of this.alive()) { const k = op.n || (op.greatest ? most : q.hand.length); for (const c of [...q.hand]) await this.discardCard(q, c); await this.draw(q, k); } this.say(`— every player discards their hand and draws ${op.n || 'that many'}`, p); break; }
-        case 'drawEach': for (const q of this.alive()) await this.draw(q, op.n); break;
+        case 'drawEach': for (const q of this.alive()) { if (op.others && q === p) continue; await this.draw(q, op.n); } break;
         case 'untapLands': { const ls = p.battlefield.filter(b => b.card.isLand && b.tapped).slice(0, op.n); for (const b of ls) b.tapped = false; this.say(`— untaps ${ls.length} land${ls.length === 1 ? '' : 's'}`, p); break; }
         case 'untapAll': { const ok = b => op.what === 'creatures' ? b.card.isCreature : op.what === 'artifacts' ? b.card.isArtifact : !b.card.isLand; for (const b of p.battlefield.filter(ok)) b.tapped = false; this.say(`— untaps all ${op.what}`, p); break; }
         case 'flicker': {
@@ -6144,10 +6145,12 @@ class Game {
   }
   // ---------- priority ----------
   /** everything `q` could legally do right now outside their own main phase */
+  /** is there a spell or ability on the stack whose target could be changed right now? */
+  redirectable(q) { return this.stack.some(o => o.target && !(o.kind === 'ability' && !(o.target.card || o.target.life != null || o.target.spell)) && this.retargetCandidates(o).length > 0); }
   legalActions(q) {
     if (q.dead) return [];
     const out = [];
-    for (const c of q.hand) if (this.canFlash(q, c) && !c.roles.includes('counter') && this.castMode(q, c, 'hand', { instant: true })) out.push({ kind: 'cast', card: c });
+    for (const c of q.hand) if (this.canFlash(q, c) && !c.roles.includes('counter') && !(c.redirect && !this.redirectable(q)) && this.castMode(q, c, 'hand', { instant: true })) out.push({ kind: 'cast', card: c });
     for (const b of q.battlefield) if (b.card.fetch && this.canActivate(q, b)) out.push({ kind: 'fetch', perm: b, card: b.card });
     out.push(...this.gyCastOptions(q, { instant: true }), ...this.abilityOptions(q, { instant: true }));
     return out;
@@ -6461,7 +6464,7 @@ class Game {
       if (this.protFromPlayer(h.defender, p)) { this.say(`— damage to ${h.defender.name} is prevented (protection)`, h.defender); continue; }
       if (h.defender.preventDmgTurn === this.turn) { this.say(`— damage to ${h.defender.name} is prevented`, h.defender); await this.squirePrevented(h.defender, h.dmg); continue; }
       await this.emit({ type: 'hit', p, attacker: h.attacker, defender: h.defender, dmg: h.dmg });
-      this.say(`${h.attacker.card.name} hits ${h.defender.name} for ${h.dmg}`, p);
+      this.say(`${h.attacker.card.name} hits ${h.defender.name} for ${h.dmg}${h.attacker.card.kw.includes('double strike') ? ' (double strike)' : ''}`, p);
       if (h.attacker.card.kw.includes('lifelink')) await this.changeLife(p, h.dmg, h.attacker.card);
       if (h.attacker.goalTurn === this.turn) { const k = Object.keys(this.counterKinds(h.attacker)).length; if (k) { this.say(`— ${h.attacker.card.name}: draws ${k} (kinds of counters)`, p); await this.draw(p, k); } }
       if (p.heistTurn === this.turn) await this.makeArtifactTokens(p, 'treasure', 1, true);
@@ -7246,6 +7249,7 @@ class AI {
       case 'b8_counterNC': v += 3; break;
       // ---- end b8 (ai)
       // ==== fixes b9 (ai) ====
+      case 'drawEach': v += op.others ? -2 * (op.n || 1) : 0.5 * (op.n || 1); break;
       case 'b9_aangFlip': v += 12; break;
       case 'oring1': { const t = this.bestTarget(game, me, b => !b.card.isLand); v += t ? Math.min(9, t.value * 0.7) : 0; break; }
       case 'b9_eowyn': v += 5; break;

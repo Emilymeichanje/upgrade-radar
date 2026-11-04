@@ -301,6 +301,8 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
   .gt-ctl{gap:6px}.gt-ctl .msg{font-size:.72rem;flex-basis:100%}.gt-ctl .msg.hint{display:none}
   .gt-ctl.abil-row{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px;-webkit-overflow-scrolling:touch}.gt-ctl.abil-row::-webkit-scrollbar{display:none}.gt-ctl.abil-row .chip{flex:none;min-height:30px;padding:3px 9px;font-size:.72rem;white-space:nowrap}
   .gt-dock{max-height:52vh}
+  .hand-tog{align-self:flex-start;border:0;background:none;color:var(--muted);font:inherit;font-size:.7rem;padding:0 4px;min-height:22px}
+  .gt-opps .gs{max-height:min(30vh,240px)}
   .gt-ctl .chip{min-height:36px}
   .gt-hand{min-height:calc(var(--hand)*1.25);padding:12px 2px 0}
   .hcd{margin-left:-8px}
@@ -401,7 +403,7 @@ class Table {
     this.board = this.el.querySelector('#gtb'); this.pv = this.el.querySelector('#gtpv'); this.logEl = this.el.querySelector('#gtlog');
     this.applyZoom();
     TOKART.onFound = (k, url) => { if (!this.game) return; let n = 0; for (const p of this.game.players) for (const b of p.battlefield) { const c = b.card; if (c.token && !c.img && tokKey(c) === k) { c.img = url; n++; } } if (n) this.render(); };
-    this.wire();
+    this.wire(); if (this.oppsCollapsed == null) this.oppsCollapsed = this.mobile && innerHeight < 760;
     const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c), humanModes: c => this.ask('modes', { ...c, sel: [] }), humanPayOpt: c => this.ask('payopt', c), humanNumber: c => this.ask('num', c) };
     hooks.save = g => this.saveGame(g);
     if (this.opts.saved) { this.game = G.Game.fromSaved(this.opts.saved.state, { hooks }); this.buildCardIndex(); this.me = this.game.players.find(p => p.human) || null; this.logLines = []; for (const l of this.game.log.slice(-200)) this.addLog(l.m); this.game.say(`— game resumed (turn ${this.game.turn})`); this.render(); this.guardBack();
@@ -838,6 +840,7 @@ class Table {
     const g = this.game, me = this.me, P = this.prompt;
     if (a === 'goseat') { const el = this.board.querySelector(`.gt-opps .gs[data-seat="${btn.dataset.seat}"]`); if (el) { this.oppsCollapsed = false; this.board.querySelector('.gt-opps-wrap').classList.remove('collapsed'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' }); } return; }
     if (a === 'collapse-opps') { this.oppsCollapsed = !this.oppsCollapsed; this.render(); return; }
+    if (a === 'hand-tog') { this.handHidden = !this.handHidden; this.render(); return; }
     if (a === 'cast-cmd' && this.myTurn && !this.busy && !P) { const card = me.command.find(c => c.uid === +btn.dataset.cmd); if (card && g.castMode(me, card, 'cmd')) this.startCast(card, 'cmd'); return; }
     if (a === 'zoom-in') { this.stepZoom(1); return; }
     if (a === 'zoom-out') { this.stepZoom(-1); return; }
@@ -1066,7 +1069,7 @@ class Table {
       if (me.battlefield.some(b => b.card.statics && b.card.statics.landsFromGy)) for (const c of me.graveyard.filter(c => c.isLand)) extra.push([c, 'gy', 'graveyard land']);
       const extraHtml = extra.map(([c, z, lbl]) => { const can = this.myTurn && !this.busy && !P && (c.isLand ? me.landsThisTurn < g.landLimit(me) : !!g.castMode(me, c, z)); return `<div class="hcd ${can ? 'can' : ''}" style="position:relative;opacity:.92" data-act="xcast" data-zone="${z}" data-uid="${c.uid}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : `<div class="gc tok" style="width:100%;height:100%">${esc(c.name)}</div>`}<span class="hbadge">${esc(lbl)}</span></div>`; }).join('');
       const cmdUnused = me.command.map(c => { const can = this.myTurn && !this.busy && !P && g.castMode(me, c, 'cmd'); return `<div class="hcd ${can ? 'can' : ''}" data-cmd="${c.uid}" data-uid="${c.uid}" title="Commander${me.cmdTax ? ' (tax ' + me.cmdTax + ')' : ''}">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`; }).join('');
-      handBar = `<div class="gt-hand">${hand}${extraHtml}</div>`;
+      handBar = `${this.mobile ? `<button class="hand-tog" data-act="hand-tog">Hand · ${me.hand.length} ${this.handHidden ? '▴ show' : '▾ hide'}</button>` : ''}${this.mobile && this.handHidden ? '' : `<div class="gt-hand">${hand}${extraHtml}</div>`}`;
       const hs = this.handSel != null && me.hand.find(c => c.uid === this.handSel);
       if (hs && this.myTurn && !P) { const ok = hs.isLand ? me.landsThisTurn < 1 : !hs.roles.includes('counter') && g.castMode(me, hs, 'hand');
         handBar = `<div class="gt-ctl hsel"><b>${esc(hs.name)}</b><button class="chip pri" data-act="hand-go" ${ok && !this.busy ? '' : 'disabled'}>${hs.isLand ? 'Play land' : 'Cast'}</button><button class="chip" data-act="hand-info">Details</button><button class="chip" data-act="hand-x">Cancel</button>${ok ? '' : `<span class="msg">${hs.isLand ? 'Land drop used' : hs.roles.includes('counter') ? 'Counterspells are cast in response' : 'Not enough mana'}</span>`}</div>` + handBar; }

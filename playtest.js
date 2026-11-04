@@ -3330,7 +3330,8 @@ class Game {
     if (obj.plumb) { for (let k = 0; k < obj.plumb; k++) this.stack.push({ id: UID++, kind: 'spell', card, caster: p, target, zone: 'copy', isMode: true, isCopy: true }); this.say(`— ${obj.plumb} cop${obj.plumb > 1 ? 'ies' : 'y'}`, p); }
     if (card.statics && card.statics.storm && this.spellsThisTurnAll > 1) { const n = Math.min(this.spellsThisTurnAll - 1, 15); for (let k = 0; k < n; k++) this.stack.push({ id: UID++, kind: 'spell', card, caster: p, target, zone: 'copy', isMode: true, isCopy: true }); this.say(`— storm: ${n} cop${n > 1 ? 'ies' : 'y'}`, p); }
     if (obj.alt === 'faceDown') { obj.shownCard = { ...this.faceDownCard(card), uid: card.uid }; if (!p.human) { this.say('casts a face-down creature spell', p); } } else
-    this.say(`casts ${card.name}${zone === 'gy' ? ' (' + (obj_gc ? obj_gc.kind : 'graveyard') + ')' : ''}${target ? ' → ' + this.targetName(target) : ''}`, p);
+    { const modeOk = !(obj.modes && obj.modes.length) || target && target.card ? obj.modes && obj.modes.length && target && target.card ? obj.modes.some(m => !m.roles.includes('removal') || this.modeHasTarget(p, m) && (() => { const o = m.oracle.toLowerCase(); const c = target.card; return /target (creature or planeswalker|creature)/.test(o) ? c.isCreature || (/planeswalker/.test(o) && c.isPlaneswalker) : /target artifact or enchantment/.test(o) ? c.isArtifact || c.isEnchantment : /target artifact/.test(o) ? c.isArtifact : /target enchantment/.test(o) ? c.isEnchantment : true; })()) : true : true;
+      this.say(`casts ${card.name}${zone === 'gy' ? ' (' + (obj_gc ? obj_gc.kind : 'graveyard') + ')' : ''}${target && modeOk ? ' → ' + this.targetName(target) : ''}`, p); }
     await this.emit({ type: 'cast', p, card, target, obj, depth: this.stack.length - 1 });
     await this.castTriggers(p, card);
     return obj;
@@ -3373,6 +3374,12 @@ class Game {
     return p.ai ? p.ai.chooseX(this, p, card, max) : max;
   }
   /** a target for one mode of a modal spell, picked as it resolves */
+  /** is there anything this removal mode could legally hit right now? (mirrors modeTarget's type pick) */
+  modeHasTarget(p, sub) {
+    if (!sub.roles.includes('removal')) return true; const o = sub.oracle.toLowerCase();
+    const ok = /target (creature or planeswalker|creature)/.test(o) ? (b => b.card.isCreature || (/planeswalker/.test(o) && b.card.isPlaneswalker)) : /target artifact or enchantment/.test(o) ? (b => b.card.isArtifact || b.card.isEnchantment) : /target artifact/.test(o) ? (b => b.card.isArtifact) : /target enchantment/.test(o) ? (b => b.card.isEnchantment) : /target (nonland )?permanent/.test(o) ? (b => !b.card.isLand) : (b => b.card.isCreature);
+    return this.opponentsOf(p).some(q => q.battlefield.some(b => ok(b) && this.targetOk(sub, b, p)));
+  }
   async modeTarget(p, sub, given) {
     const o = sub.oracle.toLowerCase();
     if (sub.roles.includes('counter')) { if (given && given.spell && counterHits(sub, given.spell.card)) return given; const s = [...this.stack].reverse().find(x => x.caster !== p && counterHits(sub, x.card)); return s ? { spell: s } : null; }
@@ -4408,7 +4415,7 @@ class Game {
         case 'draw': await this.draw(p, op.n); break;
         case 'gain': await this.changeLife(p, op.n, src); break;
         case 'lose': await this.changeLife(p, -op.n, src); break;
-        case 'drain': { const vs = op.each ? this.opponentsOf(p) : [await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: which player loses ${op.n} life?`)]; let lost = 0; for (const q of vs.filter(Boolean)) { const l0 = q.life; await this.changeLife(q, -op.n, src); lost += Math.max(0, l0 - q.life); } if (op.gainLost && lost) await this.changeLife(p, lost, src); break; }
+        case 'drain': { const vs = op.each ? this.opponentsOf(p) : [await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: which player loses ${op.n} life?`)]; let lost = 0; this.say(`— ${src.name}: ${op.each ? 'each opponent loses' : (vs[0] ? vs[0].name + ' loses' : 'loses')} ${op.n}${op.gainLost ? ' (you gain that much)' : ''}`, p); for (const q of vs.filter(Boolean)) { const l0 = q.life; await this.changeLife(q, -op.n, src); lost += Math.max(0, l0 - q.life); } if (op.gainLost && lost) await this.changeLife(p, lost, src); break; }
         case 'damage': {
           if (op.to === 'each opponent') { for (const q of this.opponentsOf(p)) { if (this.protFromPlayer(q, p)) continue; this.say(`— ${src.name} deals ${this.dmgAmt(p, op.n, { red: (src.colors || []).includes('R') })} damage to ${q.name}`, p); await this.damagePlayer(q, this.dmgAmt(p, op.n, { red: (src.colors || []).includes('R') }), src, { by: p }); } await this.pirateDamage(p, src, this.opponentsOf(p)); break; }
           if (op.to === 'each creature') { for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && this.toughOf(q, b) <= op.n * (this.b5_stag(q) ? 2 : 1) && b.protTurn !== this.turn && !this.noncombatPrevented(q, b))) await this.destroy(q, b); break; }
@@ -7299,7 +7306,7 @@ class AI {
   chooseGift(game, me, card, target) { if (/indestructible/.test(card.oracle.toLowerCase())) return game.stack.some(o => o.caster !== me && o.card.roles.includes('wipe')); if (/nonland permanent/.test(card.oracle.toLowerCase())) return !!(target && target.card && !target.card.isCreature); return false; }
   /** modal spells: the best-valued modes */
   chooseModes(game, me, card, subs, min, max) {
-    const sc = subs.map(s => ({ s, v: this.castValueRaw(game, me, s) + (s.roles.includes('removal') && !game.opponentsOf(me).some(q => q.battlefield.some(b => !b.card.isLand)) ? -20 : 0) + (s.roles.includes('counter') && !game.stack.some(o => o.caster !== me) ? -20 : 0) })).sort((a, b) => b.v - a.v);
+    const sc = subs.map(s => ({ s, v: this.castValueRaw(game, me, s) + (s.roles.includes('removal') && !game.modeHasTarget(me, s) ? -20 : 0) + (s.roles.includes('counter') && !game.stack.some(o => o.caster !== me) ? -20 : 0) })).sort((a, b) => b.v - a.v);
     const out = sc.filter((x, i) => i < min || x.v > 0).slice(0, max).map(x => x.s);
     return out.length >= min ? out : sc.slice(0, min).map(x => x.s);
   }

@@ -274,12 +274,13 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 .hsel b{font-size:.9rem}
 @media (hover:none){.hcd:hover{transform:none;z-index:auto}.hcd.sel{transform:translateY(-12px) scale(1.06);z-index:5}.prm .opt:hover{transform:none}.czc:hover{transform:none}}
 @media (max-width:700px){
-  .gt{--tile-o:36px;--tile-m:50px;--tile-l:30px;--hand:76px;gap:8px;touch-action:manipulation}
+  .gt{--tile-o:36px;--tile-m:50px;--tile-l:30px;--hand:66px;gap:8px;touch-action:manipulation}
   .gt-bar{padding:6px 8px;gap:6px}
   .gt-bar .ph{min-width:0;flex:1;font-size:.76rem}
   .steps{order:5;flex-basis:100%;justify-content:space-between}
   .steps span{padding:2px 5px;font-size:.6rem;flex:1;text-align:center}
   .gt-bar .chip{padding:4px 10px;min-height:32px;font-size:.8rem}
+  .gt-bar .zm,.gt-bar [data-act=export-log]{display:none}
   .gt-opps{grid-template-columns:minmax(0,1fr);gap:6px}
   .gs{padding:6px;gap:4px;border-radius:8px}
   .gs-h{grid-template-columns:30px minmax(0,1fr) auto;gap:6px}
@@ -297,7 +298,9 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
   .olab{font-size:.5rem}
   .sgrid{grid-template-columns:repeat(auto-fill,minmax(60px,1fr));max-height:36vh}
   .sfind{width:100%}
-  .gt-ctl{gap:6px}.gt-ctl .msg{font-size:.76rem;flex-basis:100%}.gt-ctl .msg.hint{display:none}
+  .gt-ctl{gap:6px}.gt-ctl .msg{font-size:.72rem;flex-basis:100%}.gt-ctl .msg.hint{display:none}
+  .gt-ctl.abil-row{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px;-webkit-overflow-scrolling:touch}.gt-ctl.abil-row::-webkit-scrollbar{display:none}.gt-ctl.abil-row .chip{flex:none;min-height:30px;padding:3px 9px;font-size:.72rem;white-space:nowrap}
+  .gt-dock{max-height:52vh}
   .gt-ctl .chip{min-height:36px}
   .gt-hand{min-height:calc(var(--hand)*1.25);padding:12px 2px 0}
   .hcd{margin-left:-8px}
@@ -834,6 +837,7 @@ class Table {
     const g = this.game, me = this.me, P = this.prompt;
     if (a === 'goseat') { const el = this.board.querySelector(`.gt-opps .gs[data-seat="${btn.dataset.seat}"]`); if (el) { this.oppsCollapsed = false; this.board.querySelector('.gt-opps-wrap').classList.remove('collapsed'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' }); } return; }
     if (a === 'collapse-opps') { this.oppsCollapsed = !this.oppsCollapsed; this.render(); return; }
+    if (a === 'cast-cmd' && this.myTurn && !this.busy && !P) { const card = me.command.find(c => c.uid === +btn.dataset.cmd); if (card && g.castMode(me, card, 'cmd')) this.startCast(card, 'cmd'); return; }
     if (a === 'zoom-in') { this.stepZoom(1); return; }
     if (a === 'zoom-out') { this.stepZoom(-1); return; }
     if (a === 'settings') { this.showSettings = true; this.render(); return; }
@@ -1047,8 +1051,9 @@ class Table {
       const canAtk = combatPhase && me.battlefield.some(b => g.canAttackWith(me, b));
       const fetchHint = me.battlefield.some(b => b.card.fetch && g.canActivate(me, b)) ? (this.touch ? ' · tap a glowing fetchland to crack it' : ' · click a glowing fetchland to crack it') : '';
       this.mainOpts = this.busy ? [] : [...g.gyCastOptions(me), ...g.abilityOptions(me)];
-      const abil = this.mainOpts.length ? `<div class="gt-ctl abil-row"><span class="msg">Abilities:</span>${this.mainOpts.map((o, i) => `<button class="chip abil" data-act="abil" data-i="${i}" data-uid="${o.card.uid}">${esc(short(o.card.name))} · ${esc(this.optLabel(o))}${o.card.abilities && o.ab && o.ab.zone !== 'battlefield' ? ` <small>(${o.ab.zone})</small>` : o.zone === 'gy' ? ' <small>(graveyard)</small>' : ''}</button>`).join('')}</div>` : '';
-      ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana open${this.poolHtml() ? ' · ' + this.poolHtml() : ''} · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint} · <span class="note">tap a land to float mana</span></span>${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u ? `<button class="chip" data-act="undo" ${this.busy || u.why ? 'disabled' : ''} title="${esc(u.why ? "Can't undo: " + u.why : 'Undo: ' + u.label + ' (Z)')}">↶ Undo</button>` : ''; })()}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u && u.why ? `<div class="note" style="margin-top:4px">Can't undo ${esc(u.label)}: ${esc(u.why)}.</div>` : ''; })()}`; }
+      const abil = this.mainOpts.length ? `<div class="gt-ctl abil-row">${this.mobile ? '' : '<span class="msg">Abilities:</span>'}${this.mainOpts.map((o, i) => `<button class="chip abil" data-act="abil" data-i="${i}" data-uid="${o.card.uid}">${esc(short(o.card.name))} · ${esc(this.optLabel(o))}${o.card.abilities && o.ab && o.ab.zone !== 'battlefield' ? ` <small>(${o.ab.zone})</small>` : o.zone === 'gy' ? ' <small>(graveyard)</small>' : ''}</button>`).join('')}</div>` : '';
+      const cmdChips = me.command.filter(c => g.castMode(me, c, 'cmd')).map(c => `<button class="chip pri" data-act="cast-cmd" data-cmd="${c.uid}" ${this.busy ? 'disabled' : ''} title="cast your commander from the command zone${me.cmdTax ? ' (tax ' + me.cmdTax + ')' : ''}">Cast ${esc(short(c.name).split(',')[0].slice(0, 14))}${me.cmdTax ? ' +' + me.cmdTax : ''}</button>`).join('');
+      ctl = abil + `<div class="gt-ctl"><span class="msg">${g.availableMana(me)} mana${this.mobile ? '' : ' open'}${this.poolHtml() ? ' · ' + this.poolHtml() : ''} · land drop ${me.landsThisTurn ? 'used' : 'available'}${fetchHint}${this.mobile ? '' : ' · <span class="note">tap a land to float mana</span>'}</span>${cmdChips}${combatPhase ? `<button class="chip" data-act="attack" ${canAtk && !this.busy ? '' : 'disabled'}>Attack</button>` : ''}${this.turnPhase === 'main1' ? `<button class="chip" data-act="to-main2" ${this.busy ? 'disabled' : ''} title="Skip combat but keep playing">Skip combat</button>` : ''}${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u ? `<button class="chip" data-act="undo" ${this.busy || u.why ? 'disabled' : ''} title="${esc(u.why ? "Can't undo: " + u.why : 'Undo: ' + u.label + ' (Z)')}">↶ Undo</button>` : ''; })()}<button class="chip pri" data-act="end" ${this.busy ? 'disabled' : ''}>End turn</button></div>${(() => { const u = (this.undoStack || [])[this.undoStack.length - 1]; return u && u.why ? `<div class="note" style="margin-top:4px">Can't undo ${esc(u.label)}: ${esc(u.why)}.</div>` : ''; })()}`; }
     // hand
     let handBar = '';
     if (me) {
@@ -1082,7 +1087,7 @@ class Table {
       <label>Priority stops <select id="st-stop"><option value="smart" ${this.s.stops === 'smart' ? 'selected' : ''}>Smart</option><option value="all" ${this.s.stops === 'all' ? 'selected' : ''}>Full control</option><option value="minimal" ${this.s.stops === 'minimal' ? 'selected' : ''}>Minimal</option></select></label>
       <p class="note" style="margin:0">Smart stops at opponents' end steps, combats you're in, and the end step before your turn (for fetchlands). Full control stops at every step where you have a legal play. Minimal only stops for counterspells, attacks and blocks. Steps where you have nothing legal are always skipped.</p>
       <p class="note" style="margin:0">Sounds and music are generated in your browser with the Web Audio API — nothing is downloaded and nothing needs a licence. Music is procedural: a key and progression are picked each game.</p>
-      <div class="gt-ctl" style="justify-content:flex-end"><button class="chip pri" data-act="close-settings">Done</button></div></div></div>` : '';
+      <div class="gt-ctl" style="justify-content:space-between"><button class="chip" data-act="export-log">Export log</button><button class="chip pri" data-act="close-settings">Done</button></div></div></div>` : '';
     this.board.innerHTML = `
       <div class="gt-bar"><span class="ph">Round <b>${g.round}</b> · <b>${esc(short(active.name))}</b></span><span class="steps">${[['upkeep', 'Upkeep'], ['draw', 'Draw'], ['main1', 'Main'], ['combat', 'Combat'], ['main2', 'Main 2'], ['end', 'End']].map(([k, l]) => `<span class="${(g.phase === k || (k === 'combat' && g.phase === 'combat')) ? 'on' : ''}">${l}</span>`).join('')}</span>
         <button class="chip" data-act="ff" aria-pressed="${this.ff}" title="Skip animations until your next decision">${this.mobile ? (this.ff ? 'Skipping…' : 'Skip ▸▸') : this.ff ? 'Fast-forwarding' : 'Fast-forward'}</button>

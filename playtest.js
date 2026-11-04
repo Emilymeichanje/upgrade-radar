@@ -1337,7 +1337,7 @@ function tagAbilities(card) {
     if ((m = l.match(/^(?:(flying|trample|haste|vigilance|reach|menace), )?firebending (\d+|x)(?:, where x is this card's power)?\.?$/))) { if (m[1]) { card.kw = [...new Set([...(card.kw || []), m[1]])]; } TR('attack', [{ op: 'firebend', n: m[2] === 'x' ? { $: 'power', of: 'self' } : +m[2] }], { who: 'this card' }); continue; }
     if (/^when this card enters, look at the top five cards of your library\. you may put a creature card with mana value 4 or less from among them onto the battlefield\. put the rest on the bottom of your library in a random order/.test(l)) { ETB([{ op: 'digToBf', n: 5, filter: 'creature', maxMV: 4, bottom: true }]); continue; }
     if (/^\{8\}: transform this card\.?$/.test(l)) { AB('{8}', [{ op: 'transform' }]); continue; }
-    if (/^when this card enters, exile up to one other target nonland permanent until this card leaves the battlefield/.test(l)) { ETB([{ op: 'oring' }]); continue; }
+    if (/^when this card enters, exile up to one other target nonland permanent until this card leaves the battlefield/.test(l)) { ETB([{ op: 'oring1' }]); continue; }
     if (/^\{3\}: sacrifice this card\. if you do, scry 2/.test(l)) { AB('{3}', [{ op: 'scry', n: 2 }], { sacSelf: true }); continue; }
     if (/^whenever a creature you control enters, put a quest counter on this card/.test(l)) { card.triggers.push({ when: 'creatureEnters', zone: 'battlefield', yours: true, filter: '', ops: [{ op: 'questSelf' }] }); continue; }
     if (/^choose up to one target creature, then airbend all other creatures/.test(l)) { card.spellOpsX = [{ op: 'airbendAll' }]; continue; }
@@ -4714,6 +4714,10 @@ class Game {
         case 'indestructibleCounter': { const t = await this.pickPerm(p, src, p.battlefield.filter(b => b.godType || /\bGod\b/.test(b.card.type))); if (t) { t.indestructibleCounter = true; this.say(`— indestructible counter on ${t.card.name}`, p); } break; }
         case 'tezzEmblem': p.tezzEmblem = true; this.say('— gets Tezzeret\'s emblem', p); break;
         case 'crackle': { const x = this.xFor(ctx); for (let k = 0; k < x; k++) { const t = p.ai ? p.ai.pickFace(this, p) : await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: ${5 * x} damage to which player?`); if (t) { this.say(`— ${5 * x} damage to ${t.name}`, p); await this.changeLife(t, -this.dmgAmt(p, 5 * x, { red: true }), src); } } break; }
+        case 'oring1': { const pm = ctx.perm; const pool = this.alive().flatMap(q => q.battlefield.filter(b => !b.card.isLand && b !== pm && (q !== p || true))).filter(b => this.targetOk(src, b, p)); if (!pool.length) break;
+          let t = null; if (p.ai) { const opp = pool.filter(b => this.ownerOf(b) !== p); t = [...opp].sort((a, b) => p.ai.permValue(b, this.ownerOf(b), this, p) - p.ai.permValue(a, this.ownerOf(a), this, p))[0] || null; } else t = await this.pickPerm(p, src, pool, { harmful: true, dest: 'exile' });
+          if (!t) break; const q = this.ownerOf(t); q.battlefield.splice(q.battlefield.indexOf(t), 1); await this.emit({ type: 'destroy', owner: q, perm: t, quiet: true }); const c = t.card.orig || t.card;
+          if (!t.card.token) { if ((await this.toZone(q, c, 'exile')) === 'exile' && pm) (pm.oring = pm.oring || []).push({ card: c, owner: q }); } this.say(`— exiles ${t.card.name} until ${src.name} leaves`, p); await this.leftBattlefield(q, t); await this.exiledFromBf(q, t); break; }
         case 'oring': { const pm = ctx.perm; for (const q of this.opponentsOf(p)) { const t = q.ai || p.ai ? (p.ai ? [...q.battlefield.filter(b => !b.card.isLand)].sort((a, b) => p.ai.permValue(b, q, this, p) - p.ai.permValue(a, q, this, p))[0] : null) : await this.pickPerm(p, src, q.battlefield.filter(b => !b.card.isLand), { harmful: true }); const tt = t || (p.human ? await this.pickPerm(p, src, q.battlefield.filter(b => !b.card.isLand), { harmful: true }) : null); if (!tt) continue; q.battlefield.splice(q.battlefield.indexOf(tt), 1); await this.emit({ type: 'destroy', owner: q, perm: tt, quiet: true }); const c = tt.card.orig || tt.card; if (tt.card.token) continue; if ((await this.toZone(q, c, 'exile')) !== 'exile') continue; if (pm) (pm.oring = pm.oring || []).push({ card: c, owner: q }); this.say(`— exiles ${c.name} until ${src.name} leaves`, p); await this.leftBattlefield(q, tt); } break; }
         case 'powerAll': p.powerEOT = (p.powerTurn === this.turn ? p.powerEOT || 0 : 0) + op.n; p.powerTurn = this.turn; if (op.kw) p.kwEOT = new Set([...(p.kwEOT || []), op.kw]); this.refreshStatics(); this.say(`— creatures get +${op.n}/+0${op.kw ? ' and ' + op.kw : ''} this turn`, p); break;
         case 'pumpTypes': { const t = p.battlefield.filter(b => b.card.isCreature && op.types.some(ty => matchesFilter(b.card, ty))); for (const b of t) { if (op.kws) { (b.kwTurn === this.turn ? b.kwT : (b.kwT = [])).push(...op.kws); b.kwTurn = this.turn; } b.tempPump = (b.tempTurn === this.turn ? b.tempPump || 0 : 0) + op.n; b.tempTurn = this.turn; if (op.tough === 0) this.toughAdj(b, -op.n); if (op.untap) b.tapped = false; } this.say(`— ${t.length} creature${t.length === 1 ? '' : 's'} get +${op.n}`, p); break; }
@@ -5719,7 +5723,7 @@ class Game {
     let abCost = this.abilityCost(q, card, ab, perm);
     if (ab.label === 'equip' && q.battlefield.some(b => b.card.statics && b.card.statics.firstEquipFree && !b.neutral)) q.equipFreeTurn = this.turn;
     if (ab.xx) { let max = 0; while (max < 10 && this.canPayCost(q, this.addCosts(abCost, { generic: 2 * (max + 1), pips: {} }))) max++; let x = q.human ? (this.hooks.humanNumber ? Math.min(max, +(await this.hooks.humanNumber({ p: q, card, min: 0, max, question: 'choose X (pays {X}{X})' })) || 0) : max) : (q.ai.blastX ? Math.min(max, q.ai.blastX(this, q, perm)) : 0); opt.x = x; abCost = this.addCosts(abCost, { generic: 2 * x, pips: {} }); }
-    if (ab.cost.x) { const wbLeft = ab.waterbend ? this.wbHelpers(q, perm, ab).length - (abCost.wbHelp || 0) : 0; let max = 0; while (max < 20 && this.canPayCost(q, this.addCosts(abCost, { generic: Math.max(0, max + 1 - wbLeft), pips: {} }))) max++; const x = q.human ? (this.hooks.humanNumber ? Math.min(max, +(await this.hooks.humanNumber({ p: q, card, min: 0, max, question: ab.waterbend ? 'choose X (artifacts and creatures you tap help pay)' : 'choose X' })) || 0) : max) : max; opt.x = x; const help = (abCost.wbHelp || 0) + Math.min(x, wbLeft); abCost = this.addCosts(abCost, { generic: Math.max(0, x - wbLeft), pips: {} }); abCost.wbHelp = help; }
+    if (ab.cost.x) { const wbLeft = ab.waterbend ? this.wbHelpers(q, perm, ab).length - (abCost.wbHelp || 0) : 0; let max = 0; while (max < 20 && this.canPayCost(q, this.addCosts(abCost, { generic: Math.max(0, max + 1 - wbLeft), pips: {} }))) max++; let x = max; if (q.human) { if (this.hooks.humanNumber) { const r = await this.hooks.humanNumber({ p: q, card, min: 0, max, question: ab.waterbend ? 'choose X (artifacts and creatures you tap help pay)' : 'choose X', cancel: true }); if (r == null) { if (ab.tap && perm) perm.tapped = false; if (ab.oncePerTurn && perm) perm.abTurn = null; return false; } x = Math.min(max, +r || 0); } } opt.x = x; const help = (abCost.wbHelp || 0) + Math.min(x, wbLeft); abCost = this.addCosts(abCost, { generic: Math.max(0, x - wbLeft), pips: {} }); abCost.wbHelp = help; }
     const wbHelp = abCost.wbHelp || 0;
     if (!this.payCost(q, abCost)) { if (ab.tap && perm) perm.tapped = false; if (ab.oncePerTurn && perm) perm.abTurn = null; this.say(`— can't pay for ${card.name}'s ability`, q); return false; }
     if (ab.waterbend) { this.tapHelpers(q, wbHelp, perm, ab); await this.bent(q, 'water'); }
@@ -6614,11 +6618,42 @@ class Game {
       else if (/if this card is in your opening hand and you're not the starting player, you may begin the game with/.test(o) && p !== this.players[this.active] && p.hand.length > 1) { p.hand.splice(p.hand.indexOf(c), 1); const [pm] = await this.landEnters(p, c); pm.luck = true; const ex = p.ai ? p.ai.chooseDiscard(this, p) : p.hand.filter(x => !x.isLand).sort((a, b) => b.cmc - a.cmc)[0] || p.hand[0]; if (ex) { p.hand.splice(p.hand.indexOf(ex), 1); p.exile.push(ex); } this.say(`begins the game with ${c.name} on the battlefield${ex ? ' (exiles ' + ex.name + ')' : ''}`, p); }
     }
   }
+  /** whole game state as JSON-safe data (shared references, Maps, Sets and AI players preserved); hooks and rng are not included */
+  serializeState() {
+    const ids = new Map(), nodes = []; const skipRoot = new Set(['hooks', 'rng']);
+    const enc = (o, root = false) => {
+      if (o === null || typeof o !== 'object') return typeof o === 'function' || o === undefined ? null : o;
+      if (ids.has(o)) return { $r: ids.get(o) };
+      const id = nodes.length; ids.set(o, id); nodes.push(null);
+      let n;
+      if (Array.isArray(o)) n = { $a: o.map(v => enc(v)) };
+      else if (o instanceof Map) n = { $m: [...o].map(([k, v]) => [enc(k), enc(v)]) };
+      else if (o instanceof Set) n = { $s: [...o].map(v => enc(v)) };
+      else { const d = {}; for (const k of Object.keys(o)) { if (root && skipRoot.has(k)) continue; const v = o[k]; if (v === undefined || typeof v === 'function') continue; d[k] = enc(v); } n = o instanceof AI ? { $ai: o.expert ? 'expert' : o.level, d } : { $o: d }; }
+      nodes[id] = n; return { $r: id };
+    };
+    enc(this, true); return { v: 1, nodes };
+  }
+  /** rebuild a Game from serializeState() output; the caller supplies fresh hooks */
+  static fromSaved(data, { hooks = {}, seed } = {}) {
+    const made = new Array(data.nodes.length);
+    const dec = i => {
+      if (made[i] !== undefined) return made[i]; const n = data.nodes[i];
+      if (n.$a) { const a = []; made[i] = a; for (const v of n.$a) a.push(val(v)); return a; }
+      if (n.$m) { const m = new Map(); made[i] = m; for (const [k, v] of n.$m) m.set(val(k), val(v)); return m; }
+      if (n.$s) { const st = new Set(); made[i] = st; for (const v of n.$s) st.add(val(v)); return st; }
+      const o = i === 0 ? Object.create(Game.prototype) : n.$ai ? new AI(n.$ai) : {}; made[i] = o; const d = n.$ai ? n.d : n.$o; for (const k of Object.keys(d)) if (!(n.$ai && k === 'rng')) o[k] = val(d[k]); return o;
+    };
+    const val = v => (v && typeof v === 'object' && '$r' in v) ? dec(v.$r) : v;
+    const g = dec(0); g.hooks = hooks; g.rng = mulberry(seed || (Date.now() & 0xffffffff)); for (const p of g.players) if (p.ai) p.ai.rng = g.rng; g.pregameDone = true;
+    return g;
+  }
   async run() {
     let safety = 0;
     if (!this.pregameDone) { this.pregameDone = true; await this.pregame(); }
     while (!this.winner && safety++ < 600) {
       const p = this.players[this.active];
+      if (this.hooks.save) { try { this.hooks.save(this); } catch (e) {} }
       if (!p.dead) { await this.takeTurn(p); if (!p.dead && !this.winner) await this.cleanup(p); }
       if (this.alive().length <= 1) { if (!this.winner && this.alive().length) { this.winner = this.alive()[0]; await this.emit({ type: 'win', p: this.winner }); } break; }
       if (!p.dead && (p.extraTurns || 0) > 0) { p.extraTurns--; this.say('takes an extra turn', p); continue; }
@@ -7199,6 +7234,7 @@ class AI {
       case 'b8_counterNC': v += 3; break;
       // ---- end b8 (ai)
       // ==== fixes b9 (ai) ====
+      case 'oring1': { const t = this.bestTarget(game, me, b => !b.card.isLand); v += t ? Math.min(9, t.value * 0.7) : 0; break; }
       case 'b9_eowyn': v += 5; break;
       case 'b9_ashMana': v += 2; break;
       case 'b9_drawDmg': v += 2; break;

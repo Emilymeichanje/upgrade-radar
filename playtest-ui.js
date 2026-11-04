@@ -400,9 +400,13 @@ class Table {
     TOKART.onFound = (k, url) => { if (!this.game) return; let n = 0; for (const p of this.game.players) for (const b of p.battlefield) { const c = b.card; if (c.token && !c.img && tokKey(c) === k) { c.img = url; n++; } } if (n) this.render(); };
     this.wire();
     const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c), humanModes: c => this.ask('modes', { ...c, sel: [] }), humanPayOpt: c => this.ask('payopt', c), humanNumber: c => this.ask('num', c) };
+    hooks.save = g => this.saveGame(g);
+    if (this.opts.saved) { this.game = G.Game.fromSaved(this.opts.saved.state, { hooks }); this.buildCardIndex(); this.me = this.game.players.find(p => p.human) || null; this.logLines = []; for (const l of this.game.log.slice(-200)) this.addLog(l.m); this.game.say(`— game resumed (turn ${this.game.turn})`); this.render(); this.guardBack();
+      try { await this.game.run(); } catch (e) { if (e.message !== 'abort') { console.error(e); this.addLog('Engine error: ' + e.message); } return; }
+      this.endScreen(); return; }
     this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
     this.buildCardIndex();
-    this.me = this.game.players.find(p => p.human) || null;
+    this.me = this.game.players.find(p => p.human) || null; this.guardBack();
     for (const p of this.game.players) { const g = this.game; const all = [...p.library, ...p.hand]; const L = all.filter(c => c.isLand).length; g.say(`— deck: ${all.length + p.command.length} cards, ${L} lands${L < 30 ? ' ⚠ low land count — check the saved list for names that did not resolve' : ''}`, p); }
     for (const p of this.game.players) if (p.ai) { let t = 0; const lands = () => p.hand.filter(c => c.isLand).length; while ((!p.ai.keep(p.hand, t) || (lands() === 0 && t < 5)) && t < 5) { this.game.mulligan(p); t++; } if (t) this.game.bottomCards(p, p.ai.bottomChoice(p.hand, t)); this.game.say(`— keeps ${p.hand.length} (${lands()} land${lands() === 1 ? '' : 's'}${t ? ', after ' + t + ' mulligan' + (t > 1 ? 's' : '') : ''})`, p); }
     if (this.me) await this.mulligan();
@@ -831,7 +835,7 @@ class Table {
     if (a === 'settings') { this.showSettings = true; this.render(); return; }
     if (a === 'close-settings') { this.showSettings = false; saveSettings(this.s); this.render(); return; }
     if (a === 'ff') { this.ff = !this.ff; this.render(); return; }
-    if (a === 'leave') { this.aborted = true; this.sfx.musicStop(); if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
+    if (a === 'leave') { this.aborted = true; this.sfx.musicStop(); this.clearSave(); window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); if (location.hash === '#playtest/game') history.replaceState(null, '', '#playtest'); if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
     if (a === 'cancel') { this.mode = null; this.render(); return; }
     if (a === 'tap-col' && this.mode && this.mode.kind === 'mana') { this.doTap(this.mode.perm, btn.dataset.c); return; }
     if (a === 'abil-pick' && this.mode && this.mode.kind === 'abil') { const m = this.mode; this.mode = null; const o = m.opts[+btn.dataset.i]; if (o) m.run(o); return; }
@@ -855,6 +859,7 @@ class Table {
     if (P && P.kind === 'payopt' && a === 'pay-alt') { P.res(P.alts[+btn.dataset.i]); return; }
     if (P && P.kind === 'payopt' && a === 'pay-cancel') { P.res(undefined); return; }
     if (P && P.kind === 'num' && a === 'num-pick') { P.res(+btn.dataset.n); return; }
+    if (P && P.kind === 'num' && a === 'num-cancel') { P.res(null); return; }
     if (P && P.kind === 'modes' && a === 'mode-tog') { const m = P.modes[+btn.dataset.i]; if (!m) return; const i = P.sel.indexOf(m.card); if (i >= 0) P.sel.splice(i, 1); else if (P.sel.length < P.max) P.sel.push(m.card); else if (P.max === 1) P.sel = [m.card]; this.render(); return; }
     if (P && P.kind === 'modes' && a === 'modes-go') { if (P.sel.length >= P.min) P.res(P.sel.slice()); return; }
     if (a === 'xcast' && this.myTurn && !this.busy && !P) { const z = btn.dataset.zone, c = this.findCard(+btn.dataset.uid) || (z === 'top' ? me.library[me.library.length - 1] : null); if (!c) return; if (c.isLand) return this.act(() => g.playLand(me, c)); if (g.castMode(me, c, z)) this.startCast(c, z); return; }
@@ -873,9 +878,9 @@ class Table {
     if (a === 'mull-yes' && P && P.kind === 'mull' && P.confirm) { P.confirm = false; g.mulligan(me); P.n++; this.render(); return; }
     if (a === 'bottom-back' && P && P.kind === 'mull-bottom') { this.prompt = P.from; this.render(); return; }
     if (a === 'bottom-go' && P && P.kind === 'mull-bottom' && P.sel.length === P.n) { g.bottomCards(me, P.sel); const done = P.done; this.prompt = null; done(); return; }
-    if (a === 'rematch') { this.sfx.musicStop(); this.opts.onRematch && this.opts.onRematch(); return; }
+    if (a === 'rematch') { this.sfx.musicStop(); this.clearSave(); window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); this.opts.onRematch && this.opts.onRematch(); return; }
     if (a === 'export-log') { this.exportLog(); return; }
-    if (a === 'setup') { this.sfx.musicStop(); this.opts.onExit && this.opts.onExit(); return; }
+    if (a === 'setup') { this.sfx.musicStop(); this.clearSave(); window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); if (location.hash === '#playtest/game') history.replaceState(null, '', '#playtest'); this.opts.onExit && this.opts.onExit(); return; }
   }
   // ---------- rendering ----------
   tile(b, owner, opts = {}) {
@@ -1007,7 +1012,7 @@ class Table {
         prm = `<div class="prm"><h4>${esc(P.card.name)}: pay ${P.life} life so it enters untapped? (you're at ${me.life})</h4>${en.length ? `<div class="opts">${thumbs}</div>` : ''}<div class="gt-ctl"><button class="chip ${en.length ? 'pri' : ''}" data-act="etb-pay">Pay ${P.life} life</button><button class="chip ${en.length ? '' : 'pri'}" data-act="etb-tap">Enter tapped</button><span class="msg">${en.length ? `Untapped, it lets you cast ${en.map(c => esc(c.name)).join(', ')} this turn.` : `The extra mana doesn't make anything castable ${this.game.players[this.game.active] === me ? 'this turn' : 'right now'}; it untaps on your turn anyway.`}</span></div></div>`; }
       else if (P.kind === 'unless' && P.tax) prm = `<div class="prm"><h4>${esc(P.why)}</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Don't pay</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
       else if (P.kind === 'payopt') { const nm = { evoke: 'Evoke', dash: 'Dash', bestow: 'Bestow', life: 'Pay life instead', cheap: 'Alternative cost', sacCreature: 'Sacrifice a creature instead', pitch: 'Exile a card instead', faceDown: P.card.morph && P.card.morph.kind === 'disguise' ? 'Cast face down (disguise, ward 2)' : 'Cast face down as a 2/2', blitz: 'Blitz', adventure: P.card.adventure ? (P.card.adventure.kind === 'omen' ? 'Omen: ' : 'Adventure: ') + P.card.adventure.spell.name : 'Adventure', webSling: 'Web-slinging (return a tapped creature)', freerun: 'Freerunning', mutate: 'Mutate', awaken: 'Awaken', warp: 'Warp' }; prm = `<div class="prm"><h4>${esc(P.card.name)}: how do you want to pay?</h4><div class="gt-ctl">${P.normal ? `<button class="chip pri" data-act="pay-normal">Normal cost ${esc(P.card.manaCost || '')}</button>` : ''}${P.alts.map((a, i) => `<button class="chip" data-act="pay-alt" data-i="${i}">${a.kind === 'phy' ? 'Pay ' + a.life + ' life for ' + a.phyPaid.map(c => '{' + c + '/P}').join('') + (a.cost.total ? ' + {' + a.cost.total + '} mana' : '') : esc(nm[a.kind] || a.kind) + (a.cost && a.cost.total ? ' {' + a.cost.total + '}' : '') + (a.life ? ' (' + a.life + ' life)' : '')}</button>`).join('')}<button class="chip" data-act="pay-cancel">Cancel</button></div></div>`; }
-      else if (P.kind === 'num') prm = `<div class="prm"><h4>${esc(P.card.name)}: ${esc(P.question)}</h4><div class="gt-ctl">${Array.from({ length: P.max - P.min + 1 }, (_, i) => P.min + i).map(n => `<button class="chip ${n === P.max ? 'pri' : ''}" data-act="num-pick" data-n="${n}">${n}</button>`).join('')}</div></div>`;
+      else if (P.kind === 'num') prm = `<div class="prm"><h4>${esc(P.card.name)}: ${esc(P.question)}</h4><div class="gt-ctl">${Array.from({ length: P.max - P.min + 1 }, (_, i) => P.min + i).map(n => `<button class="chip ${n === P.max ? 'pri' : ''}" data-act="num-pick" data-n="${n}">${n}</button>`).join('')}${P.cancel ? '<button class="chip" data-act="num-cancel">Cancel</button>' : ''}</div></div>`;
       else if (P.kind === 'modes') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.min === P.max ? P.max : P.min + '–' + P.max} mode${P.max > 1 ? 's' : ''}${P.modes.some(m => m.cost) ? ' (each adds its cost)' : ''}</h4><div class="opts">${P.modes.map((m, i) => `<button class="chip ${P.sel.includes(m.card) ? 'pri' : ''}" data-act="mode-tog" data-i="${i}" style="text-align:left;white-space:normal">${P.sel.includes(m.card) ? '✓ ' : ''}${m.cost && m.cost.total ? '{' + m.cost.total + '} ' : ''}${esc(m.text.charAt(0).toUpperCase() + m.text.slice(1))}</button>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="modes-go" ${P.sel.length >= P.min ? '' : 'disabled'}>Done (${P.sel.length}/${P.max})</button></div></div>`;
       else if (P.kind === 'unless') prm = `<div class="prm"><h4>${esc(P.counter.name)} will counter your ${esc(P.spell.card.name)} unless you pay {${P.n}}.</h4><div class="gt-ctl"><button class="chip pri" data-act="unless-pay">Pay {${P.n}}</button><button class="chip" data-act="unless-no">Let it be countered</button><span class="msg">${g.availableMana(me)} mana open.</span></div></div>`;
       else if (P.kind === 'alt') prm = `<div class="prm"><h4>Cast ${esc(P.card.name)}: ${P.canMana ? 'pay its mana cost, or ' : ''}exile a blue card from your hand and pay 1 life (click the card to exile)</h4><div class="opts">${opts}</div><div class="gt-ctl">${P.canMana ? `<button class="chip pri" data-act="alt-mana">Pay mana</button>` : ''}<button class="chip" data-act="alt-cancel">Cancel</button></div></div>`;
@@ -1093,8 +1098,19 @@ class Table {
       { const z = this.board.querySelector('#st-zoom'); z.oninput = () => { this.s.zoom = Number(z.value); this.applyZoom(); const v = this.board.querySelector('#st-zoom-v'); if (v) v.textContent = Math.round(this.s.zoom * 100) + '%'; }; z.onchange = () => saveSettings(this.s); }
     }
   }
-  endScreen() { this.ended = true; this.myTurn = false; this.render(); }
+  endScreen() { this.ended = true; this.myTurn = false; this.render(); this.clearSave(); window.removeEventListener('beforeunload', this.onUnload); }
+  // ---------- saved game (resume after an accidental exit) ----------
+  saveGame(g) { if (!g || g.winner || !g.players.some(p => p.human)) return; try { localStorage.setItem('pt-save', JSON.stringify({ at: Date.now(), turn: g.turn + 1, round: g.round, cfg: this.opts.cfg || (this.opts.saved && this.opts.saved.cfg) || null, seats: g.players.map(p => ({ name: p.name, deckName: p.deckName, dead: p.dead, life: p.life })), state: g.serializeState() })); } catch (e) { console.warn('save failed', e); } }
+  clearSave() { try { localStorage.removeItem('pt-save'); } catch (e) {} }
+  /** a back swipe or back button asks before leaving a live game */
+  guardBack() {
+    if (this._guard) return; this._guard = true;
+    try { if (location.hash !== '#playtest/game') history.pushState({ ptGame: 1 }, '', '#playtest/game'); } catch (e) {}
+    this.onPop = () => { if (!this.game || this.game.winner || this.aborted) return; if (location.hash !== '#playtest/game') { const ok = confirm('Leave the game? What you did this turn is lost; the rest is saved and you can resume it from the Playtest tab.'); if (!ok) { history.pushState({ ptGame: 1 }, '', '#playtest/game'); } else { this.aborted = true; this.sfx.musicStop(); window.removeEventListener('popstate', this.onPop); if (this.opts.onExit) this.opts.onExit(); } } };
+    window.addEventListener('popstate', this.onPop);
+    window.addEventListener('beforeunload', this.onUnload = e => { if (this.game && !this.game.winner && !this.aborted) { e.preventDefault(); e.returnValue = ''; } });
+  }
 }
 
-window.GoldfishUI = { start(el, seats, opts) { const t = new Table(el, seats, opts); window.GoldfishUI.current = t; t.start(); return t; }, loadSettings, saveSettings };
+window.GoldfishUI = { start(el, seats, opts) { const t = new Table(el, seats, opts); window.GoldfishUI.current = t; t.start(); return t; }, resume(el, saved, opts) { const t = new Table(el, [], { ...opts, saved }); window.GoldfishUI.current = t; t.start(); return t; }, savedGame() { try { const s = JSON.parse(localStorage.getItem('pt-save') || 'null'); return s && s.state ? s : null; } catch (e) { return null; } }, clearSaved() { try { localStorage.removeItem('pt-save'); } catch (e) {} }, loadSettings, saveSettings };
 })();

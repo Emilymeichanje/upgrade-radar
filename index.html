@@ -693,7 +693,7 @@ function toggleCheck(open){const p=$('#checkpanel');p.hidden=!open;if(!open)retu
       const missing=rows.filter(r=>r.a.missing),cond=rows.filter(r=>!r.a.missing&&r.a.generic),fine=rows.length-missing.length-cond.length;
       const notFound=[...where.entries()].filter(([k])=>!found.has(k)).map(([,v])=>v.name);
       const li=r=>`<li><b>${esc(r.c.name)}</b> <span class="note">· ${esc(r.decks.join(', '))}</span><ul style="margin:2px 0 6px;padding-left:16px">${r.a.lines.filter(x=>x.status==='missing'||x.status==='generic').map(x=>`<li class="note">${x.status==='missing'?'✗':'?'} ${esc(x.line)}</li>`).join('')}</ul></li>`;
-      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v53',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
+      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v54',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
       $('#chkres').innerHTML=`<p><b>${rows.length}</b> cards checked: <b>${fine}</b> fully covered, <b>${cond.length}</b> with a condition unverified, <b>${missing.length}</b> with text not modelled.${notFound.length?` <span class="err">${notFound.length} name${notFound.length===1?'':'s'} not found on Scryfall: ${esc(notFound.join(', '))}</span>`:''}</p>
         ${flagged.length?`<div class="row"><button class="chip pri" id="chkcopy">Copy report for Claude</button><button class="chip" id="chkdl">Download report</button><span class="note" id="chkcopied"></span></div>`:''}
         ${missing.length?`<h4>Not modelled</h4><ul style="padding-left:18px">${missing.map(li).join('')}</ul>`:''}
@@ -844,10 +844,10 @@ function cardRow({c,s,sc},d,list,kept){
 (function(){const b=document.getElementById('filtbtn');if(b)b.onclick=()=>{const on=document.body.classList.toggle('ctlopen');b.setAttribute('aria-expanded',on);b.setAttribute('aria-pressed',on);};})();
 function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detail';$('#play').hidden=v!=='play';if(v!=='detail')S.cur=null;
   document.body.classList.toggle('playing',v==='play');$('#nav-decks').toggleAttribute('aria-current',v!=='play');$('#nav-play').toggleAttribute('aria-current',v==='play');
-  if(v==='play'){if(location.hash!=='#playtest')history.replaceState(null,'','#playtest')}else if(location.hash==='#playtest')history.replaceState(null,'',location.pathname+location.search);
+  if(v==='play'){if(!location.hash.startsWith('#playtest'))history.replaceState(null,'','#playtest')}else if(location.hash.startsWith('#playtest'))history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=53').then(()=>loadScript('playtest-ui.js?v=53'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=54').then(()=>loadScript('playtest-ui.js?v=54'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();
@@ -907,7 +907,9 @@ async function openPlaytest(){
   const opt=optHtml();
   const lv=id=>`<select id="${id}"><option value="casual">Casual</option><option value="focused">Focused</option><option value="cutthroat">Cutthroat</option><option value="expert" selected>Expert</option></select>`;
   const prev=PT.cfg||{};
-  el.innerHTML=`<h2 style="font-size:1.4rem;margin-bottom:4px">Playtest</h2>
+  const saved=window.GoldfishUI&&GoldfishUI.savedGame();
+  const resumeHtml=saved?`<div class="pt-resume" style="border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin:8px 0 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center"><div style="flex:1;min-width:200px"><b>Unfinished game</b> — ${esc((saved.seats||[]).map(x=>x.name.replace(/^(You|AI) · /,'')+(x.dead?' ✗':' '+x.life)).join(' · '))}<br><span class="note">turn ${saved.turn}, saved ${Math.max(1,Math.round((Date.now()-saved.at)/60000))} min ago · resumes from the start of that turn</span></div><button class="chip pri" id="ptresume">Resume game</button><button class="chip" id="ptdiscard">Discard</button></div>`:'';
+  el.innerHTML=`<h2 style="font-size:1.4rem;margin-bottom:4px">Playtest</h2>${resumeHtml}
    <p class="note" style="max-width:760px">Four-player Commander table. You pilot seat 1 against three AI opponents running your other decks. The AI counters spells it judges dangerous, removes attackers at instant speed, holds mana up and blocks to survive. The engine reads card types, costs, colours, power/toughness, keywords and roles (ramp, draw, removal, wipes, counterspells, tokens, pump), but <b>not</b> each card's unique text, so engines and combos don't run. Use it to test curve, speed and interaction.</p>
    <div class="pt-setup">
     <div class="row" style="margin-bottom:6px"><label class="note" for="ptsort">Sort decks by</label> <select id="ptsort"><option value="bracket" ${ptSort==='bracket'?'selected':''}>Bracket</option><option value="alpha" ${ptSort==='alpha'?'selected':''}>Name (A–Z)</option></select></div>
@@ -918,6 +920,7 @@ async function openPlaytest(){
    </div>`;
   const pick=()=>{const used=new Set([$('#s0').value]);for(const i of [1,2,3]){const pool=ds.filter(d=>!used.has(d.slug));const d=pool.length?pool[Math.floor(Math.random()*pool.length)]:ds[Math.floor(Math.random()*ds.length)];$('#s'+i).value=d.slug;used.add(d.slug)}};
   if(prev.slugs){prev.slugs.forEach((s,i)=>{if(ds.some(d=>d.slug===s))$('#s'+i).value=s});prev.levels.forEach((l,i)=>{if(l&&$('#l'+i))$('#l'+i).value=l})}else pick();
+  if(saved){$('#ptresume').onclick=()=>{el.innerHTML='';PT.cfg=saved.cfg||PT.cfg;if(Goldfish.setPopularity)Goldfish.setPopularity(popularityMap());PT.table=GoldfishUI.resume(el,saved,{onExit:openPlaytest,onRematch:()=>saved.cfg?startGame(saved.cfg):openPlaytest(),cfg:saved.cfg})};$('#ptdiscard').onclick=()=>{GoldfishUI.clearSaved();openPlaytest()};}
   $('#ptrand').onclick=pick;$('#ptrandall').onclick=()=>{$('#s0').value=ds[Math.floor(Math.random()*ds.length)].slug;pick()};$('#ptlvl').onclick=()=>{for(const i of [1,2,3])$('#l'+i).value=['casual','focused','cutthroat','expert'][Math.floor(Math.random()*4)]};
   $('#watch').onchange=()=>{$('#w0').hidden=!$('#watch').checked};
   $('#ptsort').onchange=()=>{ptSort=$('#ptsort').value;try{localStorage.setItem('ptSort',ptSort)}catch(e){}const h=optHtml();for(const i of [0,1,2,3]){const sel=$('#s'+i),v=sel.value;sel.innerHTML=h;sel.value=v}};
@@ -940,7 +943,7 @@ async function startGame(cfg){
     const human=i===0&&!cfg.watch;
     seats.push({name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'expert'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')});
   }
-  el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg)});
+  el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg),cfg});
 }
 
 // ---------- controls ----------
@@ -989,7 +992,7 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
 (async()=>{wire();try{await loadSnapshot()}catch(e){$('#status').innerHTML='<span>Snapshot failed to load.</span>';return}
   renderHome();await Promise.all([initDb().then(()=>syncTok()&&Promise.race([syncNow(),new Promise(r=>setTimeout(r,10000))])),resolveCommanders()]);renderHome();syncStatus(S.syncMsg||'',S.syncErr);applyCmdrPrints();refreshPrices();if(location.hash==='#playtest')openPlaytest();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&syncTok())syncNow()});
-  window.addEventListener('hashchange',()=>{if(location.hash==='#playtest'&&$('#play').hidden)openPlaytest();else if(location.hash!=='#playtest'&&!$('#play').hidden){if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()}});})();
+  window.addEventListener('hashchange',()=>{if(location.hash==='#playtest'&&$('#play').hidden)openPlaytest();else if(location.hash==='#playtest'&&PT.table&&!PT.table.aborted){/* back from a live game: the table asks first */}else if(!location.hash.startsWith('#playtest')&&!$('#play').hidden){setTimeout(()=>{if(location.hash.startsWith('#playtest'))return;if(PT.table){PT.table.aborted=true;if(PT.table.sfx)PT.table.sfx.musicStop();PT.table=null}showView('home');renderHome()},0)}});})();
 })();
 </script>
 

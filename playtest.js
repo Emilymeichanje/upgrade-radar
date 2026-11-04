@@ -4582,7 +4582,9 @@ class Game {
           const avail = op.pick === 'unchosen' ? modes.filter(m => !chosen.includes(m.text)) : modes;
           if (!avail.length) break;
           if (p.human && this.hooks.humanModes) { const sub = avail.map(m => ({ text: m.text, card: { uid: UID++, name: src.name, oracle: m.text } })); const r = await this.hooks.humanModes({ p, card: src, modes: sub, min: op.pick === 'upToOne' ? 0 : 1, max: op.pick === 'any' ? sub.length : op.pick === 'two' ? 2 : 1 }); picks = (r || []).map(c => avail[sub.findIndex(s => s.card === c)]).filter(Boolean); }
-          else if (p.ai) { const sc = avail.map(m => ({ m, v: p.ai.opsValue(this, p, m.ops, src) })).sort((a, b) => b.v - a.v); picks = op.pick === 'two' ? sc.slice(0, 2).map(x => x.m) : op.pick === 'any' ? sc.filter(x => x.v > 0).map(x => x.m) : sc[0] && (sc[0].v > 0 || op.pick !== 'upToOne') ? [sc[0].m] : []; if (op.pick === 'any' && !picks.length && sc[0]) picks = [sc[0].m]; }
+          else if (p.ai) { const lifeCost = m => m.ops.reduce((t, o) => t + (o.op === 'lose' && typeof o.n === 'number' ? o.n : 0), 0); const sc = avail.map(m => ({ m, v: p.ai.opsValue(this, p, m.ops, src), lc: lifeCost(m) })).sort((a, b) => b.v - a.v);
+            if (op.pick === 'any') { let spent = 0; picks = []; for (const x of sc) { if (x.v > 0 && p.life - spent - x.lc > 5) { picks.push(x.m); spent += x.lc; } } if (!picks.length && sc.length) picks = [[...sc].sort((a, b) => a.lc - b.lc || b.v - a.v)[0].m]; }
+            else picks = op.pick === 'two' ? sc.slice(0, 2).map(x => x.m) : sc[0] && (sc[0].v > 0 || op.pick !== 'upToOne') ? [sc[0].m] : []; }
           if (ctx.perm && op.pick === 'unchosen') { if (ctx.perm.modeTurn !== this.turn) { ctx.perm.modeTurn = this.turn; ctx.perm.modeChosen = []; } ctx.perm.modeChosen.push(...picks.map(m => m.text)); }
           for (const m of picks) { this.say(`— ${src.name}: ${m.text}`, p); await this.runOps(p, m.ops, src, ctx); }
           break;
@@ -5756,7 +5758,7 @@ class Game {
     if (ab.sacOther) {
       const pool = q.battlefield.filter(b => b.card.isCreature && (ab.sacOther !== 'another' || b !== perm));
       let v = opt.victim && pool.includes(opt.victim) ? opt.victim : null;
-      if (!v) { if (q.human) { const pick = (await this.chooseFromList(q, card, pool.map(b => b.card), 1, 'sacrifice'))[0]; v = pool.find(b => b.card === pick); } else v = q.ai ? q.ai.chooseSacVictim(this, q, pool) : pool[0]; }
+      if (!v) { if (q.human) { const pick = (await this.chooseFromList(q, card, pool.map(b => b.card), 1, 'sacrifice'))[0]; v = pool.find(b => b.card === pick); } else { const others = pool.filter(b => b !== perm); v = q.ai ? q.ai.chooseSacVictim(this, q, others.length ? others : pool) : (others[0] || pool[0]); } }
       if (!v) return false;
       opt.x = this.powerOf(q, v); opt.sacT = this.toughOf(q, v); opt.sacrificed = v; this.say(`sacrifices ${v.card.name} to ${card.name}`, q); await this.sacrifice(q, v);
     }
@@ -6047,7 +6049,7 @@ class Game {
     if (perm.card.isCreature) { if (this.diedTurn !== this.turn) { this.diedTurn = this.turn; this.diedThisTurn = 0; } this.diedThisTurn++; }
     if (perm.card.isCreature && perm.slime) for (const q of this.opponentsOf(owner)) if (q.battlefield.some(x => x.card.statics && x.card.statics.toxrillSlug && !x.neutral)) await this.runOps(q, [{ op: 'tokens', n: 1, pt: [1, 1], kw: [], types: 'Slug', tcolors: ['B'] }], { name: 'Toxrill' }, {});
     if (perm.card.isPlaneswalker) this._pwDied = [...(this._pwDied || []), [owner, perm]];
-    if (perm.card.isCreature && !perm.card.token) { const dc = this.opponentsOf(owner).map(q => [q, q.battlefield.find(b => b.card.darkCrystal && !b.neutral)]).find(x => x[1]); if (dc) { const [q, crystal] = dc; await this.emit({ type: 'destroy', owner, perm, quiet: true }); owner.battlefield.splice(owner.battlefield.indexOf(perm), 1); const c = perm.card.orig || perm.card; if ((await this.toZone(owner, c, 'exile')) === 'exile') (crystal.crystalExiled = crystal.crystalExiled || []).push([owner, c]); this.say(`— ${c.name} is exiled instead (${crystal.card.name}); ${q.name} gains 2`, q); await this.changeLife(q, 2, crystal.card); await this.leftBattlefield(owner, perm); return; } }
+    if (perm.card.isCreature && !perm.card.token) { const dc = this.opponentsOf(owner).map(q => [q, q.battlefield.find(b => b.card.darkCrystal && !b.neutral)]).find(x => x[1]); if (dc) { const [q, crystal] = dc; await this.emit({ type: 'destroy', owner, perm, quiet: true }); owner.battlefield.splice(owner.battlefield.indexOf(perm), 1); const c = perm.card.orig || perm.card; const z = await this.toZone(owner, c, 'exile'); if (z === 'exile') (crystal.crystalExiled = crystal.crystalExiled || []).push([owner, c]); this.say(z === 'exile' ? `— ${c.name} is exiled instead (${crystal.card.name}); ${q.name} gains 2` : `— ${crystal.card.name} would exile ${c.name}; it goes to the command zone instead, ${q.name} gains 2`, q); await this.changeLife(q, 2, crystal.card); await this.leftBattlefield(owner, perm); return; } }
     await this.emit({ type: 'destroy', owner, perm, quiet });
     const i = owner.battlefield.indexOf(perm); if (i < 0) return; owner.battlefield.splice(i, 1);
     if ((perm.card.orig || perm.card).isCommander && await this.cmdZoneInstead(owner, perm.card.orig || perm.card, 'graveyard')) { owner.command.push(perm.card.orig || perm.card); this.say(`— ${perm.card.name} returns to the command zone`, owner); }
@@ -6984,7 +6986,7 @@ class AI {
       else if (op.op === 'mirrorEntity') v += game.availableMana(me) >= 4 && me.battlefield.filter(b => b.card.isCreature).length >= 3 && game.phase === 'main1' ? 6 : -2;
       else if (!['gyToHand', 'draw', 'landToHand', 'selfToBf', 'tokenCopy', 'gyToBf', 'tokens', 'gain', 'drain', 'damage', 'counters', 'destroy', 'scry', 'surveil', 'dig', 'attach', 'edict', 'bounceAllOpp'].includes(op.op)) v += this.opsValue(game, me, [op], card) - 0.3;
     }
-    if (ab.sacOther) { const pool = me.battlefield.filter(b => b.card.isCreature && (ab.sacOther !== 'another' || b !== perm)); const vic = pool.length ? this.chooseSacVictim(game, me, pool) : null; v += vic ? this.deathPayoff(game, me) - this.permBase(vic) * (vic.card.token ? 0.3 : 1) : -99; }
+    if (ab.sacOther) { const pool = me.battlefield.filter(b => b.card.isCreature && b !== perm); const vic = pool.length ? this.chooseSacVictim(game, me, pool) : null; v += vic ? this.deathPayoff(game, me) - this.permBase(vic) * (vic.card.token ? 0.4 : 1.6) - (vic.card.isCommander ? 20 : 0) : -99; }
     if (perm && (ab.sacSelf || ab.exileSelf)) v -= this.permBase(perm) * 0.7;
     if (ab.life) v -= ab.life * (me.life < 15 ? 0.6 : 0.2);
     return v;

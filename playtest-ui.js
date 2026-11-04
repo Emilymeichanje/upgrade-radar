@@ -552,7 +552,8 @@ class Table {
     if (this.s.stops === 'all') return true;
     const hasCast = ctx.options.some(o => o.kind === 'cast'), hasFetch = ctx.options.some(o => o.kind === 'fetch' || o.kind === 'ability');
     const inCombat = ctx.attacks && (ctx.active === me || ctx.attacks.some(a => a.defender === me));
-    if (hasCast && ((ctx.step === 'end' && ctx.active !== me) || ((ctx.step === 'declareAttackers' || ctx.step === 'declareBlockers') && inCombat))) return true;
+    const hasCombatAbility = ctx.options.some(o => o.kind === 'ability' && !(o.ab && o.ab.mana) && !(o.ab && o.ab.label === 'equip'));
+    if ((hasCast || (hasCombatAbility && inCombat)) && ((ctx.step === 'end' && ctx.active !== me) || ((ctx.step === 'declareAttackers' || ctx.step === 'declareBlockers') && inCombat))) return true;
     if (hasFetch && ((ctx.step === 'end' && g.after(ctx.active)[0] === me) || (ctx.active === me && ctx.step === 'upkeep'))) return true;
     return false;
   }

@@ -5665,6 +5665,8 @@ class Game {
     if (ab.lifeIdentity && q.life <= this.identityCount(q)) return false;
     if (ab.removeInd && !src.indestructibleCounter) return false;
     if (ab.reqAb && !this.reqOk(q, src, ab.reqAb, {})) return false;
+    if (ab.text && /activate only if this (?:card|creature) is attacking/.test(ab.text) && !(this.phase === 'combat' && perm && (this.curAttackers || []).includes(perm))) return false;
+    if (ab.text && /activate only if this (?:card|creature) is blocking/.test(ab.text) && !(this.phase === 'combat' && perm && (this.curBlockers || []).includes(perm))) return false;
     if (ab.b3Need && !this.b3_abNeed(q, src, ab.b3Need)) return false;
     if (ab.exileGyCreatures && q.graveyard.filter(c => c.isCreature).length < ab.exileGyCreatures) return false;
     if (src.id && src.noAbilitiesTurn === this.turn) return false;

@@ -795,10 +795,14 @@ class Table {
     let t = null; for (const l of g.log) { if (l.t !== t) { t = l.t; lines.push(`== turn ${t} ==`); } lines.push(l.m); }
     return lines.join('\n');
   }
+  downloadText(txt, name) { try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); } catch (e) {} }
   exportLog() {
     const txt = this.logText(); if (!txt) return; const g = this.game;
     const name = `playtest-${(g.players[0].deckName || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.txt`;
-    try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); } catch (e) {}
+    const file = (() => { try { return new File([txt], name, { type: 'text/plain' }); } catch (e) { return null; } })();
+    // phones ignore the download name on blob links; the share sheet keeps it (Save to Files / send it on)
+    if (file && (this.mobile || this.touch) && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: name }).catch(() => this.downloadText(txt, name)); return; }
+    this.downloadText(txt, name);
     try { if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => {}); } catch (e) {}
     this.banner && this.banner('Log saved (and copied)');
   }

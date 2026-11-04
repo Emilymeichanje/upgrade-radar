@@ -792,6 +792,7 @@ class Table {
     const g = this.game; if (!g) return '';
     const ver = ((document.querySelector('script[src*="playtest.js"]') || {}).src || '').match(/v=(\d+)/); const lines = [];
     lines.push(`MTG Dashboard playtest log · engine ${ver ? 'v' + ver[1] : '?'} · ${new Date().toISOString()}`);
+    try { lines.push(`client: ${innerWidth}×${innerHeight} css px @${devicePixelRatio}x · ${matchMedia('(orientation: landscape)').matches ? 'landscape' : 'portrait'} · ${this.mobile ? 'phone layout' : 'desktop layout'} · zoom ${Math.round((this.s.zoom || 1) * 100)}% · ${navigator.userAgent}`); } catch (e) {}
     for (const p of g.players) lines.push(`seat ${p.i + 1}: ${p.name} — ${p.deckName}${p.level ? ' · ' + p.level : ''}${p.dead ? ' · defeated' : ' · life ' + p.life}`);
     lines.push(`result: ${g.winner ? short(g.winner.name) + ' wins' : 'in progress'} · round ${g.round} · turn ${g.turn}`);
     lines.push('');

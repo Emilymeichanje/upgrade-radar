@@ -280,7 +280,7 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
   .steps{order:5;flex-basis:100%;justify-content:space-between}
   .steps span{padding:2px 5px;font-size:.6rem;flex:1;text-align:center}
   .gt-bar .chip{padding:4px 10px;min-height:32px;font-size:.8rem}
-  .gt-bar .zm,.gt-bar [data-act=export-log]{display:none}
+  .gt-bar .zm{display:none}
   .gt-opps{grid-template-columns:minmax(0,1fr);gap:6px}
   .gs{padding:6px;gap:4px;border-radius:8px}
   .gs-h{grid-template-columns:30px minmax(0,1fr) auto;gap:6px}
@@ -349,6 +349,7 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 .sfind{width:min(320px,100%);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;margin:4px 0}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;max-height:340px;overflow-y:auto;padding:4px}
 .sopt{aspect-ratio:.716;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--soft);display:grid;place-items:center;font-size:.7rem;text-align:center;transition:transform .15s,box-shadow .15s}
+.sopt{position:relative}.sopt .own{position:absolute;left:0;right:0;bottom:0;font-size:.55rem;font-style:normal;background:rgba(0,0,0,.65);color:#eee;text-align:center;padding:1px 2px;pointer-events:none}
 .sopt img{width:100%;height:100%;object-fit:cover;pointer-events:none}
 .sopt:hover{transform:scale(1.05);box-shadow:0 0 0 2px var(--accent)}
 .sopt.sel{box-shadow:0 0 0 3px var(--warn)}
@@ -393,7 +394,9 @@ function injectCSS() { if (document.getElementById('gt-css')) return; const s = 
 
 // ---------------- table ----------------
 class Table {
+  diagPush(m) { (this.diag = this.diag || []).push(new Date().toISOString().slice(11, 19) + ' ' + String(m).slice(0, 600)); if (this.diag.length > 30) this.diag.shift(); }
   constructor(el, seats, opts = {}) {
+    if (!GoldfishUI._diagWired) { GoldfishUI._diagWired = true; addEventListener('error', e => GoldfishUI.current && GoldfishUI.current.diagPush('error: ' + (e.message || '') + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno)); addEventListener('unhandledrejection', e => GoldfishUI.current && GoldfishUI.current.diagPush('rejection: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason))); }
     this.el = el; this.seatsDef = seats; this.opts = opts; this.s = loadSettings(); this.sfx = new Sfx(this.s);
     this.stackView = []; this.attacking = new Map(); this.blocking = new Map(); this.prompt = null; this.mode = null; this.ff = false; this.busy = false; this.logLines = [];
   }
@@ -404,7 +407,7 @@ class Table {
     this.applyZoom();
     TOKART.onFound = (k, url) => { if (!this.game) return; let n = 0; for (const p of this.game.players) for (const b of p.battlefield) { const c = b.card; if (c.token && !c.img && tokKey(c) === k) { c.img = url; n++; } } if (n) this.render(); };
     this.wire(); if (this.oppsCollapsed == null) this.oppsCollapsed = this.mobile && innerHeight < 760;
-    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c), humanModes: c => this.ask('modes', { ...c, sel: [] }), humanPayOpt: c => this.ask('payopt', c), humanNumber: c => this.ask('num', c) };
+    const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c), humanModes: c => this.ask('modes', { ...c, sel: [] }), humanPayOpt: c => this.ask('payopt', c), humanNumber: c => this.ask('num', c), humanChoice: c => this.ask('choice', c), humanChooseType: c => this.ask('choice', c) };
     hooks.save = g => this.saveGame(g);
     if (this.opts.saved) { this.game = G.Game.fromSaved(this.opts.saved.state, { hooks }); this.buildCardIndex(); this.me = this.game.players.find(p => p.human) || null; this.logLines = []; for (const l of this.game.log.slice(-200)) this.addLog(l.m); this.game.say(`— game resumed (turn ${this.game.turn})`); this.render(); this.guardBack();
       try { await this.game.run(); } catch (e) { if (e.message !== 'abort') { console.error(e); this.addLog('Engine error: ' + e.message); } return; }
@@ -566,7 +569,7 @@ class Table {
   ask(kind, ctx) {
     this.ff = false; this.sfx.play('prompt');
     const prev = this.prompt;
-    return new Promise(res => { this.prompt = { kind, ...ctx, options: kind === 'alt' ? ctx.blues : kind === 'search' ? ctx.pool : [], res: v => { this.prompt = prev && prev.kind !== 'priority' ? prev : null; this.render(); res(v); } }; this.render(); });
+    return new Promise(res => { this.prompt = { kind, ...ctx, options: kind === 'alt' ? ctx.blues : kind === 'search' ? ctx.pool : kind === 'choice' ? (ctx.options || []) : [], res: v => { this.prompt = prev && prev.kind !== 'priority' ? prev : null; this.render(); res(v); } }; this.render(); });
   }
   engineNotes(c) {
     const bits = [];
@@ -639,7 +642,7 @@ class Table {
   async act(fn) { if (this.busy) return; this.busy = true; this.render();
     const g = this.game, undoable = this.myTurn && !this.prompt && g && g.snapshot; let pre = null;
     if (undoable) { try { if (!g._rngWrapped) { const r = g.rng; g.rng = () => { g._rngN = (g._rngN || 0) + 1; return r(); }; g._rngWrapped = true; } pre = { snap: g.snapshot(), libs: this.undoSig(g, true), opp: this.undoSig(g, false), rn: g._rngN || 0, logN: g.log.length, phase: this.turnPhase }; } catch (e) { console.warn('undo snapshot', e); } }
-    try { await fn(); } finally {
+    try { await fn(); } catch (e) { this.diagPush('action failed: ' + (e && e.stack || e)); try { g && g.log.push({ t: g.turn, m: `⚠ engine error: ${e && e.message || e}` }); } catch (_) {} console.error(e); } finally {
       if (pre && this.myTurn && this.game === g) {
         const added = g.log.slice(pre.logN).map(l => l.m).filter(Boolean);
         if (added.length || this.undoSig(g, false) !== pre.opp || this.undoSig(g, true) !== pre.libs) {
@@ -798,6 +801,7 @@ class Table {
     try { lines.push(`client: ${innerWidth}×${innerHeight} css px @${devicePixelRatio}x · ${matchMedia('(orientation: landscape)').matches ? 'landscape' : 'portrait'} · ${this.mobile ? 'phone layout' : 'desktop layout'} · zoom ${Math.round((this.s.zoom || 1) * 100)}% · ${navigator.userAgent}`); } catch (e) {}
     for (const p of g.players) lines.push(`seat ${p.i + 1}: ${p.name} — ${p.deckName}${p.level ? ' · ' + p.level : ''}${p.dead ? ' · defeated' : ' · life ' + p.life}`);
     lines.push(`result: ${g.winner ? short(g.winner.name) + ' wins' : 'in progress'} · round ${g.round} · turn ${g.turn}`);
+    try { lines.push(`state: phase ${g.phase} · active ${short(g.players[g.active].name)} · ui ${this.busy ? 'busy' : 'idle'} · prompt ${this.prompt ? this.prompt.kind : 'none'} · mode ${this.mode ? this.mode.kind : 'none'} · stack [${g.stack.map(o => (o.card ? o.card.name : o.kind || '?') + ' (' + short(o.caster ? o.caster.name : '?') + ')').join(', ')}]`); if (this.diag && this.diag.length) { lines.push('errors:'); for (const d of this.diag) lines.push('  ' + d); } } catch (e) { lines.push('state: (unavailable: ' + e.message + ')'); }
     lines.push('');
     let t = null; for (const l of g.log) { if (l.t !== t) { t = l.t; lines.push(`== turn ${t} ==`); } lines.push(l.m); }
     return lines.join('\n');
@@ -880,6 +884,7 @@ class Table {
     if (P && P.kind === 'search' && a === 'search-go') { P.res(P.sel.slice()); return; }
     if (P && P.kind === 'search' && a === 'search-none') { P.res([]); return; }
     if (P && P.kind === 'player' && a === 'pick-player') { P.res(g.players[+btn.dataset.p]); return; }
+    if (P && P.kind === 'choice' && a === 'pick-choice') { P.res(P.options[+btn.dataset.i]); return; }
     if (P && P.kind === 'alt' && a === 'alt-mana') { P.res({ mode: 'mana' }); return; }
     if (P && P.kind === 'alt' && a === 'alt-cancel') { P.res(null); return; }
     if (a === 'pass-turn' && P) { this.passUntilTurn = true; P.res(null); return; }
@@ -1034,12 +1039,13 @@ class Table {
         const fromLib = ['hand', 'graveyard', 'top', 'battlefield', 'land'].includes(P.dest), peek = P.dest === 'scry' || P.dest === 'surveil';
         const list = [...P.pool].sort((a, b) => a.name.localeCompare(b.name));
         const seen = new Set(); const uniq = (peek ? [...P.pool] : list).filter(c => P.n > 1 || !fromLib || (!seen.has(c.name) && seen.add(c.name)));
-        const grid = uniq.map(c => `<div class="sopt ${P.sel.includes(c) ? 'sel' : ''}" data-opt="${c.uid}" data-uid="${c.uid}" data-name="${esc(c.name.toLowerCase())}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}</div>`).join('');
+        const grid = uniq.map(c => `<div class="sopt ${P.sel.includes(c) ? 'sel' : ''}" data-opt="${c.uid}" data-uid="${c.uid}" data-name="${esc(c.name.toLowerCase())}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}${P.owner && P.owner.get(c) ? `<i class="own">${esc(short(P.owner.get(c).name).split(',')[0].slice(0, 10))}</i>` : ''}</div>`).join('');
         prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.n > 1 ? 'up to ' + P.n + ' cards' : 'a card'} to ${dest}${fromLib ? ` (${P.pool.length} match${P.pool.length === 1 ? '' : 'es'} in your library)` : ''}</h4>
           <input class="sfind" placeholder="Filter by name…" oninput="GoldfishUI.current.filterSearch(this.value)" autocomplete="off">
           <div class="sgrid">${grid}</div>
           <div class="gt-ctl">${P.n > 1 ? `<button class="chip pri" data-act="search-go">Done (${P.sel.length}/${P.n})</button>` : ''}${fromLib ? `<button class="chip" data-act="search-none">Find nothing</button>` : peek ? '' : `<button class="chip" data-act="search-none">Skip</button>`}<span class="msg">Hover a card to read it${P.n > 1 ? '; click to select or unselect' : '; click to choose'}.</span></div></div>`; }
       else if (P.kind === 'may') prm = `<div class="prm"><h4>${esc(P.card.name)}: ${esc(P.question || 'use this optional trigger?')}</h4><div class="gt-ctl"><button class="chip pri" data-act="may-yes">Yes</button><button class="chip" data-act="may-no">No</button></div></div>`;
+      else if (P.kind === 'choice') prm = `<div class="prm"><h4>${esc(P.question || (P.card ? P.card.name + ': choose' : 'Choose'))}</h4><div class="gt-ctl">${(P.options || []).map((o, i) => `<button class="chip pri" data-act="pick-choice" data-i="${i}">${esc(String(o))}</button>`).join('')}${P.free ? `<input class="sfind" id="choice-free" placeholder="Other…" autocomplete="off" onkeydown="if(event.key==='Enter'&&this.value.trim())GoldfishUI.current.prompt.res(this.value.trim())">` : ''}</div></div>`;
       else if (P.kind === 'player') prm = `<div class="prm"><h4>${esc(P.why)}</h4><div class="gt-ctl">${P.players.map(q => `<button class="chip ${q === me ? '' : 'pri'}" data-act="pick-player" data-p="${q.i}">${esc(short(q.name))} (${q.graveyard.length} card${q.graveyard.length === 1 ? '' : 's'}${q.graveyard.filter(c => c.isCreature).length ? ', ' + q.graveyard.filter(c => c.isCreature).length + ' creatures' : ''})</button>`).join('')}</div></div>`;
       else if (P.kind === 'discard') prm = `<div class="prm"><h4>Discard down to 7: click a card in your hand.</h4></div>`;
       else if (P.kind === 'mull') { const lands = me.hand.filter(c => c.isLand).length; prm = `<div class="prm"><h4>Opening hand: ${me.hand.length} cards, ${lands} land${lands === 1 ? '' : 's'}${P.n ? ` — you'll bottom ${P.n}` : ''}</h4>${P.confirm ? `<div class="gt-ctl"><span class="msg">Shuffle this hand away and draw ${7} new cards? You'll put ${P.n + 1} on the bottom.</span><button class="chip warn" data-act="mull-yes">Yes, mulligan</button><button class="chip pri" data-act="mull-back">Back to this hand</button></div>` : `<div class="gt-ctl"><button class="chip pri" data-act="keep">Keep</button><button class="chip" data-act="mull">Mulligan</button></div>`}</div>`; }

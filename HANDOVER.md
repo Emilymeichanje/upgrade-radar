@@ -26,10 +26,11 @@ Advisor, not assistant. First sentence must challenge an assumption or expose a 
 
 ## 3. Current state
 
-- **Deployed: v60** (2026‑11‑04). Version pins live in `index.html`: `playtest.js?v=N`, `playtest-ui.js?v=N`, `engine:'vN'` — bump all three on every deploy:
-  `sed -i 's/playtest\.js?v=59/playtest.js?v=60/; s/playtest-ui\.js?v=59/playtest-ui.js?v=60/; s/engine:'"'"'v59'"'"'/engine:'"'"'v60'"'"'/' index.html`
-- Last batch (v60): AI never sacrifices its own sac outlet when another body exists (Carrion Feeder); life‑aware modal choice ("choose one or more", Black Market Connections) so AI doesn't pay itself to death; Darkness Crystal + commander log message.
-- Engine code is organised in **batch regions**: `// ==== fixes bN (parse|ops|ai|methods) ====` … `// ---- end bN`. Current batch is **b9**. New work goes in a new `b10` region (or the matching b9 region if it's a direct follow‑up). Never edit inside an older batch region unless fixing that batch's own bug.
+- **Deployed: v61** (2026‑11‑04). Version pins live in `index.html`: `playtest.js?v=N`, `playtest-ui.js?v=N`, `engine:'vN'` — bump all three on every deploy:
+  `sed -i 's/playtest\.js?v=60/playtest.js?v=61/; s/playtest-ui\.js?v=60/playtest-ui.js?v=61/; s/engine:'"'"'v60'"'"'/engine:'"'"'v61'"'"'/' index.html`
+- v61 (batch **b10**): Deification prompts the human for a planeswalker type (new UI `humanChoice`/`humanChooseType` hooks → `choice` prompt); Ghost Vacuum / 'exile target card from a graveyard' lets the human pick from every graveyard (search prompt with owner labels); 'target attacking or blocking creature' abilities (Gideon's Memorial) only offered while something is attacking/blocking; Export log always visible, works while the UI is busy, and carries a `state:` line (phase, busy/prompt/mode, stack) plus captured JS errors/rejections — ask for this export whenever a game hangs.
+- v60: AI never sacrifices its own sac outlet when another body exists (Carrion Feeder); life‑aware modal choice ("choose one or more", Black Market Connections) so AI doesn't pay itself to death; Darkness Crystal + commander log message.
+- Engine code is organised in **batch regions**: `// ==== fixes bN (parse|ops|ai|methods) ====` … `// ---- end bN`. Current batch is **b10**. New work goes in a new `b11` region (or the matching b9 region if it's a direct follow‑up). Never edit inside an older batch region unless fixing that batch's own bug.
 
 ## 4. Workflow (do it this way; it is known to work)
 
@@ -80,6 +81,8 @@ Report to the owner per the persona: what was wrong, what was correct‑but‑lo
 | Mobile | sticky paged opponent strip + pager, landscape two‑column, dock, hand toggle, Cast‑commander chip, `zoom` on `.gt` |
 
 ## 6. Open items / backlog
+
+- **Unresolved hang (2026‑11‑04, Quintorius deck, v60):** UI stuck on "Resolving…" after Quintorius +1 went on the stack. Could not reproduce in isolation (`tests/ui/quint.js`). Next log export will include the `state:` line and errors — diagnose from that. Suspects: a human hook whose prompt got overwritten (`ask()` restores `prev`), or an engine await that never settles.
 
 - **Offered, not built:** "repeat until I stop" button for loop abilities (Malcolm + Buccaneer style combos).
 - Goblin Army / Halvar double‑strike damage totals from the v59 log were plausible but not replay‑verified.

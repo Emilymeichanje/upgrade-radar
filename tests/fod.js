@@ -1,0 +1,14 @@
+require(__dirname+'/../playtest.js');const {Game,AI,buildDeck,tagCard}=Goldfish;
+const mk=(name,type,mana,oracle,cmc,p,t)=>({name,type,mana,oracle,cmc,power:p,toughness:t});
+const deck=()=>buildDeck([...Array(60)].map(()=>mk('Swamp','Basic Land — Swamp','','',0)).concat([...Array(39)].map(()=>mk('Elf','Creature — Elf','{1}{G}','',2,2,2))).concat([mk('Cmdr','Legendary Creature — Elf','{G}','',1,1,1)]),['Cmdr']);
+(async()=>{let pass=0,fail=0;const ok=(n,c,x='')=>{c?pass++:fail++;console.log((c?'PASS ':'FAIL ')+n+' '+x)};
+const g=new Game([0,1,2].map(i=>({name:'P'+i,deck:deck(),ai:new AI('focused')})),{seed:3,hooks:{}});g.turn=5;g.active=0;g.phase='main1';
+const [a,b]=g.players;const old=tagCard(mk('Old','Creature — X','{2}','',2,3,3));const oldP={id:991,card:old,tapped:false,summoning:false,counters:0,enteredTurn:3};b.battlefield.push(oldP);
+const nw=await g.enterPerm(b,tagCard(mk('New','Creature — X','{2}','',2,3,3)));
+for(let k=0;k<3;k++)a.battlefield.push({id:900+k,card:tagCard(mk('Swamp','Basic Land — Swamp','','',0)),tapped:false,counters:0});
+const fod=tagCard(mk('Force of Despair','Instant','{1}{B}{B}',"If it's not your turn, you may exile a black card from your hand rather than pay this spell's mana cost.\nDestroy all creatures that entered this turn.",3));
+a.hand=[fod];await g.cast(a,fod,'hand',null,{instant:true});
+ok('old creature survives',b.battlefield.includes(oldP));ok('new creature dies',!b.battlefield.includes(nw),g.log.slice(-2).map(l=>l.m).join(' | '));
+const wrath=tagCard(mk('Wrath','Sorcery','{2}{W}{W}','Destroy all creatures. They can\'t be regenerated.',4));ok('plain wrath still all',g.wipeHits(wrath,a).all);
+const pw=tagCard(mk('Hour','Sorcery','{2}','Destroy all creatures with power 4 or greater.',2));const big={card:tagCard(mk('B','Creature — X','{5}','',5,5,5)),counters:0};ok('power filter',g.wipeHits(pw,a)(big,b)&&!g.wipeHits(pw,a)(oldP,b));
+console.log(pass,'passed',fail,'failed');})();

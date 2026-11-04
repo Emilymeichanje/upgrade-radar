@@ -1,0 +1,11 @@
+require(__dirname+'/../playtest.js');const {Game,AI,buildDeck,tagCard}=Goldfish;const R=[1,2,3,4,5,6,7].flatMap(i=>require(__dirname+'/fixtures/gap'+i+'.json'));
+const C=n=>{const a=R.find(x=>x[1].startsWith(n));return tagCard({name:a[1],mana:a[2],type:a[3],oracle:a[4],cmc:a[5],power:a[6],toughness:a[7]})};
+const mk=(name,type,mana,oracle,cmc,p,t)=>({name,type,mana,oracle,cmc,power:p,toughness:t});
+const deck=()=>buildDeck([...Array(60)].map(()=>mk('Forest','Basic Land — Forest','','',0)).concat([...Array(39)].map(()=>mk('Elf','Creature — Elf Warrior','{1}{G}','',2,2,2))).concat([mk('Cmdr','Legendary Creature — Elf','{G}','',1,1,1)]),['Cmdr']);
+const g=new Game([0,1,2].map(i=>({name:'P'+i,deck:deck(),ai:new AI('focused')})),{seed:3,hooks:{emit:()=>{}}});g.active=0;g.phase='upkeep';g.turn=4;const [a,b,c]=g.players;
+(async()=>{const pm=await g.enterPerm(a,C('Avatar Aang'));const back=pm.card.backFace;console.log('back trigger ops',JSON.stringify(back.triggers.map(t=>[t.when,t.ops.map(o=>o.op),t.each])));
+ await g.runOps(a,[{op:'transform'}],pm.card,{perm:pm});console.log('on back:',pm.card.name);
+ const h=a.hand.length,l=a.life,bl=b.life;await g.fireTriggers(a,'upkeep');await g.emit({type:'tick'});
+ console.log('after upkeep: face',pm.card.name,'| drew',a.hand.length-h,'| gained',a.life-l,'| counters',pm.counters,'| opp took',bl-b.life,'(expected front, 4, 4, 4, 4)');
+ const h2=a.hand.length,bl2=b.life;await g.fireTriggers(b,'upkeep');await g.fireTriggers(a,'upkeep');await g.emit({type:'tick'});console.log('later upkeeps while on front: drew',a.hand.length-h2,'opp took',bl2-b.life,'(expected 0, 0)');
+ const fails=(pm.card.name.startsWith('Avatar Aang')?0:1)+(a.hand.length-h2!==0?1:0)+(bl2-b.life!==0?1:0);console.log(fails+' failed');})();

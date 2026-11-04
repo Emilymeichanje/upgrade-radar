@@ -1,0 +1,28 @@
+<!doctype html><meta charset=utf-8><body style="width:1500px"><div id=t></div>
+<script>window.localStorage.setItem('pt-settings',JSON.stringify({anim:false,sound:false,speed:'fast',stops:'all'}))</script>
+<script src="../../playtest.js"></script><script src="../../playtest-ui.js"></script>
+<script>
+const {buildDeck}=Goldfish;const mk=(name,type,mana,oracle,cmc,p,t)=>({name,type,mana,oracle,cmc,power:p,toughness:t});
+const FETCH={
+ 'Marsh Flats':mk('Marsh Flats','Land','','{T}, Pay 1 life, Sacrifice Marsh Flats: Search your library for a Plains or Swamp card, put it onto the battlefield, then shuffle.',0),
+ 'Flooded Strand':mk('Flooded Strand','Land','','{T}, Pay 1 life, Sacrifice Flooded Strand: Search your library for a Plains or Island card, put it onto the battlefield, then shuffle.',0),
+ 'Evolving Wilds':mk('Evolving Wilds','Land','','{T}, Sacrifice Evolving Wilds: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.',0),
+ 'Fabled Passage':mk('Fabled Passage','Land','','{T}, Sacrifice Fabled Passage: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle. Then if you control four or more lands, untap that land.',0),
+};
+function deck(){const L=[];
+ for(let i=0;i<6;i++)L.push(mk('Hallowed Fountain','Land — Plains Island','','({T}: Add {W} or {U}.)\nAs this land enters, you may pay 2 life. If you don\'t, it enters tapped.',0));for(let i=0;i<3;i++)L.push(mk('Nyx Weaver','Enchantment Creature — Spider','{1}{B}{G}','Reach\nAt the beginning of your upkeep, mill two cards.\n{1}{B}{G}, Exile Nyx Weaver: Return target card from your graveyard to your hand.',3,2,3));for(let i=0;i<3;i++)L.push(mk('Bloodghast','Creature — Vampire Spirit','{B}{B}','This creature can\'t block.\nLandfall — Whenever a land you control enters, you may return this card from your graveyard to the battlefield.',2,2,1));for(let i=0;i<2;i++)L.push(mk('Think Twice','Instant','{1}{U}','Draw a card.\nFlashback {2}{U}',2));for(let i=0;i<2;i++)L.push(mk('Lonely Sandbar','Land','','This land enters tapped.\n{T}: Add {U}.\nCycling {U}',0));for(let i=0;i<4;i++)L.push(mk('Entomb','Instant','{B}','Search your library for a card, put that card into your graveyard, then shuffle.',1));for(let i=0;i<4;i++)L.push(mk('Reanimate','Sorcery','{B}','Put target creature card from a graveyard onto the battlefield under your control. You lose life equal to its mana value.',1));for(let i=0;i<3;i++)L.push(mk('Bojuka Bog','Land','','This land enters tapped.\nWhen this land enters, exile target player\'s graveyard.\n{T}: Add {B}.',0));for(let i=0;i<3;i++)L.push(mk('Buried Alive','Sorcery','{2}{B}','Search your library for up to three creature cards, put them into your graveyard, then shuffle.',3));L.push(mk('Plains','Basic Land — Plains','','',0));for(let i=0;i<10;i++)L.push(mk('Island','Basic Land — Island','','',0));for(let i=0;i<6;i++)L.push(mk('Swamp','Basic Land — Swamp','','',0));
+ L.push(mk('Scrubland','Land — Plains Swamp','','({T}: Add {W} or {B}.)',0));L.push(mk('Hallowed Fountain','Land — Plains Island','','({T}: Add {W} or {U}.)\nAs Hallowed Fountain enters, you may pay 2 life. If you don\'t, it enters tapped.',0));
+ for(const k of Object.keys(FETCH))for(let i=0;i<2;i++)L.push(FETCH[k]);
+ for(let i=0;i<4;i++)L.push(mk('Counterspell','Instant','{U}{U}','Counter target spell.',2));
+ for(let i=0;i<4;i++)L.push(mk('Swords','Instant','{W}','Exile target creature.',1));
+ for(let i=0;i<3;i++)L.push(mk('Opt','Instant','{U}','Scry 1. Draw a card.',1));
+ for(let i=0;i<12;i++)L.push(mk('Knight','Creature — Knight','{1}{W}','First strike',2,2,2));
+ for(let i=0;i<8;i++)L.push(mk('Angel','Creature — Angel','{3}{W}{W}','Flying',5,4,4));
+ for(let i=0;i<6;i++)L.push(mk('Sphinx','Creature — Sphinx','{2}{U}{U}','Flying. Whenever you cast a spell, draw a card.',4,3,3));
+ for(let i=0;i<8;i++)L.push(mk('Divination','Sorcery','{2}{U}','Draw two cards.',3));
+ for(let i=0;i<4;i++)L.push(mk('Ritual','Sorcery','{1}{B}','Search your library for a basic land card, put it onto the battlefield tapped.',2));
+ return buildDeck([...L,mk('Cmdr','Legendary Creature — Human','{W}{U}','Whenever you cast a spell, scry 1.',2,3,3)],['Cmdr'])}
+window.errs=[];window.onerror=(m)=>errs.push(String(m));window.onunhandledrejection=e=>errs.push(String(e.reason&&e.reason.stack||e.reason));
+const seats=[0,1,2,3].map(i=>({name:(i?'AI · P':'You · P')+i,deckName:'T'+i,deck:deck(),human:i===0,level:i?['casual','focused','cutthroat'][i-1]:null,art:''}));
+window.hp={};const _s=GoldfishUI.start;GoldfishUI.start=(...a)=>{const t=_s(...a);const o=t.humanPriority.bind(t);t.humanPriority=c=>{const k=c.step+':'+c.options.map(o=>o.kind).join(',');hp[k]=(hp[k]||0)+1;return o(c)};const sp=t.shouldStop.bind(t);return t};GoldfishUI.start(document.getElementById('t'),seats,{onExit(){},onRematch(){}});
+</script>

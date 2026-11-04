@@ -1,0 +1,32 @@
+require(__dirname+'/../playtest.js');const {Game,AI,buildDeck,tagCard}=Goldfish;
+const RAW=[...require(__dirname+'/fixtures/gap1.json'),...require(__dirname+'/fixtures/gap2.json'),...require(__dirname+'/fixtures/gap3.json'),...require(__dirname+'/fixtures/gap4.json'),...require(__dirname+'/fixtures/gap5.json')].map(a=>({name:a[1],mana:a[2],type:a[3],oracle:a[4],cmc:a[5],power:a[6],toughness:a[7],loyalty:a[8]}));
+const C=n=>{const r=RAW.find(x=>x.name===n||x.name.startsWith(n+' //'));if(!r)throw new Error('no card '+n);return tagCard(r);};
+const mk=(name,type,mana,oracle,cmc,p,t)=>({name,type,mana,oracle,cmc,power:p,toughness:t});
+const deck=()=>buildDeck([...Array(60)].map(()=>mk('Forest','Basic Land — Forest','','',0)).concat([...Array(39)].map(()=>mk('Elf','Creature — Elf Warrior','{1}{G}','',2,2,2))).concat([mk('Cmdr','Legendary Creature — Elf','{G}','',1,1,1)]),['Cmdr']);
+const L=n=>tagCard(mk(n,'Basic Land — '+n,'','',0));
+let fails=0,pass=0;const ok=(n,c,x='')=>{if(c)pass++;else{fails++;console.log('FAIL '+n+(x?' — '+x:''));}};
+function fresh(n=3){const g=new Game([...Array(n)].map((_,i)=>({name:'P'+i,deck:deck(),ai:new AI('focused')})),{seed:11,hooks:{emit:()=>{}}});g.active=0;g.phase='main1';g.turn=4;g.players.forEach(p=>p.turnCount=2);return g;}
+const put=(g,p,card,o={})=>{const c=card.uid?card:tagCard(card);const pm={id:Math.random(),card:c,tapped:false,summoning:false,counters:0,...o};if(c.isPlaneswalker)pm.loyalty=c.startLoyalty;p.battlefield.push(pm);return pm};
+const lands=(g,p,ns)=>ns.forEach(n=>put(g,p,L(n)));const last=(g,k=3)=>g.log.slice(-k).map(l=>l.m).join(' | ');
+const bear=()=>tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,2,2));
+const T=async(name,fn)=>{try{await fn();}catch(e){fails++;console.log('CRASH '+name+': '+e.stack.split('\n').slice(0,3).join(' / '));}};
+const elf=(p=2,t=2)=>tagCard(mk('Elfy','Creature — Elf Warrior','{1}{G}','',2,p,t));
+const flush=async g=>{await g.emit({type:'tick'});};
+const W=(g,a,n,nm='Mountain')=>lands(g,a,Array(n).fill(nm));
+const opp=(g,b,c)=>{const t=put(g,b,c);t.owner=g.players.indexOf(b);return t};
+const spell=(g,b,c)=>{g.stack.push({id:900+Math.floor(Math.random()*99),kind:'spell',card:c,caster:b,target:null,zone:'hand'});return g.stack[g.stack.length-1]};
+(async()=>{
+await T('bloodthirster',async()=>{const g=fresh();const [a,b]=g.players;const bt=put(g,a,C('Bloodthirster'));bt.tapped=true;g._cdDefender=b;await g.combatDamageTriggers(a,bt);ok('untaps + extra combat',!bt.tapped&&a.extraCombat);});
+await T('koma ward',async()=>{const k=C('Koma, World-Eater');ok('ward 4',k.statics.ward===4);});
+await T('offer refuse',async()=>{const g=fresh();const [a,b]=g.players;W(g,a,1,'Island');const sp=spell(g,b,tagCard(mk('Think','Sorcery','{3}','Draw a card.',3)));const of=C("An Offer You Can't Refuse");a.hand=[of];await g.cast(a,of,'hand',{spell:sp},{instant:true});ok('countered & caster gets 2 treasures',b.battlefield.filter(x=>x.card.name==='Treasure').length===2);g.stack=[];});
+await T('mana drain',async()=>{const g=fresh();const [a,b]=g.players;W(g,a,2,'Island');const sp=spell(g,b,tagCard(mk('Big','Sorcery','{5}','Draw a card.',5)));const md=C('Mana Drain');a.hand=[md];await g.cast(a,md,'hand',{spell:sp},{instant:true});ok('pending mana 5',a.pendingMainMana===5);g.stack=[];});
+const tok=(g,p,n='Soldier')=>put(g,p,{...tagCard(mk(n,'Token Creature — Soldier','','',0,1,1)),token:true});
+await T('world tree',async()=>{const g=fresh();const [a]=g.players;put(g,a,C('The World Tree'));const U={generic:0,pips:{W:0,U:1,B:0,R:0,G:0},total:1};ok('no U at 1 land',!g.canPayCost(a,U));W(g,a,5,'Forest');ok('U at 6 lands',g.canPayCost(a,U));});
+await T('escape tunnel',async()=>{const t=C('Escape Tunnel');ok('fetch + unblockable',t.fetch&&t.abilities.some(x=>x.ops[0].op==='unblockable'&&x.ops[0].maxPower===2&&x.sacSelf));});
+await T('fanatic',async()=>{const g=fresh();const [a]=g.players;put(g,a,C('Fanatic of Rhonas'));const G4={generic:0,pips:{W:0,U:0,B:0,R:0,G:4},total:4};const G1={generic:0,pips:{W:0,U:0,B:0,R:0,G:1},total:1};ok('G alone',g.canPayCost(a,G1)&&!g.canPayCost(a,G4));put(g,a,elf(4,4));ok('GGGG with ferocious',g.canPayCost(a,G4));});
+await T('helm',async()=>{const g=fresh();const [a]=g.players;const h=put(g,a,C("Champion's Helm"));const e=put(g,a,elf());h.attachedTo=e.id;g.refreshStatics&&g.refreshStatics();g.refreshStatics();ok('nonlegend no hexproof',!e.card.kw.includes('hexproof'));const l=put(g,a,tagCard(mk('Leg','Legendary Creature — Elf','{G}','',1,1,1)));h.attachedTo=l.id;g.refreshStatics();ok('legend hexproof',l.card.kw.includes('hexproof'));ok('+2/+2',g.powerOf(a,l)===3);});
+await T('caretaker',async()=>{const g=fresh();const [a]=g.players;const c=put(g,a,C("Caretaker's Talent"));const t=tok(g,a);W(g,a,5,'Plains');await g.runOps(a,[{op:'levelUp',k:2}],c.card,{perm:c});ok('L2 copies token',a.battlefield.filter(x=>x.card.name==='Soldier').length===2);await g.runOps(a,[{op:'levelUp',k:3}],c.card,{perm:c});ok('L3 tokens +2/+2',g.powerOf(a,t)===3);});
+await T('wizard class',async()=>{const g=fresh();const [a]=g.players;const c=put(g,a,C('Wizard Class'));const e=put(g,a,elf());const h0=a.hand.length;await g.runOps(a,[{op:'levelUp',k:2}],c.card,{perm:c});ok('L2 draw 2',a.hand.length===h0+2);await g.runOps(a,[{op:'levelUp',k:3}],c.card,{perm:c});await g.draw(a,1);await flush(g);ok('L3 draw → counter',e.counters>=1||a.battlefield.some(b=>b.card.isCreature&&b.counters>=1),last(g,4));});
+await T('innkeeper',async()=>{const g=fresh();const [a,b]=g.players;const c=put(g,a,C("Innkeeper's Talent"));const e=put(g,a,elf());e.counters=1;await g.runOps(a,[{op:'levelUp',k:2}],c.card,{perm:c});ok('L2 ward on countered perm',g.wardOf(e)===1);await g.runOps(a,[{op:'levelUp',k:3}],c.card,{perm:c});await g.runOps(a,[{op:'counters',n:1,to:'target creature'}],c.card,{perm:c});ok('L3 doubles counters',e.counters===3,''+e.counters);});
+await T('opp agent',async()=>{const g=fresh();const [a,b]=g.players;put(g,a,C('Opposition Agent'));const n=a.exile.length;await g.runOps(b,[{op:'tutorTo',filter:'creature',dest:'hand',n:1}],tagCard(mk('Tut','Sorcery','{1}','',1)),{});ok('searched card exiled by agent',a.exile.length===n+1||b.exile.length>0,last(g,3));});
+console.log(pass+' passed, '+fails+' failed');})();

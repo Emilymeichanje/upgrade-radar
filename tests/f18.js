@@ -1,0 +1,35 @@
+require(__dirname+'/../playtest.js');const {Game,AI,buildDeck,tagCard}=Goldfish;
+const RAW=[...require(__dirname+'/fixtures/gap1.json'),...require(__dirname+'/fixtures/gap2.json'),...require(__dirname+'/fixtures/gap3.json'),...require(__dirname+'/fixtures/gap4.json'),...require(__dirname+'/fixtures/gap5.json')].map(a=>({name:a[1],mana:a[2],type:a[3],oracle:a[4],cmc:a[5],power:a[6],toughness:a[7],loyalty:a[8]}));
+const C=n=>{const r=RAW.find(x=>x.name===n||x.name.startsWith(n+' //'));if(!r)throw new Error('no card '+n);return tagCard(r);};
+const mk=(name,type,mana,oracle,cmc,p,t)=>({name,type,mana,oracle,cmc,power:p,toughness:t});
+const deck=()=>buildDeck([...Array(60)].map(()=>mk('Forest','Basic Land — Forest','','',0)).concat([...Array(39)].map(()=>mk('Elf','Creature — Elf Warrior','{1}{G}','',2,2,2))).concat([mk('Cmdr','Legendary Creature — Elf','{G}','',1,1,1)]),['Cmdr']);
+const L=n=>tagCard(mk(n,'Basic Land — '+n,'','',0));
+let fails=0,pass=0;const ok=(n,c,x='')=>{if(c)pass++;else{fails++;console.log('FAIL '+n+(x?' — '+x:''));}};
+function fresh(n=3){const g=new Game([...Array(n)].map((_,i)=>({name:'P'+i,deck:deck(),ai:new AI('focused')})),{seed:11,hooks:{emit:()=>{}}});g.active=0;g.phase='main1';g.turn=4;g.players.forEach(p=>p.turnCount=2);return g;}
+const put=(g,p,card,o={})=>{const c=card.uid?card:tagCard(card);const pm={id:Math.random(),card:c,tapped:false,summoning:false,counters:0,...o};if(c.isPlaneswalker)pm.loyalty=c.startLoyalty;p.battlefield.push(pm);return pm};
+const lands=(g,p,ns)=>ns.forEach(n=>put(g,p,L(n)));const last=(g,k=3)=>g.log.slice(-k).map(l=>l.m).join(' | ');
+const bear=()=>tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,2,2));
+const T=async(name,fn)=>{try{await fn();}catch(e){fails++;console.log('CRASH '+name+': '+e.stack.split('\n').slice(0,3).join(' / '));}};
+const elf=(p=2,t=2)=>tagCard(mk('Elfy','Creature — Elf Warrior','{1}{G}','',2,p,t));
+const flush=async g=>{await g.emit({type:'tick'});};
+const W=(g,a,n,nm='Mountain')=>lands(g,a,Array(n).fill(nm));
+const opp=(g,b,c)=>{const t=put(g,b,c);t.owner=g.players.indexOf(b);return t};
+const spell=(g,b,c)=>{g.stack.push({id:900+Math.floor(Math.random()*99),kind:'spell',card:c,caster:b,target:null,zone:'hand'});return g.stack[g.stack.length-1]};
+(async()=>{
+await T('bloodthirster',async()=>{const g=fresh();const [a,b]=g.players;const bt=put(g,a,C('Bloodthirster'));bt.tapped=true;g._cdDefender=b;await g.combatDamageTriggers(a,bt);ok('untaps + extra combat',!bt.tapped&&a.extraCombat);});
+await T('koma ward',async()=>{const k=C('Koma, World-Eater');ok('ward 4',k.statics.ward===4);});
+await T('offer refuse',async()=>{const g=fresh();const [a,b]=g.players;W(g,a,1,'Island');const sp=spell(g,b,tagCard(mk('Think','Sorcery','{3}','Draw a card.',3)));const of=C("An Offer You Can't Refuse");a.hand=[of];await g.cast(a,of,'hand',{spell:sp},{instant:true});ok('countered & caster gets 2 treasures',b.battlefield.filter(x=>x.card.name==='Treasure').length===2);g.stack=[];});
+await T('mana drain',async()=>{const g=fresh();const [a,b]=g.players;W(g,a,2,'Island');const sp=spell(g,b,tagCard(mk('Big','Sorcery','{5}','Draw a card.',5)));const md=C('Mana Drain');a.hand=[md];await g.cast(a,md,'hand',{spell:sp},{instant:true});ok('pending mana 5',a.pendingMainMana===5);g.stack=[];});
+const kill=async(g,p,pm)=>{await g.destroy(p,pm);await flush(g);};
+const tf=async(nm,lands,col)=>{const g=fresh();const [a]=g.players;const pm=put(g,a,C(nm));pm.summoning=false;W(g,a,lands,col);const o=g.abilityOptions(a,{}).find(x=>x.card===pm.card&&/transform|exile/i.test((x.ab.text||'')+(x.ab.label||'')+JSON.stringify(x.ab.ops)));ok(nm+' transform ability',!!o);if(o){await g.activate(a,o);const n=a.battlefield.find(x=>x===pm||x.card.name!==C(nm).name&&x.card.orig);ok(nm+' transformed',/returns transformed/.test(last(g,3)),last(g,3));}};
+await T('jin',()=>tf('Jin-Gitaxias // The Great Synthesis',4,'Island'));
+await T('clive tf',()=>tf("Clive, Ifrit's Dominant // Ifrit, Warden of Inferno",6,'Mountain'));
+await T('peter',async()=>{const g=fresh();const [a]=g.players;const pm=put(g,a,C('Peter Parker // Amazing Spider-Man'));lands(g,a,['Forest','Plains','Island','Island']);const o=g.abilityOptions(a,{}).find(x=>x.card===pm.card);ok('peter ability',!!o,JSON.stringify(pm.card.abilities.map(a=>a.ops)));if(o){await g.activate(a,o);ok('peter transformed',pm.card.name!=='Peter Parker // Amazing Spider-Man'||pm.transformed,pm.card.name+' '+last(g,2));}});
+await T('clive etb',async()=>{const g=fresh();const [a]=g.players;put(g,a,tagCard(mk('Red','Creature — Elemental','{R}{R}{R}','',3,1,1)));W(g,a,6,'Mountain');const c=C("Clive, Ifrit's Dominant // Ifrit, Warden of Inferno");a.hand=[c,elf()];await g.cast(a,c);ok('wheel to devotion 5',a.hand.length===5,a.hand.length+' '+last(g,4));});
+await T('konrad',async()=>{const g=fresh();const [a,b]=g.players;put(g,a,C('Syr Konrad, the Grim'));const e=opp(g,b,elf());await kill(g,b,e);ok('opp creature dies → 1 to each opp',g.players.slice(1).every(q=>q.life===39),g.players.map(q=>q.life)+'');W(g,a,2,'Swamp');b.library.push(elf());const o=g.abilityOptions(a,{instant:true}).find(x=>x.card.name==='Syr Konrad, the Grim');ok('mill ability',!!o);});
+await T('damn',async()=>{const g=fresh();const [a,b]=g.players;W(g,a,2,'Swamp');const t=opp(g,b,elf());const d=C('Damn');a.hand=[d];await g.cast(a,d,'hand',t);ok('destroyed',!b.battlefield.includes(t));});
+await T('vile entomber',async()=>{const g=fresh();const [a]=g.players;W(g,a,4,'Swamp');const v=C('Vile Entomber');a.hand=[v];const gy=a.graveyard.length;await g.cast(a,v);ok('entombs one',a.graveyard.length===gy+1,last(g,3));});
+await T('map trigger',async()=>{const g=fresh();const [a,b]=g.players;put(g,a,C("Archaeomancer's Map"));a.hand=[tagCard(mk('Forest','Basic Land — Forest','','',0))];W(g,b,2,'Forest');const [l]=await g.landEnters(b,tagCard(mk('Forest','Basic Land — Forest','','',0)));await g.landfall(b,l);await flush(g);ok('put land when behind',a.battlefield.some(x=>x.card.isLand),last(g,3));});
+await T('inkshield',async()=>{const g=fresh();const [a,b]=g.players;W(g,a,4,'Plains');W(g,a,1,'Swamp');const i=C('Inkshield');a.hand=[i];g.active=1;await g.cast(a,i,'hand',null,{instant:true});const atk=put(g,b,elf(3,3));g.active=1;await g.fightCombat?null:null;ok('prevent flag',a.preventCombatTurn===g.turn||a.inkshield===g.turn||/prevent/i.test(last(g,3)),last(g,3));});
+await T('malcolm',async()=>{const g=fresh();const [a,b]=g.players;const m=put(g,a,C('Malcolm, Alluring Scoundrel'));g._cdDefender=b;const h=a.hand.length;await g.combatDamageTriggers(a,m);await flush(g);ok('chorus + loot',(m.ck&&m.ck.chorus===1)&&a.hand.length===h,JSON.stringify(m.ck)+' '+(a.hand.length-h));});
+console.log(pass+' passed, '+fails+' failed');})();

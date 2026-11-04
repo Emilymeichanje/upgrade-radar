@@ -1,0 +1,7 @@
+const {chromium}=require('playwright');(async()=>{const b=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']});const pg=await b.newPage();await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));
+await pg.goto('file://'+__dirname+'/ui5.html');await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.click('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy,null,{timeout:60000});
+const r=await pg.evaluate(async()=>{const S=GoldfishUI.current.sfx;const out={};for(const m of ['ambient','tavern','battle']){S.s.music=m;S.musicStart();const an=S.ctx.createAnalyser();an.fftSize=2048;S.musicBus.connect(an);const buf=new Float32Array(an.fftSize);let peak=0,rms=0,n=0;const t0=performance.now();while(performance.now()-t0<2500){await new Promise(r=>setTimeout(r,100));an.getFloatTimeDomainData(buf);let s=0;for(const v of buf){s+=v*v;peak=Math.max(peak,Math.abs(v))}rms+=Math.sqrt(s/buf.length);n++}out[m]={peak:+peak.toFixed(3),rms:+(rms/n).toFixed(4)};S.musicStop()}
+ // reference: one sfx through master
+ const an2=S.ctx.createAnalyser();an2.fftSize=2048;S.master.connect(an2);S.s.sfxStyle='classic';S.play('cast');await new Promise(r=>setTimeout(r,120));const b2=new Float32Array(2048);an2.getFloatTimeDomainData(b2);let p2=0;for(const v of b2)p2=Math.max(p2,Math.abs(v));out.sfxCastPeak=+p2.toFixed(3);out.ctx=S.ctx.state;return out});
+console.log(JSON.stringify(r));await b.close();})();

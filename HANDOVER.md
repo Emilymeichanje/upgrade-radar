@@ -26,8 +26,9 @@ Advisor, not assistant. First sentence must challenge an assumption or expose a 
 
 ## 3. Current state
 
-- **Deployed: v61** (2026‑11‑04). Version pins live in `index.html`: `playtest.js?v=N`, `playtest-ui.js?v=N`, `engine:'vN'` — bump all three on every deploy:
-  `sed -i 's/playtest\.js?v=60/playtest.js?v=61/; s/playtest-ui\.js?v=60/playtest-ui.js?v=61/; s/engine:'"'"'v60'"'"'/engine:'"'"'v61'"'"'/' index.html`
+- **Deployed: v62** (2026‑11‑04). Version pins live in `index.html`: `playtest.js?v=N`, `playtest-ui.js?v=N`, `engine:'vN'` — bump all three on every deploy:
+  `sed -i 's/playtest\.js?v=61/playtest.js?v=62/; s/playtest-ui\.js?v=61/playtest-ui.js?v=62/; s/engine:'"'"'v61'"'"'/engine:'"'"'v62'"'"'/' index.html`
+- v62 (b10): parser double-pushed `damage … any target` when the subject was "it/this creature" — every such pinger dealt 2× (Mayhem Devil etc.); station thresholds are now generic (`N+ |` marker scopes following lines: `thr` on abilities/triggers, gated in `refreshStatics`/`canUseAbility`; Hearthhull's 8+ drain fired at 5 charge); token copies with changed P/T carry `card.altered` and a green badge in the UI (Astral Dragon's "Currency Converter" 3/3 Dragons confused the owner); pumpTypes log no longer prints "0 creatures get +0".
 - v61 (batch **b10**): Deification prompts the human for a planeswalker type (new UI `humanChoice`/`humanChooseType` hooks → `choice` prompt); Ghost Vacuum / 'exile target card from a graveyard' lets the human pick from every graveyard (search prompt with owner labels); 'target attacking or blocking creature' abilities (Gideon's Memorial) only offered while something is attacking/blocking; Export log always visible, works while the UI is busy, and carries a `state:` line (phase, busy/prompt/mode, stack) plus captured JS errors/rejections — ask for this export whenever a game hangs.
 - v60: AI never sacrifices its own sac outlet when another body exists (Carrion Feeder); life‑aware modal choice ("choose one or more", Black Market Connections) so AI doesn't pay itself to death; Darkness Crystal + commander log message.
 - Engine code is organised in **batch regions**: `// ==== fixes bN (parse|ops|ai|methods) ====` … `// ---- end bN`. Current batch is **b10**. New work goes in a new `b11` region (or the matching b9 region if it's a direct follow‑up). Never edit inside an older batch region unless fixing that batch's own bug.
@@ -99,6 +100,9 @@ Report to the owner per the persona: what was wrong, what was correct‑but‑lo
 - Phil Coulson ability was legal (click target).
 - Sisay 78/116 life totals correct (Bayek double strike).
 - Carrion Feeder sacrificing itself *in response to exile* is correct play and intentionally kept.
+- Astral Dragon copying an opponent's Currency Converter → two 3/3 flying Dragons *named* Currency Converter attacking: correct; Swords naming "Currency Converter" is correct.
+- Cursed Mirror copying Firion, then being equipped and attacking as "Firion": correct.
+- Firion's token copy of a legendary Equipment dies to the legend rule; the AI keeps the original: correct.
 
 ## 8. How the owner tests
 

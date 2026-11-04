@@ -349,6 +349,7 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 .sfind{width:min(320px,100%);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;margin:4px 0}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;max-height:340px;overflow-y:auto;padding:4px}
 .sopt{aspect-ratio:.716;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--soft);display:grid;place-items:center;font-size:.7rem;text-align:center;transition:transform .15s,box-shadow .15s}
+.pt.alt{background:#5a3;color:#fff;font-size:.55rem}
 .sopt{position:relative}.sopt .own{position:absolute;left:0;right:0;bottom:0;font-size:.55rem;font-style:normal;background:rgba(0,0,0,.65);color:#eee;text-align:center;padding:1px 2px;pointer-events:none}
 .sopt img{width:100%;height:100%;object-fit:cover;pointer-events:none}
 .sopt:hover{transform:scale(1.05);box-shadow:0 0 0 2px var(--accent)}
@@ -917,6 +918,7 @@ class Table {
     let pt = '';
     if (c.isCreature) { const pw = g.powerOf(owner, b), tg = g.toughOf(owner, b); pt = `<span class="pt ${pw > c.power ? 'up' : ''}" title="${(b.counters || 0) > 0 ? b.counters + ' +1/+1 counter' + (b.counters === 1 ? '' : 's') : ''}">${pw}/${tg}${(b.counters || 0) > 0 ? `<small>+${b.counters}</small>` : ''}</span>`; }
     if (c.isPlaneswalker) pt = `<span class="pt">◆${b.loyalty || 0}</span>`;
+    if (c.altered) pt += `<span class="pt alt" title="Token copy with changed characteristics">${esc(c.altered)}</span>`;
     { const kinds = g.counterKinds(b); delete kinds.loyalty; if (c.isCreature) delete kinds['+1/+1']; const ks = Object.entries(kinds); if (ks.length) { const ICON = { '+1/+1': '+1', '-1/-1': '−1', quest: 'Q', lore: 'ch', charge: '⚡', oil: 'oil', stun: 'stun', shield: '🛡', time: 't', age: 'age', hatchling: 'egg', indestructible: '∞', flying: 'fly', suspect: '?' }; pt += `<span class="ctr" title="${esc(ks.map(([k, v]) => v + ' ' + k + ' counter' + (v === 1 ? '' : 's')).join(', '))}">${ks.slice(0, 3).map(([k, v]) => `<b>${v}</b>${esc(ICON[k] || k.slice(0, 4))}`).join(' ')}</span>`; } }
     const att = g.players.flatMap(q => q.battlefield).filter(x => x.attachedTo === b.id);
     if (b.neutral || b.pacified) { cls.push('neut'); badge = badge || `<span class="bd">${b.neutral ? 'neutralised' : "can't attack/block"}</span>`; }

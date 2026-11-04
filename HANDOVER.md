@@ -82,6 +82,7 @@ Report to the owner per the persona: what was wrong, what was correct‑but‑lo
 
 ## 6. Open items / backlog
 
+- Staff of the Storyteller 'no counter' report (same game): all four token paths verified in `tests/staff.js` (own ETB, Quintorius gyLeave, multi-token, Hofri copy). Most likely the hang swallowed the queued trigger (`pendingGen` flushes after the action). Re-check once a hang log arrives.
 - **Unresolved hang (2026‑11‑04, Quintorius deck, v60):** UI stuck on "Resolving…" after Quintorius +1 went on the stack. Could not reproduce in isolation (`tests/ui/quint.js`). Next log export will include the `state:` line and errors — diagnose from that. Suspects: a human hook whose prompt got overwritten (`ask()` restores `prev`), or an engine await that never settles.
 
 - **Offered, not built:** "repeat until I stop" button for loop abilities (Malcolm + Buccaneer style combos).

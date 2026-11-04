@@ -614,7 +614,7 @@ class Table {
   costStr(c) { if (!c) return ''; let s = c.generic ? `{${c.generic}}` : ''; for (const k of 'WUBRG') s += `{${k}}`.repeat(c.pips[k] || 0); return s || '{0}'; }
   optLabel(o) {
     if (o.kind === 'fetch') return 'crack';
-    if (o.kind === 'cast') return o.zone === 'gy' ? (o.card.gyCast.kind + ' ' + this.costStr(o.card.gyCast.cost)) : 'cast';
+    if (o.kind === 'cast') return o.zone === 'gy' ? (gr => gr ? (gr.kind || 'cast') + ' ' + this.costStr(gr.cost || o.card.mana) : 'cast from graveyard')(o.card.gyCast || (this.game && this.me ? this.game.gyGrant(this.me, o.card) : null)) : 'cast';
     if (o.kind === 'ability') { const ab = o.ab; const what = ab.label || ({ gyToHand: 'return a card to hand', draw: 'draw', landToHand: 'find a land', selfToBf: 'return to battlefield', selfToHand: 'return to hand', tokens: 'make tokens', gain: 'gain life', drain: 'drain', damage: 'deal damage', counters: '+1/+1 counters', destroy: 'destroy', gyToBf: 'reanimate', mill: 'mill', scry: 'scry', surveil: 'surveil', tokenCopy: 'token copy', attach: 'equip', edict: 'edict', bounceAllOpp: 'overload' }[ab.ops[0].op] || 'activate'); return `${what} ${this.costStr(ab.cost)}${ab.tap ? ' {T}' : ''}`; }
     return '';
   }
@@ -640,8 +640,9 @@ class Table {
     return new Promise(res => { this.prompt = { kind: 'mull', n: 0, res: () => { this.prompt = null; res(); } }; this.render(); });
   }
   // ---------- actions ----------
-  async act(fn) { if (this.busy) return; this.busy = true; this.render();
+  async act(fn) { if (this.busy) return; this.busy = true;
     const g = this.game, undoable = this.myTurn && !this.prompt && g && g.snapshot; let pre = null;
+    try { this.render(); } catch (e) { this.diagPush('render before action: ' + (e && e.stack || e)); }
     if (undoable) { try { if (!g._rngWrapped) { const r = g.rng; g.rng = () => { g._rngN = (g._rngN || 0) + 1; return r(); }; g._rngWrapped = true; } pre = { snap: g.snapshot(), libs: this.undoSig(g, true), opp: this.undoSig(g, false), rn: g._rngN || 0, logN: g.log.length, phase: this.turnPhase }; } catch (e) { console.warn('undo snapshot', e); } }
     try { await fn(); } catch (e) { this.diagPush('action failed: ' + (e && e.stack || e)); try { g && g.log.push({ t: g.turn, m: `⚠ engine error: ${e && e.message || e}` }); } catch (_) {} console.error(e); } finally {
       if (pre && this.myTurn && this.game === g) {
@@ -1003,7 +1004,8 @@ class Table {
   applyZoom() { const gt = this.el.querySelector('.gt'); if (gt) gt.style.setProperty('--z', String(this.s.zoom || 1)); const b = this.el.querySelector('.gt-bar .zm b'); if (b) b.textContent = Math.round((this.s.zoom || 1) * 100) + '%'; }
   setZoom(z) { z = Math.max(ZOOMS[0], Math.min(ZOOMS[ZOOMS.length - 1], Math.round(z * 100) / 100)); if (z === this.s.zoom) return; this.s.zoom = z; saveSettings(this.s); this.applyZoom(); }
   stepZoom(d) { const i = ZOOMS.findIndex(z => z >= (this.s.zoom || 1) - 0.001); const j = Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? ZOOMS.indexOf(1) : i) + d)); this.setZoom(ZOOMS[j]); }
-  render() {
+  render() { try { this._render(); } catch (e) { this.diagPush('render: ' + (e && e.stack || e)); console.error(e); try { if (this.board && !this.board.querySelector('.render-err')) this.board.insertAdjacentHTML('afterbegin', `<div class="render-err" style="background:#5a2020;color:#fff;padding:6px 10px;border-radius:8px;margin:6px">Display error: ${esc(String(e && e.message || e))} — the game continues; please Export log and report it. <button class="chip" data-act="export-log">Export log</button></div>`); } catch (_) {} } }
+  _render() {
     const g = this.game, me = this.me, P = this.prompt; if (!g) return;
     const active = g.players[g.active];
     const opps = g.players.filter(p => p !== me);

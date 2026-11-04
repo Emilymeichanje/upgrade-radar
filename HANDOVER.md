@@ -26,8 +26,9 @@ Advisor, not assistant. First sentence must challenge an assumption or expose a 
 
 ## 3. Current state
 
-- **Deployed: v62** (2026‑11‑04). Version pins live in `index.html`: `playtest.js?v=N`, `playtest-ui.js?v=N`, `engine:'vN'` — bump all three on every deploy:
-  `sed -i 's/playtest\.js?v=61/playtest.js?v=62/; s/playtest-ui\.js?v=61/playtest-ui.js?v=62/; s/engine:'"'"'v61'"'"'/engine:'"'"'v62'"'"'/' index.html`
+- **Deployed: v63** (2026‑11‑04). Version pins live in `index.html`: `playtest.js?v=N`, `playtest-ui.js?v=N`, `engine:'vN'` — bump all three on every deploy:
+  `sed -i 's/playtest\.js?v=62/playtest.js?v=63/; s/playtest-ui\.js?v=62/playtest-ui.js?v=63/; s/engine:'"'"'v62'"'"'/engine:'"'"'v63'"'"'/' index.html`
+- v63 (b10): **the hang, solved.** `act()` set `busy=true` then called `render()` *outside* its try/finally; a render exception (here `optLabel` reading `card.gyCast.kind` for a graveyard-castable card granted by `gyGrant`, not `gyCast`) left `busy` stuck → "Resolving…" forever. Now: render is wrapped (`render()`→`_render()` with a visible red banner + diag on failure), the pre-action render is inside try, gy-cast labels use `gyGrant`. Also: Sagas now get their lore counter on entering via `enterPerm` (was only in `landEnters`, so every Saga ran a chapter late); chapter parses for Restoration of Eiganjo (basic-Plains tutor, "you may discard… when you do", "exile this Saga, then return transformed"); generic block triggers (`when:'blocks'`, fired after blockers declared); Staff of the Storyteller's remove-a-story-counter cost reads kind counters (`perm.ck`).
 - v62 (b10): parser double-pushed `damage … any target` when the subject was "it/this creature" — every such pinger dealt 2× (Mayhem Devil etc.); station thresholds are now generic (`N+ |` marker scopes following lines: `thr` on abilities/triggers, gated in `refreshStatics`/`canUseAbility`; Hearthhull's 8+ drain fired at 5 charge); token copies with changed P/T carry `card.altered` and a green badge in the UI (Astral Dragon's "Currency Converter" 3/3 Dragons confused the owner); pumpTypes log no longer prints "0 creatures get +0".
 - v61 (batch **b10**): Deification prompts the human for a planeswalker type (new UI `humanChoice`/`humanChooseType` hooks → `choice` prompt); Ghost Vacuum / 'exile target card from a graveyard' lets the human pick from every graveyard (search prompt with owner labels); 'target attacking or blocking creature' abilities (Gideon's Memorial) only offered while something is attacking/blocking; Export log always visible, works while the UI is busy, and carries a `state:` line (phase, busy/prompt/mode, stack) plus captured JS errors/rejections — ask for this export whenever a game hangs.
 - v60: AI never sacrifices its own sac outlet when another body exists (Carrion Feeder); life‑aware modal choice ("choose one or more", Black Market Connections) so AI doesn't pay itself to death; Darkness Crystal + commander log message.
@@ -83,8 +84,7 @@ Report to the owner per the persona: what was wrong, what was correct‑but‑lo
 
 ## 6. Open items / backlog
 
-- Staff of the Storyteller 'no counter' report (same game): all four token paths verified in `tests/staff.js` (own ETB, Quintorius gyLeave, multi-token, Hofri copy). Most likely the hang swallowed the queued trigger (`pendingGen` flushes after the action). Re-check once a hang log arrives.
-- **Unresolved hang (2026‑11‑04, Quintorius deck, v60):** UI stuck on "Resolving…" after Quintorius +1 went on the stack. Could not reproduce in isolation (`tests/ui/quint.js`). Next log export will include the `state:` line and errors — diagnose from that. Suspects: a human hook whose prompt got overwritten (`ask()` restores `prev`), or an engine await that never settles.
+- Hang class is closed (v63). If "Resolving…" ever sticks again: export log → `errors:` block → if empty, the engine is awaiting a hook; if a stack trace, it's a render/UI crash (now shown as a red banner instead of freezing).
 
 - **Offered, not built:** "repeat until I stop" button for loop abilities (Malcolm + Buccaneer style combos).
 - Goblin Army / Halvar double‑strike damage totals from the v59 log were plausible but not replay‑verified.

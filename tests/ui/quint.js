@@ -38,4 +38,11 @@ ok("Gideon's Memorial offered only while a creature is attacking/blocking",m.non
 // export log works while busy and carries a state line
 const ex=await pg.evaluate(()=>{const U=GoldfishUI.current;U.busy=true;U.render();const btn=document.querySelector('[data-act=export-log]');const vis=!!btn&&getComputedStyle(btn).display!=='none';const txt=U.logText();U.busy=false;U.render();return {vis,state:(txt.split('\n').find(l=>/^state:/.test(l))||'')}});
 ok('export log available while busy, with state line',ex.vis&&/ui busy/.test(ex.state),JSON.stringify(ex));
+// regression: a graveyard-castable card without card.gyCast must not crash render (this froze two games)
+const gy=await pg.evaluate(async()=>{const U=GoldfishUI.current,me=U.me,g=U.game;const {tagCard}=Goldfish;const c=tagCard({name:'Wrenny Bear',type:'Creature — Bear',mana:'{1}{G}',oracle:'',cmc:2,power:2,toughness:2});me.graveyard.push(c);me.wrennEmblem=true;
+  const d0=(U.diag||[]).length;let label='';try{label=U.optLabel({kind:'cast',card:c,zone:'gy'})}catch(e){label='THREW '+e.message}await U.act(async()=>{});return {busy:U.busy,diagNew:(U.diag||[]).slice(d0),label,err:!!document.querySelector('.render-err')}});
+ok('graveyard-cast option without gyCast labels safely and act() finishes',gy.busy===false&&gy.diagNew.length===0&&!gy.err&&/emblem/.test(gy.label),JSON.stringify(gy));
+// Staff of the Storyteller: counters stored as kind counters must satisfy the remove-counter cost
+const stf=await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me,g=U.game;const st=me.battlefield.find(b=>b.card.name==='Staff of the Storyteller');st.ck={story:3};st.tapped=false;me.pool=[{c:'W'}];const o=g.abilityOptions(me,{}).find(o=>o.card===st.card&&o.ab.removeKind);return {offered:!!o,can:o?g.canUseAbility(me,st.card,o.ab,st):false,story:st.ck.story}});
+ok('Staff draw ability usable with story counters',stf.offered&&stf.can,JSON.stringify(stf));
 console.log('errors',errs);await b.close();})();

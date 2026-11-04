@@ -10,7 +10,7 @@ const short = n => String(n || '').replace(/^(You|AI) · /, '');
 const done = (a, ms) => Promise.race([a.finished.catch(() => {}), new Promise(r => setTimeout(r, ms + 80))]);
 
 // ---------------- settings ----------------
-const DEFAULTS = { anim: !matchMedia('(prefers-reduced-motion: reduce)').matches, sound: true, volume: 0.5, speed: 'normal', stops: 'smart', zoom: 1, sfxStyle: 'classic', music: 'off', musicVol: 0.35, fx: 'normal' };
+const DEFAULTS = { anim: !matchMedia('(prefers-reduced-motion: reduce)').matches, sound: true, volume: 0.5, speed: 'normal', stops: 'smart', zoom: 1, sfxStyle: 'classic', music: 'off', musicVol: 0.6, fx: 'normal' };
 const ZOOMS = [0.75, 0.85, 1, 1.15, 1.3, 1.5, 1.75, 2];
 function loadSettings() { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('pt-settings') || '{}') }; } catch (e) { return { ...DEFAULTS }; } }
 function saveSettings(s) { try { localStorage.setItem('pt-settings', JSON.stringify(s)); } catch (e) {} }
@@ -66,17 +66,17 @@ class Sfx {
   musicStart() {
     this.musicStop(); const mode = this.s.music; if (!mode || mode === 'off' || !this.ctx) return;
     const c = this.ctx; if (c.state === 'suspended') c.resume();
-    const bus = this.musicBus = c.createGain(); bus.gain.value = this.s.musicVol ?? 0.35; const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = mode === 'battle' ? 3200 : 1800; bus.connect(lp); lp.connect(c.destination);
+    const bus = this.musicBus = c.createGain(); bus.gain.value = this.s.musicVol ?? 0.6; const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = mode === 'battle' ? 3600 : 2400; const comp = c.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 4; bus.connect(lp); lp.connect(comp); comp.connect(c.destination);
     const root = [110, 123.47, 130.81, 146.83, 164.81][Math.floor(Math.random() * 5)]; const minor = mode !== 'tavern';
     const scale = minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]; const deg = i => root * Math.pow(2, scale[((i % 7) + 7) % 7] / 12) * Math.pow(2, Math.floor(i / 7));
     const prog = minor ? [0, 5, 3, 4] : [0, 3, 4, 0]; let bar = 0, step = 0; const bpm = mode === 'battle' ? 128 : mode === 'tavern' ? 96 : 50; const beat = 60 / bpm;
-    const voice = (f, t, d, type, g, det = 0) => { const o = c.createOscillator(), e = c.createGain(); o.type = type; o.frequency.value = f; o.detune.value = det; e.gain.setValueAtTime(0.0001, t); e.gain.exponentialRampToValueAtTime(g, t + Math.min(0.4, d * 0.3)); e.gain.exponentialRampToValueAtTime(0.0001, t + d); o.connect(e); e.connect(bus); o.start(t); o.stop(t + d + 0.05); };
-    const perc = (t, hi) => { const n = Math.floor(c.sampleRate * 0.08), b = c.createBuffer(1, n, c.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n); const src = c.createBufferSource(), f = c.createBiquadFilter(), e = c.createGain(); src.buffer = b; f.type = hi ? 'highpass' : 'lowpass'; f.frequency.value = hi ? 5000 : 200; e.gain.value = hi ? 0.08 : 0.5; src.connect(f); f.connect(e); e.connect(bus); src.start(t); };
+    const voice = (f, t, d, type, g, det = 0) => { g = Math.min(0.9, g * 4.5); const o = c.createOscillator(), e = c.createGain(); o.type = type; o.frequency.value = f; o.detune.value = det; e.gain.setValueAtTime(0.0001, t); e.gain.exponentialRampToValueAtTime(g, t + Math.min(0.4, d * 0.3)); e.gain.exponentialRampToValueAtTime(0.0001, t + d); o.connect(e); e.connect(bus); o.start(t); o.stop(t + d + 0.05); };
+    const perc = (t, hi) => { const n = Math.floor(c.sampleRate * 0.08), b = c.createBuffer(1, n, c.sampleRate), d = b.getChannelData(0); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n); const src = c.createBufferSource(), f = c.createBiquadFilter(), e = c.createGain(); src.buffer = b; f.type = hi ? 'highpass' : 'lowpass'; f.frequency.value = hi ? 5000 : 200; e.gain.value = hi ? 0.14 : 0.8; src.connect(f); f.connect(e); e.connect(bus); src.start(t); };
     let next = c.currentTime + 0.1;
     const tickFn = () => {
       while (next < c.currentTime + 0.6) {
         const chord = prog[bar % prog.length]; const t = next;
-        if (mode === 'ambient') { if (step % 8 === 0) { for (const i of [0, 2, 4]) voice(deg(chord + i), t, beat * 8, 'sine', 0.09, (Math.random() - 0.5) * 8); voice(deg(chord) / 2, t, beat * 8, 'triangle', 0.07); } if (step % 8 === 4 && Math.random() < 0.6) voice(deg(chord + [2, 4, 6, 7][Math.floor(Math.random() * 4)]) * 2, t, beat * 3, 'sine', 0.04); }
+        if (mode === 'ambient') { if (step % 8 === 0) { for (const i of [0, 2, 4]) { voice(deg(chord + i) * 2, t, beat * 8, 'sine', 0.04, (Math.random() - 0.5) * 8); voice(deg(chord + i) * 2, t, beat * 8, 'triangle', 0.012, 5); } voice(deg(chord), t, beat * 8, 'triangle', 0.045); } if (step % 8 === 4 && Math.random() < 0.6) voice(deg(chord + [2, 4, 6, 7][Math.floor(Math.random() * 4)]) * 2, t, beat * 3, 'sine', 0.04); }
         else if (mode === 'tavern') { const arp = [0, 2, 4, 2, 0, 4, 2, 4]; voice(deg(chord + arp[step % 8]) * 2, t, beat * 0.9, 'triangle', 0.09); if (step % 4 === 0) voice(deg(chord) / 2, t, beat * 2, 'triangle', 0.1); if (step % 8 === 6 && Math.random() < 0.5) voice(deg(chord + 7) * 2, t, beat * 1.5, 'sine', 0.05); }
         else { voice(deg(chord) / 2, t, beat * 0.5, 'sawtooth', 0.1); if (step % 2 === 0) perc(t, false); if (step % 2 === 1) perc(t, true); if (step % 8 === 0) for (const i of [0, 2, 4]) voice(deg(chord + i), t, beat * 4, 'sawtooth', 0.025, (Math.random() - 0.5) * 12); if (step % 8 === 4 && Math.random() < 0.7) voice(deg(chord + [4, 6, 7, 9][Math.floor(Math.random() * 4)]) * 2, t, beat, 'square', 0.03); }
         step++; if (step % 8 === 0) bar++; next += mode === 'ambient' ? beat : beat / 2;
@@ -85,7 +85,7 @@ class Sfx {
     this.musicTimer = setInterval(tickFn, 200); tickFn();
   }
   musicStop() { if (this.musicTimer) clearInterval(this.musicTimer); this.musicTimer = null; if (this.musicBus) { try { const b = this.musicBus, c = this.ctx; b.gain.setTargetAtTime(0.0001, c.currentTime, 0.2); setTimeout(() => { try { b.disconnect(); } catch (e) {} }, 800); } catch (e) {} this.musicBus = null; } }
-  musicVol() { if (this.musicBus) this.musicBus.gain.value = this.s.musicVol ?? 0.35; }
+  musicVol() { if (this.musicBus) this.musicBus.gain.value = this.s.musicVol ?? 0.6; }
   noise(dur, { freq = 1200, q = 0.8, gain = 0.25, type = 'bandpass', sweep = null, delay = 0 } = {}) {
     const c = this.ctx, t = c.currentTime + delay, n = Math.floor(c.sampleRate * dur), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
@@ -373,8 +373,9 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 @keyframes gtping{0%,60%{box-shadow:0 0 0 3px var(--warn),0 0 22px var(--warn)}100%{box-shadow:none}}
 .float{position:fixed;font:800 1.6rem var(--mono);pointer-events:none;z-index:50;text-shadow:0 2px 8px rgba(0,0,0,.6)}
 .ghost{position:fixed;z-index:40;pointer-events:none;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45);object-fit:cover}
-.set{position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:60;padding:16px}
-.set .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:12px;width:min(420px,100%)}
+.set{position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:60;padding:16px;overflow:auto;zoom:calc(1 / var(--z,1))}
+.set .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:12px;width:min(420px,100%);max-height:calc(100vh - 32px);overflow-y:auto;overscroll-behavior:contain}
+.set .box .sethead{display:flex;justify-content:space-between;align-items:center;position:sticky;top:-16px;margin:-16px -16px 0;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line);z-index:1}
 .set label{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:.92rem}
 .over{position:absolute;inset:0;display:grid;place-items:center;background:color-mix(in srgb,var(--bg) 70%,transparent);z-index:20;border-radius:10px}
 .over .box{background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:20px;display:grid;gap:10px;text-align:center;max-width:420px}
@@ -1053,14 +1054,14 @@ class Table {
     // overlays
     let over = '';
     if (g.winner && this.ended) { const place = me ? (g.winner === me ? 'You won' : 'You lost') : ''; over = `<div class="over"><div class="box"><h3>${esc(short(g.winner.name))} wins</h3><p class="note">${esc(g.winner.deckName)} · round ${g.round}${place ? ' · ' + place : ''}</p><div class="gt-ctl" style="justify-content:center"><button class="chip pri" data-act="rematch">Rematch</button><button class="chip" data-act="setup">New setup</button><button class="chip" data-act="export-log" title="Download the full game log as a text file (also copied to the clipboard)">Export log</button></div></div></div>`; }
-    const settings = this.showSettings ? `<div class="set"><div class="box"><h3 style="margin:0">Table settings</h3>
+    const settings = this.showSettings ? `<div class="set"><div class="box"><div class="sethead"><h3 style="margin:0">Table settings</h3><button class="chip pri" data-act="close-settings">Done</button></div>
       <label>Animations <input type="checkbox" id="st-anim" ${this.s.anim ? 'checked' : ''}></label>
       <label>Animation speed <select id="st-speed"><option value="normal" ${this.s.speed === 'normal' ? 'selected' : ''}>Normal</option><option value="fast" ${this.s.speed === 'fast' ? 'selected' : ''}>Fast</option></select></label>
       <label>Sound effects <input type="checkbox" id="st-sound" ${this.s.sound ? 'checked' : ''}></label>
       <label>Volume <input type="range" id="st-vol" min="0" max="1" step="0.05" value="${this.s.volume}"></label>
       <label>Sound style <select id="st-sfx">${[['classic', 'Classic'], ['arcane', 'Arcane (soft, layered)'], ['retro', 'Retro 8-bit'], ['cinematic', 'Cinematic (deep)']].map(([k, l]) => `<option value="${k}" ${(this.s.sfxStyle || 'classic') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Music <select id="st-music">${[['off', 'Off'], ['ambient', 'Ambient (slow pads)'], ['tavern', 'Tavern (plucked)'], ['battle', 'Battle (driving)']].map(([k, l]) => `<option value="${k}" ${(this.s.music || 'off') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label>Music volume <input type="range" id="st-mvol" min="0" max="1" step="0.05" value="${this.s.musicVol ?? 0.35}"></label>
+      <label>Music volume <input type="range" id="st-mvol" min="0" max="1" step="0.05" value="${this.s.musicVol ?? 0.6}"></label>
       <label>Visual effects <select id="st-fx">${[['normal', 'Normal'], ['arena', 'Arena (bursts, shards, lightning, confetti)']].map(([k, l]) => `<option value="${k}" ${(this.s.fx || 'normal') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Board zoom <input type="range" id="st-zoom" min="0.75" max="2" step="0.05" value="${this.s.zoom || 1}"> <b id="st-zoom-v">${Math.round((this.s.zoom || 1) * 100)}%</b></label>
       <label>Priority stops <select id="st-stop"><option value="smart" ${this.s.stops === 'smart' ? 'selected' : ''}>Smart</option><option value="all" ${this.s.stops === 'all' ? 'selected' : ''}>Full control</option><option value="minimal" ${this.s.stops === 'minimal' ? 'selected' : ''}>Minimal</option></select></label>

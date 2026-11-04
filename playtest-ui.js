@@ -349,6 +349,8 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 .sfind{width:min(320px,100%);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;margin:4px 0}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;max-height:340px;overflow-y:auto;padding:4px}
 .sopt{aspect-ratio:.716;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--soft);display:grid;place-items:center;font-size:.7rem;text-align:center;transition:transform .15s,box-shadow .15s}
+.zbtn{background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0;text-decoration:underline dotted;text-underline-offset:2px}.zbtn:hover{color:var(--accent)}
+.set.zone .sgrid{max-height:60vh;overflow:auto}
 .pt.alt{background:#5a3;color:#fff;font-size:.55rem}
 .sopt{position:relative}.sopt .own{position:absolute;left:0;right:0;bottom:0;font-size:.55rem;font-style:normal;background:rgba(0,0,0,.65);color:#eee;text-align:center;padding:1px 2px;pointer-events:none}
 .sopt img{width:100%;height:100%;object-fit:cover;pointer-events:none}
@@ -541,7 +543,13 @@ class Table {
     if (ctx.step === 'stack') {
       const top0 = ctx.stack[ctx.stack.length - 1];
       // a triggered ability on top (yours or theirs): stop if you can do something real in response — crack a fetch, copy it, counter it, kill the source
-      if (top0 && top0.trig && this.s.stops !== 'minimal' && !(this.passUntilTurn && ctx.active !== me) && ctx.options.some(o => !(o.ab && o.ab.mana))) return true;
+      if (top0 && top0.trig && this.s.stops !== 'minimal' && !(this.passUntilTurn && ctx.active !== me) && ctx.options.some(o => !(o.ab && o.ab.mana))) {
+        if (top0.caster !== me || this.s.stops === 'all') return true;
+        // your own trigger with nothing of theirs on the stack: ask once per source per turn (Shared Animosity fires per attacker), never after "pass my triggers"
+        if (ctx.stack.some(o => o.caster !== me)) return true;
+        if (this.passOwnTrigTurn === g.turn) return false;
+        const key = g.turn + ':' + (top0.card && top0.card.name); this.ownTrigSeen = this.ownTrigSeen || new Set(); if (this.ownTrigSeen.has(key)) return false; this.ownTrigSeen.add(key); return true;
+      }
       const theirs = ctx.stack.filter(o => o.caster !== me); if (!theirs.length) return this.s.stops === 'all';
       if (ctx.stack[ctx.stack.length - 1].caster === me && this.s.stops !== 'all') return false; // you just acted: keep going unless someone answers
       const aimed = theirs.some(o => this.aimedAtMe(o) || g.threatTo(me, o).length);
@@ -659,7 +667,7 @@ class Table {
   undoSig(g, libs) { return g.players.map(p => libs ? p.library.map(c => c.uid).join(',') : (p === this.me ? '' : p.hand.map(c => c.uid).join(','))).join('|'); }
   undo() { const g = this.game, u = (this.undoStack || []).pop(); if (!u || u.why) { if (u) this.undoStack.push(u); return; }
     g.restore(u.snap); this.mode = null; this.handSel = null; this.sheetHtml = null; this.addLog(`↶ Undid: ${u.label}`); this.sfx && this.sfx.play && this.sfx.play('click'); this.render(); }
-  needsTarget(c) { return c.roles.includes('removal') || c.roles.includes('counter') || !!c.redirect || (c.dmg && !c.roles.includes('wipe')); }
+  needsTarget(c) { if (!(c.isInstant || c.isSorcery) && !(c.etbOps && c.etbOps.length) && !(c.spellOps && c.spellOps.length) && !c.redirect && !/when(?:ever)? [^.]*enters[^.]*target/i.test(c.oracle || '')) return false; /* a permanent whose removal lives in a later trigger (Surly Badgersaur) targets nothing on cast */ return c.roles.includes('removal') || c.roles.includes('counter') || !!c.redirect || (c.dmg && !c.roles.includes('wipe')); }
   targetsSpells(c) { return c.roles.includes('counter') || !!c.redirect; }
   /** can the card in targeting mode target this stack object? */
   validSpellTarget(obj) {
@@ -782,7 +790,7 @@ class Table {
       const id = +pe.dataset.pid; let owner = null, perm = null; for (const p of g.players) { const b = p.battlefield.find(b => b.id === id); if (b) { owner = p; perm = b; } }
       if (!perm) return;
       if (this.mode && this.mode.kind === 'target') { if (this.validTarget(perm, owner)) { perm.owner = owner.i; this.finishTarget(perm); } return; }
-      if (this.mode && this.mode.kind === 'attack' && owner === me && g.canAttackWith(me, perm)) { const m = this.mode.map; if (m.has(perm)) m.delete(perm); else m.set(perm, this.mode.def); this.render(); return; }
+      if (this.mode && this.mode.kind === 'attack' && owner === me && g.canAttackWith(me, perm)) { const m = this.mode.map; if (m.has(perm) && m.get(perm) === this.mode.def) m.delete(perm); else m.set(perm, this.mode.def); this.render(); return; }
       if (owner === me && !this.mode && (!P || P.kind === 'priority') && !perm.card.isLand && !perm.tapped && this.tapClick(perm)) return;
       if (owner === me && !this.mode && (!P || P.kind === 'priority') && this.abilClick(perm)) return;
       if (P && P.kind === 'block') {
@@ -853,6 +861,8 @@ class Table {
     if (a === 'zoom-out') { this.stepZoom(-1); return; }
     if (a === 'settings') { this.showSettings = true; this.render(); return; }
     if (a === 'close-settings') { this.showSettings = false; saveSettings(this.s); this.render(); return; }
+    if (a === 'zone') { const p = g.players[+btn.dataset.p]; this.zoneView = this.zoneView && this.zoneView.p === p && this.zoneView.z === btn.dataset.z ? null : { p, z: btn.dataset.z }; this.render(); return; }
+    if (a === 'close-zone') { this.zoneView = null; this.render(); return; }
     if (a === 'ff') { this.ff = !this.ff; this.render(); return; }
     if (a === 'leave') { this.aborted = true; this.sfx.musicStop(); this.clearSave(); window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); if (location.hash === '#playtest/game') history.replaceState(null, '', '#playtest'); if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
     if (a === 'cancel') { this.mode = null; this.render(); return; }
@@ -863,8 +873,8 @@ class Table {
     if (a === 'to-main2' && this.myTurn && !this.busy && !P) { this.endTurn({ action: 'attack', assignments: [] }); return; }
     if (a === 'attack' && this.myTurn && !this.busy && (this.turnPhase === 'main1' || this.turnPhase === 'combat2')) { this.mode = { kind: 'attack', map: new Map(), def: g.opponentsOf(me)[0] }; this.render(); return; }
     if (a === 'atk-all' && this.mode && this.mode.kind === 'attack') { for (const b of me.battlefield) if (g.canAttackWith(me, b) && g.powerOf(me, b) > 0) this.mode.map.set(b, this.mode.def); this.render(); return; }
-    if (a === 'def' && this.mode && this.mode.kind === 'attack') { this.mode.def = g.players[+btn.dataset.p]; for (const k of this.mode.map.keys()) this.mode.map.set(k, this.mode.def); this.render(); return; }
-    if (a === 'defpw' && this.mode && this.mode.kind === 'attack') { const id = +btn.dataset.pid; for (const q of g.opponentsOf(me)) { const pw = q.battlefield.find(b => b.id === id); if (pw) { this.mode.def = { q, pw }; for (const k of this.mode.map.keys()) this.mode.map.set(k, this.mode.def); } } this.render(); return; }
+    if (a === 'def' && this.mode && this.mode.kind === 'attack') { this.mode.def = g.players[+btn.dataset.p]; this.render(); return; }
+    if (a === 'defpw' && this.mode && this.mode.kind === 'attack') { const id = +btn.dataset.pid; for (const q of g.opponentsOf(me)) { const pw = q.battlefield.find(b => b.id === id); if (pw) { this.mode.def = { q, pw }; } } this.render(); return; }
     if (a === 'atk-go' && this.mode && this.mode.kind === 'attack') { const asg = [...this.mode.map].map(([attacker, d]) => d && d.pw ? { attacker, defender: d.q, pw: d.pw } : { attacker, defender: d }); this.mode = null; if (this.endTurn) this.endTurn({ action: 'attack', assignments: asg }); return; }
     if (P && P.kind === 'etb' && (a === 'etb-pay' || a === 'etb-tap')) { P.res(a === 'etb-pay'); return; }
     if (P && P.kind === 'unless' && (a === 'unless-pay' || a === 'unless-no')) { P.res(a === 'unless-pay'); return; }
@@ -890,6 +900,7 @@ class Table {
     if (P && P.kind === 'alt' && a === 'alt-mana') { P.res({ mode: 'mana' }); return; }
     if (P && P.kind === 'alt' && a === 'alt-cancel') { P.res(null); return; }
     if (a === 'pass-turn' && P) { this.passUntilTurn = true; P.res(null); return; }
+    if (a === 'pass-own' && P) { this.passOwnTrigTurn = this.game.turn; P.res(null); return; }
     if (a === 'pass' && P) { P.res(null); return; }
     if (a === 'block-go' && P && P.kind === 'block') { const bad = [...P.map].find(([at, bs]) => at.card.kw.includes('menace') && bs.length < 2); if (bad) { P.warn = `${bad[0].card.name} has menace — block it with two or more creatures, or not at all.`; this.render(); return; } P.res(P.map); return; }
     if (a === 'keep' && P && P.kind === 'mull') { if (P.n) { this.prompt = { kind: 'mull-bottom', n: P.n, sel: [], done: P.res, from: P }; this.render(); } else P.res(); return; }
@@ -944,7 +955,7 @@ class Table {
     const cmdDmgOnMe = me && !isMe && me.cmdDamage[p.i] ? `<span class="cdm">cmdr dmg on you ${me.cmdDamage[p.i]}/21</span>` : '';
     return `<section class="gs ${isMe ? 'me' : ''} ${g.players[g.active] === p && !g.winner ? 'act' : ''} ${p.dead ? 'dead' : ''}" data-seat="${p.i}">
       <div class="gs-h"><div class="av" style="background-image:url('${esc(p.art || '')}')"></div><div class="nm"><b>${esc(short(p.name))}</b><small>${esc(p.deckName)}${p.level ? ' · ' + esc(p.level) : ''}</small></div><div class="lf ${p.life <= 10 ? 'low' : ''} ${tgtLife ? 'tgt' : ''}" data-life="${p.i}">${p.life}</div></div>
-      <div class="gs-meta"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><span>gy ${p.graveyard.length}</span>${p.command.length ? `<span>cmd zone: ${esc(p.command.map(c => c.name.split(',')[0]).join(', '))}${p.cmdTax ? ' +' + p.cmdTax : ''}</span>` : ''}${cmdDmgOnMe}${cmdDmg}</div>
+      <div class="gs-meta"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><button class="zbtn" data-act="zone" data-p="${p.i}" data-z="graveyard" title="Show graveyard">gy ${p.graveyard.length}</button><button class="zbtn" data-act="zone" data-p="${p.i}" data-z="exile" title="Show exiled cards">exile ${p.exile.length}</button>${p.command.length ? `<span>cmd zone: ${esc(p.command.map(c => c.name.split(',')[0]).join(', '))}${p.cmdTax ? ' +' + p.cmdTax : ''}</span>` : ''}${cmdDmgOnMe}${cmdDmg}</div>
       ${threat !== null ? `<div class="thr" title="Threat to you: ${threat.toFixed(0)}"><i style="width:${Math.min(100, threat / maxT * 100)}%"></i></div>` : ''}
       ${isMe ? '<div class="gs-body"><div class="gs-main">' : ''}<div class="gs-bf">${nonl.map(b => this.tile(b, p)).join('') || (this.mobile && lands.length ? '' : '<span class="gs-meta">no permanents</span>')}</div>
       <div class="gs-lands">${[...groups].map(([key, bs]) => { const name = bs[0].card.name, tapped = bs[0].tapped; const c = bs[0].card; const canAct = isMe && bs.some(b => b.card.fetch && g.canActivate(p, b)) && ((this.myTurn && !this.busy && !this.prompt) || (this.prompt && this.prompt.kind === 'priority')); return `<div class="gc lg ${tapped ? 't' : ''} ${canAct ? 'act' : ''}" data-lg="${p.i}:${esc(name)}" data-uid="${c.uid}" title="${esc(name)}${tapped ? ' (tapped)' : ''}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(name)}" loading="lazy">` : `<span>${esc(name)}</span>`}${canAct ? '<span class="cnt">crack</span>' : bs.length > 1 ? `<span class="cnt">×${bs.length}</span>` : ''}</div>`; }).join('')}</div>
@@ -1021,7 +1032,7 @@ class Table {
       else if (P.kind === 'block') { const incoming = P.attacks.filter(a => !P.map.has(a.attacker) || a.attacker.card.kw.includes('trample')).reduce((s, a) => s + g.powerOf(P.attacker, a.attacker), 0);
         prm = `<div class="prm"><h4>Declare blockers — ${esc(short(P.attacker.name))} is attacking you</h4><div class="gt-ctl"><span class="msg">Click an attacker, then the creatures that block it — or pick your blockers first and then the attacker. Several creatures may block one attacker (menace needs two); click a blocker again to unassign it.${P.atkSel ? ` <b>Blocking ${esc(P.atkSel.card.name)}</b> — click your creatures (greyed ones can't block it).` : ''} Unblocked damage: <b>${incoming}</b> (you're at ${me.life}).${P.warn ? ` <span class="warn">${esc(P.warn)}</span>` : ''}</span><button class="chip pri" data-act="block-go">Confirm blocks</button></div></div>`; }
       else if (P.kind === 'priority' && P.step === 'stack') { const top = P.stack[P.stack.length - 1];
-        prm = `<div class="prm"><h4>Respond? Top of the stack: ${esc((top.shownCard && top.caster !== this.me ? top.shownCard : top.card).name)} — ${esc(short(top.caster.name))} wants to ${esc(this.stackVerb(top))}</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass <kbd>Space</kbd></button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn <kbd>6</kbd></button>` : ''}<span class="msg hint">Counterspells can target anything on the stack, not just the top: pick one, then click its row.</span></div></div>`; }
+        prm = `<div class="prm"><h4>Respond? Top of the stack: ${esc((top.shownCard && top.caster !== this.me ? top.shownCard : top.card).name)} — ${esc(short(top.caster.name))} wants to ${esc(this.stackVerb(top))}</h4><div class="opts">${P.options.map((o, i) => `<div class="opt popt" data-popt="${i}" data-uid="${o.card.uid}">${o.card.img ? `<img src="${esc(big(o.card.img))}" alt="${esc(o.card.name)}">` : esc(o.card.name)}<span class="olab">${esc(this.optLabel(o))}</span></div>`).join('')}</div><div class="gt-ctl"><button class="chip pri" data-act="pass">Pass <kbd>Space</kbd></button>${P.active !== me ? `<button class="chip" data-act="pass-turn">Pass until my turn <kbd>6</kbd></button>` : top.caster === me && top.trig ? `<button class="chip" data-act="pass-own" title="Don't ask again about my own triggers this turn">Pass my triggers this turn</button>` : ''}<span class="msg hint">Counterspells can target anything on the stack, not just the top: pick one, then click its row.</span></div></div>`; }
       else if (P.kind === 'retarget') prm = `<div class="prm"><h4>${esc(P.card.name)}: choose a new target for ${esc(P.obj.card.name)} (now: ${esc(this.game.targetName(P.obj.target))})</h4><div class="opts">${P.candidates.map((t, i) => t.spell ? `<button class="chip" data-rt="${i}">${esc(t.spell.card.name)} (on the stack)</button>` : t.card ? `<div class="opt" data-rt="${i}" data-uid="${t.card.uid}">${t.card.img ? `<img src="${esc(big(t.card.img))}" alt="${esc(t.card.name)}">` : esc(t.card.name)}<span class="olab">${esc(short((this.game.ownerOf(t) || {}).name || ''))}</span></div>` : `<button class="chip" data-rt="${i}">${esc(short(t.name))} (${t.life} life)</button>`).join('')}</div><div class="gt-ctl"><button class="chip" data-act="rt-keep">Keep the current target</button></div></div>`;
       else if (P.kind === 'priority') { const stepN = { upkeep: 'upkeep', draw: 'draw step', beginCombat: 'beginning of combat', declareAttackers: 'declare attackers', declareBlockers: 'declare blockers', end: 'end step' }[P.step] || P.step; const whose = P.active === me ? 'your' : esc(short(P.active.name)) + "'s";
         let head = `${whose} ${stepN}${P.attacks ? ` (${P.attacks.length} attacker${P.attacks.length > 1 ? 's' : ''})` : ''}`;
@@ -1060,7 +1071,7 @@ class Table {
     if (this.mode && this.mode.kind === 'abil') ctl = `<div class="gt-ctl"><span class="msg"><b>${esc(this.mode.perm.card.name)}</b>:</span>${this.mode.opts.map((o, i) => `<button class="chip" data-act="abil-pick" data-i="${i}">${esc(this.optLabel(o))}</button>`).join('')}<button class="chip" data-act="cancel">Cancel</button></div>`;
     else if (this.mode && this.mode.kind === 'mana') ctl = `<div class="gt-ctl"><span class="msg">Tap <b>${esc(this.mode.perm.card.name)}</b> for:</span>${this.mode.colors.map(c => `<button class="chip" data-act="tap-col" data-c="${c}">{${c}}</button>`).join('')}<button class="chip" data-act="cancel">Cancel</button></div>`;
     else if (this.mode && this.mode.kind === 'target') ctl = `<div class="gt-ctl"><span class="msg">Choose a target for <b>${esc(this.mode.card.name)}</b>${this.mode.spells ? ' — click a highlighted row on the stack' : this.mode.players ? ' (a permanent or an opponent\'s life total)' : ' — click a highlighted creature (opponents\' are in the seats above)'}.</span><button class="chip" data-act="cancel">Cancel</button></div>`;
-    else if (this.mode && this.mode.kind === 'attack') ctl = `<div class="gt-ctl"><span class="msg">Attack:</span>${g.opponentsOf(me).map(q => `<button class="chip" data-act="def" data-p="${q.i}" aria-pressed="${this.mode.def === q}">${esc(short(q.name))} (${q.life})</button>` + q.battlefield.filter(b => b.card.isPlaneswalker).map(b => `<button class="chip" data-act="defpw" data-pid="${b.id}" aria-pressed="${!!(this.mode.def && this.mode.def.pw === b)}">${esc(short(b.card.name))} (${b.loyalty})</button>`).join('')).join('')}<button class="chip" data-act="atk-all">All creatures</button><button class="chip pri" data-act="atk-go" ${this.mode.map.size ? '' : 'disabled'}>Attack with ${this.mode.map.size}</button><button class="chip" data-act="cancel">Cancel</button><span class="msg">Click your creatures to toggle them.</span></div>`;
+    else if (this.mode && this.mode.kind === 'attack') ctl = `<div class="gt-ctl"><span class="msg">Attack:</span>${g.opponentsOf(me).map(q => `<button class="chip" data-act="def" data-p="${q.i}" aria-pressed="${this.mode.def === q}">${esc(short(q.name))} (${q.life})</button>` + q.battlefield.filter(b => b.card.isPlaneswalker).map(b => `<button class="chip" data-act="defpw" data-pid="${b.id}" aria-pressed="${!!(this.mode.def && this.mode.def.pw === b)}">${esc(short(b.card.name))} (${b.loyalty})</button>`).join('')).join('')}<button class="chip" data-act="atk-all" title="Send every creature that can attack at the selected target">All creatures → ${esc(short(this.mode.def && this.mode.def.pw ? this.mode.def.pw.card.name : (this.mode.def || {}).name || '').split(',')[0])}</button><button class="chip pri" data-act="atk-go" ${this.mode.map.size ? '' : 'disabled'}>Attack with ${this.mode.map.size}</button><button class="chip" data-act="cancel">Cancel</button><span class="msg">${new Set([...this.mode.map.values()].map(d => d && d.pw ? d.pw : d)).size > 1 ? 'Split attack: pick a target, then click the creatures that should go there (click again to move one).' : 'Click your creatures to toggle them. To split your attack: pick another target, then click the creatures that should go there.'}</span></div>`;
     else if (this.myTurn && !P) {
       const combatPhase = this.turnPhase === 'main1' || this.turnPhase === 'combat2';
       const canAtk = combatPhase && me.battlefield.some(b => g.canAttackWith(me, b));
@@ -1089,6 +1100,8 @@ class Table {
     // overlays
     let over = '';
     if (g.winner && this.ended) { const place = me ? (g.winner === me ? 'You won' : 'You lost') : ''; over = `<div class="over"><div class="box"><h3>${esc(short(g.winner.name))} wins</h3><p class="note">${esc(g.winner.deckName)} · round ${g.round}${place ? ' · ' + place : ''}</p><div class="gt-ctl" style="justify-content:center"><button class="chip pri" data-act="rematch">Rematch</button><button class="chip" data-act="setup">New setup</button><button class="chip" data-act="export-log" title="Download the full game log as a text file (also copied to the clipboard)">Export log</button></div></div></div>`; }
+    const zoneBox = this.zoneView && g.players.includes(this.zoneView.p) ? (() => { const zp = this.zoneView.p, zn = this.zoneView.z, cards = zp[zn] || []; const held = zn === 'exile' ? new Map(g.players.flatMap(q => q.battlefield).flatMap(b => (b.held || []).map(c => [c, b.card.name]))) : null;
+      return `<div class="set zone"><div class="box"><div class="sethead"><h3 style="margin:0">${esc(short(zp.name))} — ${zn === 'exile' ? 'exile' : 'graveyard'} (${cards.length})</h3><div class="gt-ctl"><button class="chip" data-act="zone" data-p="${zp.i}" data-z="${zn === 'exile' ? 'graveyard' : 'exile'}">Show ${zn === 'exile' ? 'graveyard' : 'exile'}</button><button class="chip pri" data-act="close-zone">Done</button></div></div>${cards.length ? `<div class="sgrid">${[...cards].reverse().map(c => `<div class="sopt" data-uid="${c.uid}" title="${esc(c.name)}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}${held && held.get(c) ? `<i class="own">${esc(held.get(c).split(',')[0].slice(0, 12))}</i>` : ''}</div>`).join('')}</div><p class="msg">Newest first. Hover or long-press a card to read it.</p>` : `<p class="msg">Nothing here.</p>`}</div></div>`; })() : '';
     const settings = this.showSettings ? `<div class="set"><div class="box"><div class="sethead"><h3 style="margin:0">Table settings</h3><button class="chip pri" data-act="close-settings">Done</button></div>
       <label>Animations <input type="checkbox" id="st-anim" ${this.s.anim ? 'checked' : ''}></label>
       <label>Animation speed <select id="st-speed"><option value="normal" ${this.s.speed === 'normal' ? 'selected' : ''}>Normal</option><option value="fast" ${this.s.speed === 'fast' ? 'selected' : ''}>Fast</option></select></label>
@@ -1113,7 +1126,7 @@ class Table {
       ${this.mobile ? '' : prm}
       ${me ? this.seat(me) : ''}
       ${this.mobile ? `<div class="gt-dock">${prm}${ctl}${handBar}</div>` : ctl + handBar}
-      ${over}${settings}${this.sheetHtml ? `<div class="sheet"><div class="box"><button class="chip" data-act="sheet-x" style="justify-self:end">Close</button>${this.sheetHtml}</div></div>` : ''}`;
+      ${over}${zoneBox}${settings}${this.sheetHtml ? `<div class="sheet"><div class="box"><button class="chip" data-act="sheet-x" style="justify-self:end">Close</button>${this.sheetHtml}</div></div>` : ''}`;
     requestAnimationFrame(() => this.drawArrows());
     if (this.showSettings) {
       const bind = (id, k, f = v => v) => { const el = this.board.querySelector('#' + id); el.onchange = el.oninput = () => { this.s[k] = f(el.type === 'checkbox' ? el.checked : el.value); saveSettings(this.s); if (k === 'volume') this.sfx.vol(); }; };

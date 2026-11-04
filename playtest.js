@@ -4047,7 +4047,7 @@ class Game {
       if (!exileOp) for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn && hit(b, q))) await this.destroy(q, b, true);
       if (!exileOp) this.say(hit.all ? `— board wiped` : `— destroys ${hit.desc}`, p);
       for (const q of this.alive()) if (q.battlefield.some(x => x.card.isCreature && x.protTurn === this.turn)) this.say(`— ${q.name}'s creatures survive (protected)`, p);
-    } else if (card.roles.includes('removal') && target && target.card && !(card.statics && card.statics.enchant) && !(card.spellOps || []).some(o => o.op === 'damage' && o.to !== 'each opponent' && o.to !== 'each creature') && !(card.spellOps || []).some(o => ['shrinkTarget', 'dispatch', 'swine', 'oring', 'destroyUpTo', 'bounceSpellOrPerm'].includes(o.op))) {
+    } else if (card.roles.includes('removal') && target && target.card && !(card.statics && card.statics.enchant) && (card.isInstant || card.isSorcery || (card.spellOps || []).length || (card.etbOps || []).length || card.removal || /when(?:ever)? [^.]*enters[^.]*target/i.test(card.oracle || '')) /* b10: a permanent whose removal is a later trigger (Summoner's Sending) removes nothing on cast */ && !(card.spellOps || []).some(o => o.op === 'damage' && o.to !== 'each opponent' && o.to !== 'each creature') && !(card.spellOps || []).some(o => ['shrinkTarget', 'dispatch', 'swine', 'oring', 'destroyUpTo', 'bounceSpellOrPerm'].includes(o.op))) {
       const owner = this.players[target.owner];
       if (!owner.battlefield.includes(target)) this.say(`— target is gone`, p);
       else if (!this.targetOk(card, target, p)) this.say(`— ${target.card.name} is no longer a legal target`, p);
@@ -4083,7 +4083,7 @@ class Game {
     if (card.addendum && this.players[this.active] === p && /main/.test(this.phase)) await this.runOps(p, card.addendum, card, {});
     if (card.spellOps) await this.runOps(p, card.spellOps, card, { spell, x: spell.x, kicked: spell.kicked, gift: spell.gift, bargained: spell.bargained, target });
     if (card.gyHate) await this.doGyHate(p, card);
-    if (card.reanimate && (!perm || /when(?:ever)? [^.]*enters[^.]*(?:return|put)/i.test(card.oracle) || /\baura\b/i.test(card.type)) && !(card.isEnchantment && (/aura/i.test(card.type) || /it becomes an aura/i.test(card.oracle)))) await this.doReanimate(p, card);
+    if (card.reanimate && (!perm || /when(?:ever)? [^.]*enters[^.]*(?:return|put)/i.test(card.oracle) || /\baura\b/i.test(card.type)) && !(card.isEnchantment && (/aura/i.test(card.type) || /it becomes an aura/i.test(card.oracle))) && !(perm && (card.etbOps || []).some(o => o.op === 'gyToBf'))) await this.doReanimate(p, card); // b10: ETB reanimators go through their trigger only (Karmic Guide returned two creatures)
     if (!perm && card.roles.includes('pump')) p.pumpUntilEOT = (p.pumpUntilEOT || 0) + (card.pumpN || 1);
     if (!perm && card.roles.includes('extracombat') && !/xtraCombat|b9_war|b9_mainCombat|b9_bait/.test(JSON.stringify(card.spellOps || [])) && !/if it's your|only during|after the (?:first|second)/.test((card.oracle || '').toLowerCase())) p.extraCombat = (typeof p.extraCombat === 'number' ? p.extraCombat : p.extraCombat ? 1 : 0) + 1;
     let pm = null;

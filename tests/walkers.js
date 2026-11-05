@@ -120,4 +120,12 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      ok(`Pyroblast vs a ${col} spell: ${want?'countered':'nothing happens'}`,!g.stack.includes(v)===want,'stack '+g.stack.map(o=>o.card.name)); g.stack.length=0; } }
  { const g=fresh();const [a]=g.players;const gf=await put(g,a,'Commodore Guff');gf.loyalty=4;const tr=gf.card.triggers.find(t=>t.when==='end');await g.runTrig(a,gf,tr,{});ok('Guff end step with no other walker: no counter on himself',gf.loyalty===4,'loyalty '+gf.loyalty);
    const t=await put(g,a,'Teferi, Hero of Dominaria');const l0=t.loyalty;await g.runTrig(a,gf,tr,{});ok('…with another walker, that one gets it',gf.loyalty===4&&t.loyalty===l0+1,'guff '+gf.loyalty+' teferi '+t.loyalty); }
+ // ---- b13: counter boosts on every loyalty source; Chandra LoF X; TR −3 order
+ { const g=fresh();const [a]=g.players;await put(g,a,'Doubling Season');const gf=await put(g,a,'Commodore Guff');const t=await put(g,a,'Teferi, Hero of Dominaria');const l0=t.loyalty;const tr=gf.card.triggers.find(x=>x.when==='end');await g.runTrig(a,gf,tr,{});
+   ok('Guff end step + Doubling Season: 2 loyalty counters',t.loyalty===l0+2,'+'+(t.loyalty-l0)); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'Doubling Season');const t=await put(g,a,'Teferi, Hero of Dominaria');const l0=t.loyalty;await put(g,a,'Ichormoon Gauntlet');const ig=a.battlefield.find(b=>b.card.name==='Ichormoon Gauntlet');
+   await g.runOps(a,[{op:'oneMoreCounter'}],ig.card,{});ok('Ichormoon Gauntlet + Doubling Season: 2 extra loyalty',t.loyalty===l0+2,'+'+(t.loyalty-l0)); }
+ { const g=fresh();const [a,b]=g.players;const c=await put(g,a,'Chandra, Legacy of Fire');await put(g,a,'Teferi, Hero of Dominaria');const l0=b.life;const tr=c.card.triggers.find(x=>x.when==='end');await g.runTrig(a,c,tr,{});
+   ok('Chandra, Legacy of Fire end step: X = 2 walkers → 2 damage each opponent',b.life===l0-2,'−'+(l0-b.life)); }
+ { const tr=C('Teferi, Time Raveler').abilities.find(x=>x.label==='−3');ok('Teferi, Time Raveler −3 bounces before drawing',tr.ops[0].op==='bounceTarget'&&tr.ops[1].op==='draw'); }
  console.log(fails+' failed');})();

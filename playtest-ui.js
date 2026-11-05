@@ -349,6 +349,7 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 .sfind{width:min(320px,100%);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;margin:4px 0}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:6px;max-height:340px;overflow-y:auto;padding:4px}
 .sopt{aspect-ratio:.716;border-radius:6px;overflow:hidden;cursor:pointer;background:var(--soft);display:grid;place-items:center;font-size:.7rem;text-align:center;transition:transform .15s,box-shadow .15s}
+.rpbar{background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:6px 10px;margin:4px 0}
 .zbtn{background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0;text-decoration:underline dotted;text-underline-offset:2px}.zbtn:hover{color:var(--accent)}
 .set.zone .sgrid{max-height:60vh;overflow:auto}
 .pt.alt{background:#5a3;color:#fff;font-size:.55rem}
@@ -396,6 +397,54 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 function injectCSS() { if (document.getElementById('gt-css')) return; const s = document.createElement('style'); s.id = 'gt-css'; s.textContent = STYLE; document.head.appendChild(s); }
 
 // ---------------- table ----------------
+// ==== replay recording (b10) ====
+// A recording = seed + uid base + the exact card lists + every human decision, encoded by reference (card uid / perm id / seat / stack index).
+const REC_SKIP = new Set(['emit', 'log', 'save']);
+/** answers that are elements of the hook's own argument arrays (modes, alts, pools) are matched by identity in the engine — record them as references */
+function recArgRef(v, ax) { if (!ax || v == null || typeof v !== 'object') return null; for (let ai = 0; ai < ax.length; ai++) { const A = ax[ai]; if (Array.isArray(A)) { const i = A.indexOf(v); if (i >= 0) return { $ai: ai, i }; } else if (A && typeof A === 'object') for (const k of Object.keys(A)) { const L = A[k]; if (!Array.isArray(L)) continue; const i = L.indexOf(v); if (i >= 0) return { $ai: ai, k, i }; const j = L.findIndex(x => x && x.card === v); if (j >= 0) return { $ai: ai, k, i: j, f: 'card' }; } } return null; }
+function recArgGet(r, ax) { const A = ax && ax[r.$ai]; const L = r.k != null ? A && A[r.k] : A; const x = Array.isArray(L) ? L[r.i] : null; return r.f ? x && x[r.f] : x; }
+function recEnc(v, g, seen = new WeakSet(), ax = null) {
+  if (v == null || typeof v !== 'object') return typeof v === 'function' ? undefined : v;
+  { const r = recArgRef(v, ax); if (r) return r; }
+  if (seen.has(v)) return { $x: 1 }; seen.add(v);
+  if (Array.isArray(v)) return v.map(x => recEnc(x, g, seen, ax));
+  if (v instanceof Map) return { $map: [...v].map(([k, x]) => [recEnc(k, g, seen, ax), recEnc(x, g, seen, ax)]) };
+  if (v instanceof Set) return { $set: [...v].map(x => recEnc(x, g, seen, ax)) };
+  if (g) {
+    const pi = g.players.indexOf(v); if (pi >= 0) return { $pl: pi };
+    const si = g.stack.indexOf(v); if (si >= 0) return { $s: si };
+    if (v.card && v.id != null && !v.kind) return v.owner != null ? { $p: v.id, $c: v.card.uid, $o: v.owner } : { $p: v.id, $c: v.card.uid };
+    if (v.uid != null && v.name != null && v.type != null) return { $c: v.uid };
+    if (Array.isArray(v.ops) && v.cost && v.zone) return { $ab: 1, ops: v.ops.map(o => o.op), label: v.label || '' };
+  }
+  const o = {}; for (const k of Object.keys(v)) { const e = recEnc(v[k], g, seen, ax); if (e !== undefined) o[k] = e; } return o;
+}
+function recFindCard(g, uid) { for (const p of g.players) { for (const z of [p.hand, p.command, p.graveyard, p.exile, p.library]) { const c = z.find(c => c.uid === uid); if (c) return c; } for (const b of p.battlefield) { if (b.card.uid === uid) return b.card; for (const h of b.held || []) if (h.uid === uid) return h; } } for (const o of g.stack) if (o.card && o.card.uid === uid) return o.card; return null; }
+function recFindPerm(g, id) { for (const p of g.players) { const b = p.battlefield.find(b => b.id === id); if (b) return b; } return null; }
+function recDec(v, g, parentCard = null, ax = null) {
+  if (v == null || typeof v !== 'object') return v;
+  if (v.$ai != null) return recArgGet(v, ax);
+  if (Array.isArray(v)) return v.map(x => recDec(x, g, parentCard, ax));
+  if (v.$map) return new Map(v.$map.map(([k, x]) => [recDec(k, g, null, ax), recDec(x, g, null, ax)]));
+  if (v.$set) return new Set(v.$set.map(x => recDec(x, g, null, ax)));
+  if (v.$pl != null) return g.players[v.$pl];
+  if (v.$s != null) return g.stack[v.$s] || null;
+  if (v.$p != null) { const b = recFindPerm(g, v.$p) || null; if (b && v.$o != null) b.owner = v.$o; return b; } // the table stamps .owner on a clicked target; replay re-applies it
+  if (v.$c != null) return recFindCard(g, v.$c);
+  if (v.$ab) { const c = parentCard; const abs = (c && c.abilities) || []; return abs.find(a => (a.label || '') === v.label && a.ops.map(o => o.op).join() === v.ops.join()) || abs.find(a => a.ops.map(o => o.op).join() === v.ops.join()) || null; }
+  const card = v.card && v.card.$c != null ? recFindCard(g, v.card.$c) : parentCard;
+  const o = {}; for (const k of Object.keys(v)) o[k] = recDec(v[k], g, card, ax); return o;
+}
+const Replays = {
+  CAP: 200, _db: null,
+  open() { if (this._db) return Promise.resolve(this._db); return new Promise((res, rej) => { try { const r = indexedDB.open('pt-replays', 1); r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains('games')) db.createObjectStore('games', { keyPath: 'id' }); }; r.onsuccess = () => { this._db = r.result; res(this._db); }; r.onerror = () => rej(r.error); } catch (e) { rej(e); } }); },
+  tx(mode, fn) { return this.open().then(db => new Promise((res, rej) => { const t = db.transaction('games', mode); const st = t.objectStore('games'); const req = fn(st); t.oncomplete = () => res(req && req.result !== undefined ? req.result : req); t.onerror = () => rej(t.error); })); },
+  async list() { const all = await this.tx('readonly', st => st.getAll()); return (all || []).map(({ rec, ...m }) => m).sort((a, b) => b.id - a.id); },
+  get(id) { return this.tx('readonly', st => st.get(id)); },
+  del(id) { return this.tx('readwrite', st => st.delete(id)); },
+  async put(entry) { await this.tx('readwrite', st => st.put(entry)); const all = await this.list(); for (const m of all.slice(this.CAP)) await this.del(m.id); return entry.id; },
+};
+// ---- end replay recording
 class Table {
   diagPush(m) { (this.diag = this.diag || []).push(new Date().toISOString().slice(11, 19) + ' ' + String(m).slice(0, 600)); if (this.diag.length > 30) this.diag.shift(); }
   constructor(el, seats, opts = {}) {
@@ -412,15 +461,19 @@ class Table {
     this.wire(); if (this.oppsCollapsed == null) this.oppsCollapsed = this.mobile && innerHeight < 760;
     const hooks = { emit: e => this.onEvent(e), log: l => this.addLog(l), humanTurn: (p, phase) => this.humanTurn(p, phase), humanRespond: c => this.humanRespond(c), humanBlocks: c => this.humanBlocks(c), humanDiscard: p => this.humanDiscard(p), humanPriority: c => this.humanPriority(c), humanChooseFetch: (p, card, pool, n) => this.humanChooseFetch(p, card, pool, n), humanETB: c => this.ask('etb', c), humanPayUnless: c => this.ask('unless', c), humanAltCost: c => this.ask('alt', c), humanSearch: c => this.ask('search', { ...c, sel: [] }), humanChoosePlayer: c => this.ask('player', c), humanMay: c => this.ask('may', c), humanRetarget: c => this.ask('retarget', c), humanModes: c => this.ask('modes', { ...c, sel: [] }), humanPayOpt: c => this.ask('payopt', c), humanNumber: c => this.ask('num', c), humanChoice: c => this.ask('choice', c), humanChooseType: c => this.ask('choice', c) };
     hooks.save = g => this.saveGame(g);
-    if (this.opts.saved) { this.game = G.Game.fromSaved(this.opts.saved.state, { hooks }); this.buildCardIndex(); this.me = this.game.players.find(p => p.human) || null; this.logLines = []; for (const l of this.game.log.slice(-200)) this.addLog(l.m); this.game.say(`— game resumed (turn ${this.game.turn})`); this.render(); this.guardBack();
+    if (this.opts.saved) { const sr = this.opts.saved.rec; if (sr && sr.moves) { this.rec = sr; for (const k of Object.keys(hooks)) if (!REC_SKIP.has(k)) { const orig = hooks[k]; hooks[k] = async (...a) => { const v = await orig(...a); if (this.rec) this.rec.moves.push({ h: k, v: recEnc(v, this.game, new WeakSet(), a) }); return v; }; } }
+      this.game = G.Game.fromSaved(this.opts.saved.state, { hooks }); this.buildCardIndex(); this.me = this.game.players.find(p => p.human) || null; this.logLines = []; for (const l of this.game.log.slice(-200)) this.addLog(l.m); this.game.say(`— game resumed (turn ${this.game.turn})`); this.render(); this.guardBack();
       try { await this.game.run(); } catch (e) { if (e.message !== 'abort') { console.error(e); this.addLog('Engine error: ' + e.message); } return; }
       this.endScreen(); return; }
-    this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks });
+    const rp = this.opts.replay; const seed = rp ? rp.seed : ((Math.random() * 2147483647) | 0);
+    if (rp) { this.replay = rp; this.rpPos = 0; this.rp = { mode: 'play', delay: 700, wake: null, skipOne: false }; for (const k of Object.keys(hooks)) if (!REC_SKIP.has(k)) hooks[k] = (...a) => this.rpNext(k, a); hooks.save = () => {}; const RP_PACE = new Set(['turn', 'land', 'cast', 'activate', 'attack', 'block', 'hit', 'resolve', 'destroy', 'wipe', 'tokens', 'dies', 'reanimate', 'win']); const em = hooks.emit; hooks.emit = async (e, ...r) => { if (RP_PACE.has(e && e.type)) await this.gate(); return em(e, ...r); }; }
+    else if (this.opts.rawSeats) { this.rec = { v: 1, engine: (m => m ? 'v' + m[1] : 'dev')((((document.querySelector('script[src*="playtest.js"]') || {}).src) || '').match(/v=(\d+)/)), at: new Date().toISOString(), seed, uidBase: this.opts.uidBase, pop: this.opts.pop || {}, seats: this.opts.rawSeats, moves: [] }; for (const k of Object.keys(hooks)) if (!REC_SKIP.has(k)) { const orig = hooks[k]; hooks[k] = async (...a) => { const v = await orig(...a); if (this.rec) this.rec.moves.push({ h: k, v: recEnc(v, this.game, new WeakSet(), a) }); return v; }; } }
+    this.game = new G.Game(this.seatsDef.map(s => ({ ...s, ai: s.human ? null : new G.AI(s.level || 'focused') })), { hooks, seed });
     this.buildCardIndex();
-    this.me = this.game.players.find(p => p.human) || null; this.guardBack();
+    this.me = this.game.players.find(p => p.human) || null; if (!this.replay) this.guardBack();
     for (const p of this.game.players) { const g = this.game; const all = [...p.library, ...p.hand]; const L = all.filter(c => c.isLand).length; g.say(`— deck: ${all.length + p.command.length} cards, ${L} lands${L < 30 ? ' ⚠ low land count — check the saved list for names that did not resolve' : ''}`, p); }
     for (const p of this.game.players) if (p.ai) { let t = 0; const lands = () => p.hand.filter(c => c.isLand).length; while ((!p.ai.keep(p.hand, t) || (lands() === 0 && t < 5)) && t < 5) { this.game.mulligan(p); t++; } if (t) this.game.bottomCards(p, p.ai.bottomChoice(p.hand, t)); this.game.say(`— keeps ${p.hand.length} (${lands()} land${lands() === 1 ? '' : 's'}${t ? ', after ' + t + ' mulligan' + (t > 1 ? 's' : '') : ''})`, p); }
-    if (this.me) await this.mulligan();
+    if (this.me) { if (this.replay) await this.rpNext('mull', []); else { await this.mulligan(); if (this.rec) this.rec.moves.push({ h: 'mull', v: null }); } }
     this.render();
     try { await this.game.run(); } catch (e) { if (e.message !== 'abort') { console.error(e); this.addLog('Engine error: ' + e.message); } return; }
     this.endScreen();
@@ -648,10 +701,40 @@ class Table {
     return new Promise(res => { this.prompt = { kind: 'mull', n: 0, res: () => { this.prompt = null; res(); } }; this.render(); });
   }
   // ---------- actions ----------
+  // ---------- replay ----------
+  /** replay: wait for the transport, run any recorded direct actions, then hand back the recorded answer for hook `name` */
+  async rpNext(name, args) {
+    const g = this.game;
+    for (;;) {
+      if (this.aborted) throw new Error('abort');
+      await this.gate();
+      const mv = this.replay.moves[this.rpPos];
+      if (!mv) { this.rpFinish('End of recording'); return new Promise(() => {}); }
+      if (mv.m) { this.rpPos++; this.rpLast = mv; await this.rpExec(mv); continue; }
+      if (mv.h !== name) { this.rpFinish(`Replay desynchronised at decision ${this.rpPos + 1}: the game asked for "${name}" but the recording has "${mv.h}". The engine has changed since this game was recorded (${this.replay.engine || '?'}).`); return new Promise(() => {}); }
+      this.rpPos++; this.rpLast = mv; const v = recDec(mv.v, g, null, args); this.render(); return v;
+    }
+  }
+  async rpExec(mv) { const g = this.game; const args = recDec(mv.a, g); const bad = args.findIndex((a, i) => a == null && mv.a[i] != null); if (bad >= 0) { this.rpFinish(`Replay desynchronised at decision ${this.rpPos}: a ${mv.m} argument could not be found in the game state.`); return new Promise(() => {}); } this.busy = true; this.render(); try { await g[mv.m](...args); } catch (e) { this.diagPush('replay ' + mv.m + ': ' + (e && e.stack || e)); } this.busy = false; this.render(); }
+  /** replay pacing: wait the current delay, then re-check — a Pause pressed mid-wait holds this step too; Step releases exactly one */
+  gate() { const rp = this.rp; if (!rp) return Promise.resolve(); if (rp.skipOne) { rp.skipOne = false; return Promise.resolve(); }
+    return new Promise(r => { const hold = () => { rp.wake = () => { rp.wake = null; r(); }; }; if (rp.mode === 'pause') return hold(); setTimeout(() => { if (this.aborted) return r(); if (rp.mode === 'pause') { if (rp.skipOne) { rp.skipOne = false; return r(); } return hold(); } r(); }, rp.delay); }); }
+  rpClick(a, btn) { const rp = this.rp; if (!rp) return;
+    if (a === 'rp-play') { rp.mode = rp.mode === 'play' ? 'pause' : 'play'; if (rp.mode === 'play' && rp.wake) rp.wake(); }
+    else if (a === 'rp-step') { rp.mode = 'pause'; if (rp.wake) rp.wake(); else rp.skipOne = true; }
+    else if (a === 'rp-speed') { rp.delay = +btn.dataset.ms || 700; this.ff = rp.delay < 200; }
+    this.render(); }
+  rpFinish(msg) { this.rpDone = msg; this.rp.mode = 'pause'; this.render(); }
+  rpBar() { if (!this.replay) return ''; const rp = this.rp, n = this.replay.moves.length; return `<div class="gt-ctl rpbar"><span class="msg"><b>Replay</b> · turn ${this.game ? this.game.turn : 0}${n ? ` · your decision ${Math.min(this.rpPos, n)} / ${n}` : ' · AI-only game'}${this.rpDone ? ` · ${esc(this.rpDone)}` : ''}</span><button class="chip pri" data-act="rp-play">${rp.mode === 'play' ? 'Pause' : 'Play'}</button><button class="chip" data-act="rp-step">Step</button>${[['Slow', 1500], ['Normal', 700], ['Fast', 150]].map(([l, ms]) => `<button class="chip" data-act="rp-speed" data-ms="${ms}" aria-pressed="${rp.delay === ms}">${l}</button>`).join('')}<button class="chip" data-act="leave">Exit replay</button></div>`; }
+  recordingJson() { if (!this.rec) return null; const g = this.game; return JSON.stringify({ ...this.rec, result: g.winner ? short(g.winner.name) + ' wins' : 'in progress', turns: g.turn, log: g.log.map(l => l.m) }); }
+  async storeRecording(status) { if (!this.rec || this.replay || this.recStored) return; const g = this.game; if (!g || g.turn < 2) return; this.recStored = true; const id = Date.now(); const entry = { id, at: this.rec.at, engine: this.rec.engine, name: g.players.map(p => short(p.deckName || p.name).split(',')[0]).join(' · '), seats: g.players.map(p => ({ name: p.name, deckName: p.deckName })), result: g.winner ? short(g.winner.name) + ' wins' : status || 'unfinished', turns: g.turn, moves: this.rec.moves.length, rec: this.rec }; try { await Replays.put(entry); } catch (e) { this.diagPush('store recording: ' + e.message); } }
+  exportRecording() { const txt = this.recordingJson(); if (!txt) return; const g = this.game; this.downloadText(txt, `playtest-rec-${(g.players[0].deckName || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.json`); }
+  /** every direct UI→engine call goes through here so a recording can replay it */
+  exec(m, ...args) { if (this.rec) this.rec.moves.push({ m, a: recEnc(args, this.game) }); return this.game[m](...args); }
   async act(fn) { if (this.busy) return; this.busy = true;
     const g = this.game, undoable = this.myTurn && !this.prompt && g && g.snapshot; let pre = null;
     try { this.render(); } catch (e) { this.diagPush('render before action: ' + (e && e.stack || e)); }
-    if (undoable) { try { if (!g._rngWrapped) { const r = g.rng; g.rng = () => { g._rngN = (g._rngN || 0) + 1; return r(); }; g._rngWrapped = true; } pre = { snap: g.snapshot(), libs: this.undoSig(g, true), opp: this.undoSig(g, false), rn: g._rngN || 0, logN: g.log.length, phase: this.turnPhase }; } catch (e) { console.warn('undo snapshot', e); } }
+    if (undoable) { try { if (!g._rngWrapped) { const r = g.rng; g.rng = () => { g._rngN = (g._rngN || 0) + 1; return r(); }; g.rng.st = r.st; g._rngWrapped = true; } pre = { snap: g.snapshot(), libs: this.undoSig(g, true), opp: this.undoSig(g, false), rn: g._rngN || 0, logN: g.log.length, phase: this.turnPhase, recN: this.rec ? this.rec.moves.length : 0 }; } catch (e) { console.warn('undo snapshot', e); } }
     try { await fn(); } catch (e) { this.diagPush('action failed: ' + (e && e.stack || e)); try { g && g.log.push({ t: g.turn, m: `⚠ engine error: ${e && e.message || e}` }); } catch (_) {} console.error(e); } finally {
       if (pre && this.myTurn && this.game === g) {
         const added = g.log.slice(pre.logN).map(l => l.m).filter(Boolean);
@@ -659,14 +742,14 @@ class Table {
           const oppActed = added.some(m => g.players.some(q => q !== this.me && m.startsWith(q.name + ': ') && /^(casts|activates|cracks|plays)\b/.test(m.slice(q.name.length + 2))));
           const why = this.undoSig(g, true) !== pre.libs ? 'it drew, searched, revealed or shuffled cards' : (oppActed || this.undoSig(g, false) !== pre.opp) ? 'an opponent responded' : (g._rngN || 0) !== pre.rn ? 'it involved a random result' : null;
           const mine = added.map(m => m.startsWith(this.me.name + ': ') ? m.slice(this.me.name.length + 2) : m); const label = (mine.find(m => !/^—/.test(m)) || mine[0] || 'last action').slice(0, 60);
-          (this.undoStack = this.undoStack || []).push({ snap: pre.snap, why, label, phase: pre.phase, uiLog: this.logLines.length }); if (this.undoStack.length > 15) this.undoStack.shift();
+          (this.undoStack = this.undoStack || []).push({ snap: pre.snap, why, label, phase: pre.phase, uiLog: this.logLines.length, recN: pre.recN }); if (this.undoStack.length > 15) this.undoStack.shift();
         }
       }
       this.busy = false; this.render(); } }
   /** what an undo must not erase: every library's order (hidden info) or, with libs=false, the opponents' hands (they responded) */
   undoSig(g, libs) { return g.players.map(p => libs ? p.library.map(c => c.uid).join(',') : (p === this.me ? '' : p.hand.map(c => c.uid).join(','))).join('|'); }
   undo() { const g = this.game, u = (this.undoStack || []).pop(); if (!u || u.why) { if (u) this.undoStack.push(u); return; }
-    g.restore(u.snap); this.mode = null; this.handSel = null; this.sheetHtml = null; this.addLog(`↶ Undid: ${u.label}`); this.sfx && this.sfx.play && this.sfx.play('click'); this.render(); }
+    g.restore(u.snap); if (this.rec && u.recN != null) this.rec.moves.length = u.recN; this.mode = null; this.handSel = null; this.sheetHtml = null; this.addLog(`↶ Undid: ${u.label}`); this.sfx && this.sfx.play && this.sfx.play('click'); this.render(); }
   needsTarget(c) { if (!(c.isInstant || c.isSorcery) && !(c.etbOps && c.etbOps.length) && !(c.spellOps && c.spellOps.length) && !c.redirect && !/when(?:ever)? [^.]*enters[^.]*target/i.test(c.oracle || '')) return false; /* a permanent whose removal lives in a later trigger (Surly Badgersaur) targets nothing on cast */ return c.roles.includes('removal') || c.roles.includes('counter') || !!c.redirect || (c.dmg && !c.roles.includes('wipe')); }
   targetsSpells(c) { return c.roles.includes('counter') || !!c.redirect; }
   /** can the card in targeting mode target this stack object? */
@@ -677,7 +760,7 @@ class Table {
   }
   startCast(card, zone) {
     if (this.needsTarget(card)) { this.mode = { kind: 'target', card, zone, players: !!card.dmg && !card.roles.includes('removal'), spells: this.targetsSpells(card) }; this.render(); return; }
-    this.act(() => this.game.cast(this.me, card, zone, null));
+    this.act(() => this.exec('cast', this.me, card, zone, null));
   }
   validTarget(perm, owner) {
     const m = this.mode; if (!m || m.kind !== 'target') return false;
@@ -726,11 +809,11 @@ class Table {
   }
   handAct(card) {
     const g = this.game, me = this.me; this.handSel = null;
-    if (card.isLand) { if (me.landsThisTurn < g.landLimit(me)) return this.act(() => g.playLand(me, card)); this.render(); return; }
+    if (card.isLand) { if (me.landsThisTurn < g.landLimit(me)) return this.act(() => this.exec('playLand', me, card)); this.render(); return; }
     if (card.backLand && me.landsThisTurn < g.landLimit(me)) {
       const canCast = !card.roles.includes('counter') && g.castMode(me, card, 'hand');
-      if (!canCast) return this.act(() => g.playLand(me, card));
-      return this.ask('may', { p: me, card, question: `play the back face (${card.backLand.name}) as your land? No = cast ${card.name.split(' // ')[0]}.` }).then(asLand => asLand ? this.act(() => g.playLand(me, card)) : this.startCast(card, 'hand'));
+      if (!canCast) return this.act(() => this.exec('playLand', me, card));
+      return this.ask('may', { p: me, card, question: `play the back face (${card.backLand.name}) as your land? No = cast ${card.name.split(' // ')[0]}.` }).then(asLand => asLand ? this.act(() => this.exec('playLand', me, card)) : this.startCast(card, 'hand'));
     }
     if (card.roles.includes('counter')) { this.render(); return; }
     if (g.castMode(me, card, 'hand')) this.startCast(card, 'hand'); else this.render();
@@ -744,6 +827,7 @@ class Table {
     if (this.lpFired) { this.lpFired = false; e.preventDefault(); return; } // the tap that ended a long-press
     if (this.sheetHtml && (t.closest('[data-act="sheet-x"]') || t.classList.contains('sheet'))) { this.sheetHtml = null; this.render(); return; }
     const ll = t.closest('[data-log]'); if (ll) { this.showLogLine(+ll.dataset.log); if (this.mobile) this.openSheet(null, this.pv.innerHTML); return; }
+    if (this.replay) { const ab = t.closest('[data-act]'); const ra = ab ? ab.dataset.act : null; if (ra && /^rp-/.test(ra)) return this.rpClick(ra, ab); if (!ra || !/^(zone|close-zone|export-log|settings|close-settings|leave|goseat|collapse-opps|zoom-in|zoom-out|sheet-x|ff|setup)$/.test(ra)) return; }
     const lc = t.closest('[data-lgc]'); if (lc) { for (const b of this.pv.querySelectorAll('.lgx-c')) b.classList.toggle('on', b === lc); this.pinnedCtx = this.pv.querySelector('.lgx').outerHTML; this.pvUid = null; this.preview(+lc.dataset.lgc, true); if (this.sheetHtml) this.openSheet(null, this.pv.innerHTML); return; }
     const u = t.closest('[data-uid]'); if (u) this.preview(+u.dataset.uid);
     const btn = t.closest('[data-act]'); if (btn) { this.sfx.play('click'); return this.action(btn.dataset.act, btn); }
@@ -782,7 +866,7 @@ class Table {
     // permanents
     const lg = t.closest('[data-lg]'); if (lg && me && +lg.dataset.lg.split(':')[0] === me.i) {
       const perm = me.battlefield.find(b => b.card.fetch && b.card.name === lg.dataset.lg.slice(lg.dataset.lg.indexOf(':') + 1) && g.canActivate(me, b));
-      if (perm) { if (P && P.kind === 'priority') return P.res({ kind: 'fetch', perm }); if (this.myTurn && !this.busy && !P) return this.act(() => g.activateFetch(me, perm)); }
+      if (perm) { if (P && P.kind === 'priority') return P.res({ kind: 'fetch', perm }); if (this.myTurn && !this.busy && !P) return this.act(() => this.exec('activateFetch', me, perm)); }
       { const nm = lg.dataset.lg.slice(lg.dataset.lg.indexOf(':') + 1); const land = me.battlefield.find(b => b.card.name === nm && !b.tapped); if (land) this.tapClick(land); }
       return;
     }
@@ -832,7 +916,7 @@ class Table {
     const g = this.game, me = this.me, P = this.prompt; const c = perm.card;
     const opts = P && P.kind === 'priority' ? P.options.filter(o => o.kind === 'ability' && (o.perm === perm || o.card === c || o.card === c.orig)) : (this.myTurn && !this.busy && !P ? (this.mainOpts || []).filter(o => o.kind === 'ability' && (o.perm === perm || o.card === c || o.card === c.orig)) : []);
     if (!opts.length) return false;
-    const run = o => { if (P && P.kind === 'priority') return P.res(o); if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => g.doAction(me, { ...o, instant: false })); };
+    const run = o => { if (P && P.kind === 'priority') return P.res(o); if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => this.exec('doAction', me, { ...o, instant: false })); };
     if (opts.length === 1) { run(opts[0]); return true; }
     this.mode = { kind: 'abil', perm, opts, run }; this.render(); return true;
   }
@@ -844,12 +928,12 @@ class Table {
     const cols = [...new Set(s.colors)]; if (cols.length === 1) { this.doTap(perm, cols[0]); return true; }
     this.mode = { kind: 'mana', perm, colors: cols }; this.render(); return true;
   }
-  doTap(perm, col) { const g = this.game, me = this.me; this.mode = null; if (this.prompt && this.prompt.kind === 'priority') { g.tapForMana(me, perm, col).then(() => this.render()); return; } this.act(() => g.tapForMana(me, perm, col)); }
+  doTap(perm, col) { const g = this.game, me = this.me; this.mode = null; if (this.prompt && this.prompt.kind === 'priority') { this.exec('tapForMana', me, perm, col).then(() => this.render()); return; } this.act(() => this.exec('tapForMana', me, perm, col)); }
   poolHtml() { const me = this.me; const pool = (me && me.pool) || []; if (!pool.length) return ''; const PIP = { W: '#f3e9c4', U: '#9ec5ff', B: '#b9a7c7', R: '#ff9a8a', G: '#9fd79a', C: '#cfcfcf', A: '#ffd27a' }; return `<span class="pool" title="floating mana (empties when the step ends)">pool ${pool.map(m => `<i class="pip" style="background:${PIP[m.c] || PIP.C}">${m.c === 'A' ? '★' : m.c}</i>`).join('')}</span>`; }
   finishTarget(target) {
     const m = this.mode; this.mode = null;
     if (m.respond && this.prompt) return this.prompt.res(this.prompt.kind === 'priority' ? { kind: 'cast', card: m.card, target, zone: m.zone } : { card: m.card, target });
-    this.act(() => this.game.cast(this.me, m.card, m.zone, target));
+    this.act(() => this.exec('cast', this.me, m.card, m.zone, target));
   }
   action(a, btn) {
     const g = this.game, me = this.me, P = this.prompt;
@@ -864,7 +948,7 @@ class Table {
     if (a === 'zone') { const p = g.players[+btn.dataset.p]; this.zoneView = this.zoneView && this.zoneView.p === p && this.zoneView.z === btn.dataset.z ? null : { p, z: btn.dataset.z }; this.render(); return; }
     if (a === 'close-zone') { this.zoneView = null; this.render(); return; }
     if (a === 'ff') { this.ff = !this.ff; this.render(); return; }
-    if (a === 'leave') { this.aborted = true; this.sfx.musicStop(); this.clearSave(); window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); if (location.hash === '#playtest/game') history.replaceState(null, '', '#playtest'); if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
+    if (a === 'leave') { this.aborted = true; this.sfx.musicStop(); if (!this.replay) { this.clearSave(); this.storeRecording('abandoned'); } window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); if (location.hash === '#playtest/game') history.replaceState(null, '', '#playtest'); if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
     if (a === 'cancel') { this.mode = null; this.render(); return; }
     if (a === 'tap-col' && this.mode && this.mode.kind === 'mana') { this.doTap(this.mode.perm, btn.dataset.c); return; }
     if (a === 'abil-pick' && this.mode && this.mode.kind === 'abil') { const m = this.mode; this.mode = null; const o = m.opts[+btn.dataset.i]; if (o) m.run(o); return; }
@@ -892,7 +976,7 @@ class Table {
     if (P && P.kind === 'modes' && a === 'mode-tog') { const m = P.modes[+btn.dataset.i]; if (!m) return; const i = P.sel.indexOf(m.card); if (i >= 0) P.sel.splice(i, 1); else if (P.sel.length < P.max) P.sel.push(m.card); else if (P.max === 1) P.sel = [m.card]; this.render(); return; }
     if (P && P.kind === 'modes' && a === 'modes-go') { if (P.sel.length >= P.min) P.res(P.sel.slice()); return; }
     if (a === 'xcast' && this.myTurn && !this.busy && !P) { const z = btn.dataset.zone, c = this.findCard(+btn.dataset.uid) || (z === 'top' ? me.library[me.library.length - 1] : null); if (!c) return; if (c.isLand) return this.act(() => g.playLand(me, c)); if (g.castMode(me, c, z)) this.startCast(c, z); return; }
-    if (a === 'abil' && this.myTurn && !this.busy && !P) { const o = (this.mainOpts || [])[+btn.dataset.i]; if (!o) return; if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => g.doAction(me, { ...o, instant: false })); }
+    if (a === 'abil' && this.myTurn && !this.busy && !P) { const o = (this.mainOpts || [])[+btn.dataset.i]; if (!o) return; if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => this.exec('doAction', me, { ...o, instant: false })); }
     if (P && P.kind === 'search' && a === 'search-go') { P.res(P.sel.slice()); return; }
     if (P && P.kind === 'search' && a === 'search-none') { P.res([]); return; }
     if (P && P.kind === 'player' && a === 'pick-player') { P.res(g.players[+btn.dataset.p]); return; }
@@ -906,11 +990,12 @@ class Table {
     if (a === 'keep' && P && P.kind === 'mull') { if (P.n) { this.prompt = { kind: 'mull-bottom', n: P.n, sel: [], done: P.res, from: P }; this.render(); } else P.res(); return; }
     if (a === 'mull' && P && P.kind === 'mull') { P.confirm = true; this.render(); return; }
     if (a === 'mull-back' && P && P.kind === 'mull') { P.confirm = false; this.render(); return; }
-    if (a === 'mull-yes' && P && P.kind === 'mull' && P.confirm) { P.confirm = false; g.mulligan(me); P.n++; this.render(); return; }
+    if (a === 'mull-yes' && P && P.kind === 'mull' && P.confirm) { P.confirm = false; this.exec('mulligan', me); P.n++; this.render(); return; }
     if (a === 'bottom-back' && P && P.kind === 'mull-bottom') { this.prompt = P.from; this.render(); return; }
-    if (a === 'bottom-go' && P && P.kind === 'mull-bottom' && P.sel.length === P.n) { g.bottomCards(me, P.sel); const done = P.done; this.prompt = null; done(); return; }
+    if (a === 'bottom-go' && P && P.kind === 'mull-bottom' && P.sel.length === P.n) { this.exec('bottomCards', me, P.sel); const done = P.done; this.prompt = null; done(); return; }
     if (a === 'rematch') { this.sfx.musicStop(); this.clearSave(); window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); this.opts.onRematch && this.opts.onRematch(); return; }
     if (a === 'export-log') { this.exportLog(); return; }
+    if (a === 'export-rec') { this.exportRecording(); return; }
     if (a === 'setup') { this.sfx.musicStop(); this.clearSave(); window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); if (location.hash === '#playtest/game') history.replaceState(null, '', '#playtest'); this.opts.onExit && this.opts.onExit(); return; }
   }
   // ---------- rendering ----------
@@ -1099,7 +1184,7 @@ class Table {
     }
     // overlays
     let over = '';
-    if (g.winner && this.ended) { const place = me ? (g.winner === me ? 'You won' : 'You lost') : ''; over = `<div class="over"><div class="box"><h3>${esc(short(g.winner.name))} wins</h3><p class="note">${esc(g.winner.deckName)} · round ${g.round}${place ? ' · ' + place : ''}</p><div class="gt-ctl" style="justify-content:center"><button class="chip pri" data-act="rematch">Rematch</button><button class="chip" data-act="setup">New setup</button><button class="chip" data-act="export-log" title="Download the full game log as a text file (also copied to the clipboard)">Export log</button></div></div></div>`; }
+    if (g.winner && this.ended) { const place = me ? (g.winner === me ? 'You won' : 'You lost') : ''; over = `<div class="over"><div class="box"><h3>${esc(short(g.winner.name))} wins</h3><p class="note">${esc(g.winner.deckName)} · round ${g.round}${place ? ' · ' + place : ''}${this.replay ? ' · end of replay' : ''}</p><div class="gt-ctl" style="justify-content:center">${this.replay ? '<button class="chip pri" data-act="leave">Back to replays</button>' : '<button class="chip pri" data-act="rematch">Rematch</button><button class="chip" data-act="setup">New setup</button>'}<button class="chip" data-act="export-log" title="Download the full game log as a text file (also copied to the clipboard)">Export log</button>${this.rec ? '<button class="chip" data-act="export-rec" title="Download this game as a replayable recording (.json)">Download recording</button>' : ''}</div>${this.replay ? '' : '<p class="note">This game was saved to Replays.</p>'}</div></div>`; }
     const zoneBox = this.zoneView && g.players.includes(this.zoneView.p) ? (() => { const zp = this.zoneView.p, zn = this.zoneView.z, cards = zp[zn] || []; const held = zn === 'exile' ? new Map(g.players.flatMap(q => q.battlefield).flatMap(b => (b.held || []).map(c => [c, b.card.name]))) : null;
       return `<div class="set zone"><div class="box"><div class="sethead"><h3 style="margin:0">${esc(short(zp.name))} — ${zn === 'exile' ? 'exile' : 'graveyard'} (${cards.length})</h3><div class="gt-ctl"><button class="chip" data-act="zone" data-p="${zp.i}" data-z="${zn === 'exile' ? 'graveyard' : 'exile'}">Show ${zn === 'exile' ? 'graveyard' : 'exile'}</button><button class="chip pri" data-act="close-zone">Done</button></div></div>${cards.length ? `<div class="sgrid">${[...cards].reverse().map(c => `<div class="sopt" data-uid="${c.uid}" title="${esc(c.name)}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}${held && held.get(c) ? `<i class="own">${esc(held.get(c).split(',')[0].slice(0, 12))}</i>` : ''}</div>`).join('')}</div><p class="msg">Newest first. Hover or long-press a card to read it.</p>` : `<p class="msg">Nothing here.</p>`}</div></div>`; })() : '';
     const settings = this.showSettings ? `<div class="set"><div class="box"><div class="sethead"><h3 style="margin:0">Table settings</h3><button class="chip pri" data-act="close-settings">Done</button></div>
@@ -1115,12 +1200,13 @@ class Table {
       <label>Priority stops <select id="st-stop"><option value="smart" ${this.s.stops === 'smart' ? 'selected' : ''}>Smart</option><option value="all" ${this.s.stops === 'all' ? 'selected' : ''}>Full control</option><option value="minimal" ${this.s.stops === 'minimal' ? 'selected' : ''}>Minimal</option></select></label>
       <p class="note" style="margin:0">Smart stops at opponents' end steps, combats you're in, and the end step before your turn (for fetchlands). Full control stops at every step where you have a legal play. Minimal only stops for counterspells, attacks and blocks. Steps where you have nothing legal are always skipped.</p>
       <p class="note" style="margin:0">Sounds and music are generated in your browser with the Web Audio API — nothing is downloaded and nothing needs a licence. Music is procedural: a key and progression are picked each game.</p>
-      <div class="gt-ctl" style="justify-content:space-between"><button class="chip" data-act="export-log">Export log</button><button class="chip pri" data-act="close-settings">Done</button></div></div></div>` : '';
+      <div class="gt-ctl" style="justify-content:space-between"><button class="chip" data-act="export-log">Export log</button>${this.rec ? '<button class="chip" data-act="export-rec">Download recording</button>' : ''}<button class="chip pri" data-act="close-settings">Done</button></div></div></div>` : '';
     this.board.innerHTML = `
       <div class="gt-bar"><span class="ph">Round <b>${g.round}</b> · <b>${esc(short(active.name))}</b></span><span class="steps">${[['upkeep', 'Upkeep'], ['draw', 'Draw'], ['main1', 'Main'], ['combat', 'Combat'], ['main2', 'Main 2'], ['end', 'End']].map(([k, l]) => `<span class="${(g.phase === k || (k === 'combat' && g.phase === 'combat')) ? 'on' : ''}">${l}</span>`).join('')}</span>
         <button class="chip" data-act="ff" aria-pressed="${this.ff}" title="Skip animations until your next decision">${this.mobile ? (this.ff ? 'Skipping…' : 'Skip ▸▸') : this.ff ? 'Fast-forwarding' : 'Fast-forward'}</button>
         <span class="zm" title="Board zoom (keys: - / + / 0)"><button class="chip" data-act="zoom-out" aria-label="Zoom out">−</button><b>${Math.round((this.s.zoom || 1) * 100)}%</b><button class="chip" data-act="zoom-in" aria-label="Zoom in">+</button></span>
         <button class="chip" data-act="export-log" title="Download the full game log so far">Export log</button><button class="chip" data-act="settings">Settings</button><button class="chip" data-act="leave">${this.mobile ? 'Leave' : 'Leave game'}</button></div>
+      ${this.rpBar()}
       <div class="gt-opps-wrap ${this.oppsCollapsed ? 'collapsed' : ''}"><div class="gt-opps" id="gtopps">${opps.map(p => this.seat(p)).join('')}</div>${this.mobile ? `<div class="opp-pager">${opps.map(p => `<button class="op ${p.dead ? 'dead' : ''} ${g.players[g.active] === p ? 'act' : ''}" data-act="goseat" data-seat="${p.i}"><span class="av" style="background-image:url('${esc(p.art || '')}')"></span>${esc(short(p.name).split(',')[0].slice(0, 9))} <b>${p.life}</b></button>`).join('')}<button class="op" data-act="collapse-opps" title="show / hide opponents' boards">${this.oppsCollapsed ? '▾ boards' : '▴ hide'}</button></div>` : ''}</div>
       <div class="gt-mid">${mid}</div>
       ${this.mobile ? '' : prm}
@@ -1135,9 +1221,9 @@ class Table {
       { const z = this.board.querySelector('#st-zoom'); z.oninput = () => { this.s.zoom = Number(z.value); this.applyZoom(); const v = this.board.querySelector('#st-zoom-v'); if (v) v.textContent = Math.round(this.s.zoom * 100) + '%'; }; z.onchange = () => saveSettings(this.s); }
     }
   }
-  endScreen() { this.ended = true; this.myTurn = false; this.render(); this.clearSave(); window.removeEventListener('beforeunload', this.onUnload); }
+  endScreen() { this.ended = true; this.myTurn = false; this.storeRecording(); this.render(); this.clearSave(); window.removeEventListener('beforeunload', this.onUnload); }
   // ---------- saved game (resume after an accidental exit) ----------
-  saveGame(g) { if (!g || g.winner || !g.players.some(p => p.human)) return; try { localStorage.setItem('pt-save', JSON.stringify({ at: Date.now(), turn: g.turn + 1, round: g.round, cfg: this.opts.cfg || (this.opts.saved && this.opts.saved.cfg) || null, seats: g.players.map(p => ({ name: p.name, deckName: p.deckName, dead: p.dead, life: p.life })), state: g.serializeState() })); } catch (e) { console.warn('save failed', e); } }
+  saveGame(g) { if (!g || g.winner || !g.players.some(p => p.human)) return; try { localStorage.setItem('pt-save', JSON.stringify({ at: Date.now(), turn: g.turn + 1, round: g.round, cfg: this.opts.cfg || (this.opts.saved && this.opts.saved.cfg) || null, seats: g.players.map(p => ({ name: p.name, deckName: p.deckName, dead: p.dead, life: p.life })), state: g.serializeState(), rec: this.rec || null })); } catch (e) { console.warn('save failed', e); } }
   clearSave() { try { localStorage.removeItem('pt-save'); } catch (e) {} }
   /** a back swipe or back button asks before leaving a live game */
   guardBack() {
@@ -1149,5 +1235,7 @@ class Table {
   }
 }
 
-window.GoldfishUI = { start(el, seats, opts) { const t = new Table(el, seats, opts); window.GoldfishUI.current = t; t.start(); return t; }, resume(el, saved, opts) { const t = new Table(el, [], { ...opts, saved }); window.GoldfishUI.current = t; t.start(); return t; }, savedGame() { try { const s = JSON.parse(localStorage.getItem('pt-save') || 'null'); return s && s.state ? s : null; } catch (e) { return null; } }, clearSaved() { try { localStorage.removeItem('pt-save'); } catch (e) {} }, loadSettings, saveSettings };
+window.GoldfishUI = { start(el, seats, opts) { const t = new Table(el, seats, opts); window.GoldfishUI.current = t; t.start(); return t; },
+  /** play back a recording made by this table (rec = parsed .json) */
+  replay(el, rec, opts = {}) { const G = window.Goldfish; if (!rec || !rec.moves || !rec.seats) throw new Error('not a recording'); G.uid.set(rec.uidBase); if (G.setPopularity) G.setPopularity(rec.pop || {}); const seats = rec.seats.map(s => ({ name: s.name, deckName: s.deckName, human: s.human, level: s.level, art: s.art, deck: G.buildDeck(s.cards, s.cmd) })); const t = new Table(el, seats, { ...opts, replay: rec }); window.GoldfishUI.current = t; t.start(); return t; }, replays: Replays, recEnc, recDec, resume(el, saved, opts) { const t = new Table(el, [], { ...opts, saved }); window.GoldfishUI.current = t; t.start(); return t; }, savedGame() { try { const s = JSON.parse(localStorage.getItem('pt-save') || 'null'); return s && s.state ? s : null; } catch (e) { return null; } }, clearSaved() { try { localStorage.removeItem('pt-save'); } catch (e) {} }, loadSettings, saveSettings };
 })();

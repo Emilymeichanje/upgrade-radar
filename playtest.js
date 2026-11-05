@@ -658,7 +658,7 @@ function tagAbilities(card) {
     _wbMark(); _wbPrev = /^waterbend \{/.test(lines[li]);
     if (skipLines.has(li)) continue;
     let raw = lines[li].replace(/^waterbend ((?:\{[^}]+\})+)/, '$1');
-    _thrMark(); { const tm = raw.match(/^(\d+)\+ \| (.+)$/); if (tm) { _thrCur = +tm[1]; if (!(/^[a-z ,]+$/.test(tm[2]) && KW.some(k => tm[2].includes(k)))) raw = tm[2]; } }
+    _thrMark(); { const tm = raw.match(/^(\d+)\+ \| (.+)$/); if (tm) { _thrCur = +tm[1]; if (!(/^[a-z ,]+$/.test(tm[2]) && KW.some(k => tm[2].includes(k))) && !/^\{t\}: add\b/i.test(tm[2])) raw = tm[2]; } } // station mana ("N+ | {T}: Add…") keeps its prefix for the dedicated stationMana rules
     { const mm = raw.match(/^(.*?), choose (one or more|one that hasn't been chosen this turn|one that hasn't been chosen|up to one|one|two) —$/);
       if (mm && /^•/.test(lines[li + 1] || '') && !/^choose/.test(raw)) {
         const modes = []; for (let k = li + 1; k < lines.length && /^•/.test(lines[k]); k++) { skipLines.add(k); const text = lines[k].replace(/^•\s*/, '').replace(/^[a-z ,'-]+ — (?=[a-z])/, ''); modes.push({ text, ops: parseOps(text) }); }
@@ -2422,7 +2422,7 @@ function buildDeck(cards, commanderNames) {
   return { library, commanders };
 }
 function shuffle(a, rng) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-function mulberry(seed) { return function () { let t = seed += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function mulberry(seed) { const st = { s: seed }; const f = function () { let t = st.s += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; f.st = st; return f; } // b10: exposes its state so undo/replay can rewind it
 const clone = c => ({ ...c, uid: UID++ });
 
 // ============================== GAME ==============================
@@ -2437,6 +2437,7 @@ class Game {
       command: s.deck.commanders.map(c => ({ ...clone(c), isCommander: true })), cmdTax: 0, landsThisTurn: 0, cmdDamage: {}, mulligans: 0,
       art: s.art || '',
     }));
+    for (const p of this.players) if (p.ai) p.ai.rng = this.rng; // b10: AIs share the seeded RNG so a recorded game replays identically
     for (const p of this.players) this.drawSilent(p, 7);
   }
   // ---------- plumbing ----------
@@ -4048,7 +4049,7 @@ class Game {
       if (!exileOp) this.say(hit.all ? `— board wiped` : `— destroys ${hit.desc}`, p);
       for (const q of this.alive()) if (q.battlefield.some(x => x.card.isCreature && x.protTurn === this.turn)) this.say(`— ${q.name}'s creatures survive (protected)`, p);
     } else if (card.roles.includes('removal') && target && target.card && !(card.statics && card.statics.enchant) && (card.isInstant || card.isSorcery || (card.spellOps || []).length || (card.etbOps || []).length || card.removal || /when(?:ever)? [^.]*enters[^.]*target/i.test(card.oracle || '')) /* b10: a permanent whose removal is a later trigger (Summoner's Sending) removes nothing on cast */ && !(card.spellOps || []).some(o => o.op === 'damage' && o.to !== 'each opponent' && o.to !== 'each creature') && !(card.spellOps || []).some(o => ['shrinkTarget', 'dispatch', 'swine', 'oring', 'destroyUpTo', 'bounceSpellOrPerm'].includes(o.op))) {
-      const owner = this.players[target.owner];
+      const owner = this.players[target.owner] || this.ownerOf(target) || p; // b10: derive when the target wasn't stamped
       if (!owner.battlefield.includes(target)) this.say(`— target is gone`, p);
       else if (!this.targetOk(card, target, p)) this.say(`— ${target.card.name} is no longer a legal target`, p);
       else if (target.protTurn === this.turn) this.say(`— ${target.card.name} is protected`, p);
@@ -4446,7 +4447,7 @@ class Game {
           else if (combatOnly) { const pool = this.b10_combatBodies(p).filter(b => p.human || this.ownerOf(b) !== p); hit = p.ai ? pool.sort((a, b) => this.powerOf(this.ownerOf(b), b) - this.powerOf(this.ownerOf(a), a))[0] || null : await this.pickPerm(p, src, pool, { harmful: true }); if (hit) hit.owner = this.ownerOf(hit).i; if (!hit) break; }
           else if (p.ai) { const t = p.ai.bestTarget(this, p, b => b.card.isCreature && this.toughOf(this.ownerOf(b), b) - this.markedOf(b) <= op.n && !this.isIndestructible(b) && !(op.notCommander && (b.card.orig || b.card).isCommander)); if (t && (creatureOnly || t.value >= 6)) hit = t.perm; }
           else if (p.human && creatureOnly) { const pool = this.opponentsOf(p).flatMap(q => q.battlefield.filter(b => b.card.isCreature && !(op.notCommander && (b.card.orig || b.card).isCommander)).map(b => b.card)); const pick = (await this.chooseFromList(p, src, pool, 1, 'damage'))[0]; if (pick) for (const q of this.alive()) { const b = q.battlefield.find(b => b.card === pick); if (b) { hit = b; hit.owner = q.i; } } }
-          if (hit) { const owner = this.players[hit.owner]; const nn = op.n * (this.b5_stag(owner) ? 2 : 1); this.say(`— ${nn} damage to ${hit.card.name}`, p); if (!this.noncombatPrevented(owner, hit) && !this.protectedFrom(hit, src)) { await this.dealtDamage(owner, hit, nn, src); if (this.toughOf(owner, hit) - this.markedOf(hit) + nn <= nn && hit.protTurn !== this.turn && !this.isIndestructible(hit)) await this.destroy(owner, hit); } }
+          if (hit) { const owner = this.players[hit.owner] || this.ownerOf(hit); const nn = op.n * (this.b5_stag(owner) ? 2 : 1); this.say(`— ${nn} damage to ${hit.card.name}`, p); if (!this.noncombatPrevented(owner, hit) && !this.protectedFrom(hit, src)) { await this.dealtDamage(owner, hit, nn, src); if (this.toughOf(owner, hit) - this.markedOf(hit) + nn <= nn && hit.protTurn !== this.turn && !this.isIndestructible(hit)) await this.destroy(owner, hit); } }
           else if (!creatureOnly) { const q = await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: deal ${op.n} damage to which player?`); if (q) { this.say(`— ${op.n} damage to ${q.name}`, p); await this.damagePlayer(q, op.n, src, { by: p }); } }
           break;
         }
@@ -5613,7 +5614,7 @@ class Game {
           let hit = null;
           if (p.ai) { const t = p.ai.bestTarget(this, p, ok); hit = t && t.perm; }
           else { const pool = this.opponentsOf(p).flatMap(q => q.battlefield.filter(ok).map(b => b.card)); const pick = (await this.chooseFromList(p, src, pool, 1, 'destroy'))[0]; if (pick) for (const q of this.alive()) { const b = q.battlefield.find(b => b.card === pick); if (b) { hit = b; hit.owner = q.i; } } }
-          if (hit && hit.protTurn !== this.turn) await this.destroy(this.players[hit.owner], hit); break;
+          if (hit && hit.protTurn !== this.turn) await this.destroy(this.players[hit.owner] || this.ownerOf(hit), hit); break;
         }
       }
     }
@@ -6544,7 +6545,7 @@ class Game {
       if (o instanceof Map) { const m = new Map(); memo.set(o, m); for (const [k, v] of o) m.set(cl(k), cl(v)); return m; }
       if (o instanceof Set) { const s = new Set(); memo.set(o, s); for (const v of o) s.add(cl(v)); return s; }
       const c = Object.create(Object.getPrototypeOf(o)); memo.set(o, c); for (const k of Object.keys(o)) if (!(o === this && skip.has(k))) c[k] = cl(o[k]); return c; };
-    const g = cl(this); return { g, players: g.players, people: g.players.slice() };
+    const g = cl(this); return { g, players: g.players, people: g.players.slice(), rngS: this.rng && this.rng.st ? this.rng.st.s : null };
   }
   restore(snap) {
     const anchors = [[snap.g, this], [snap.players, this.players], ...snap.people.map((sp, i) => [sp, this.players[i]])];
@@ -6559,6 +6560,7 @@ class Game {
       for (const k of Object.keys(dst)) if (!(dst === this && (k === 'hooks' || k === 'rng'))) delete dst[k];
       for (const k of Object.keys(src)) dst[k] = cl(src[k]);
     }
+    if (snap.rngS != null && this.rng && this.rng.st) this.rng.st.s = snap.rngS; // b10: rewind the RNG with the state
   }
   async takeTurn(p) {
     await this.beginTurn(p); if (p.dead || this.winner) return;
@@ -6674,7 +6676,7 @@ class Game {
       else { const d = {}; for (const k of Object.keys(o)) { if (root && skipRoot.has(k)) continue; const v = o[k]; if (v === undefined || typeof v === 'function') continue; d[k] = enc(v); } n = o instanceof AI ? { $ai: o.expert ? 'expert' : o.level, d } : { $o: d }; }
       nodes[id] = n; return { $r: id };
     };
-    enc(this, true); return { v: 1, nodes };
+    enc(this, true); return { v: 1, nodes, rngS: this.rng && this.rng.st ? this.rng.st.s : null, uid: UID }; // b10: resume continues the same random stream and ids
   }
   /** rebuild a Game from serializeState() output; the caller supplies fresh hooks */
   static fromSaved(data, { hooks = {}, seed } = {}) {
@@ -6687,7 +6689,7 @@ class Game {
       const o = i === 0 ? Object.create(Game.prototype) : n.$ai ? new AI(n.$ai) : {}; made[i] = o; const d = n.$ai ? n.d : n.$o; for (const k of Object.keys(d)) if (!(n.$ai && k === 'rng')) o[k] = val(d[k]); return o;
     };
     const val = v => (v && typeof v === 'object' && '$r' in v) ? dec(v.$r) : v;
-    const g = dec(0); g.hooks = hooks; g.rng = mulberry(seed || (Date.now() & 0xffffffff)); for (const p of g.players) if (p.ai) p.ai.rng = g.rng; g.pregameDone = true;
+    const g = dec(0); g.hooks = hooks; g.rng = mulberry(data.rngS != null ? data.rngS : (seed || (Date.now() & 0xffffffff))); if (data.uid) UID = data.uid; // exact, so a recording continued after resume replays with the same ids for (const p of g.players) if (p.ai) p.ai.rng = g.rng; g.pregameDone = true;
     return g;
   }
   async run() {
@@ -7551,5 +7553,5 @@ function auditCard(c) {
   if (TESTED.has(c.name) || TESTED.has((c.name || '').split(' // ')[0])) for (const x of out) if (x.status === 'generic') x.status = 'tested';
   return { name: c.name, lines: out, missing: out.filter(x => x.status === 'missing').length, generic: out.filter(x => x.status === 'generic').length };
 }
-root.Goldfish = { auditCard, parseOps, TESTED, HANDLED, Game, AI, buildDeck, tagCard, setPopularity, manaInfo, counterHits, shuffle, mulberry, EVASIVE };
+root.Goldfish = { auditCard, parseOps, TESTED, HANDLED, Game, AI, buildDeck, tagCard, setPopularity, manaInfo, counterHits, shuffle, mulberry, EVASIVE, uid: { get: () => UID, set: v => { UID = +v || UID; } } };
 })(typeof window !== 'undefined' ? window : globalThis);

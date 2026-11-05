@@ -91,6 +91,8 @@ main .wrap{padding-block:16px 48px}
 .acts button.pri{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .score{font-family:var(--mono);font-size:.74rem;color:var(--muted)}
 .empty{color:var(--muted);padding:20px 0;font-size:.95rem}
+.replist{display:grid;gap:8px}.repitem{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.replogtxt{white-space:pre-wrap;font-size:.8rem;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;max-height:60vh;overflow:auto}
 textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:var(--mono);font-size:.82rem;resize:vertical}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
 .note{font-size:.85rem;color:var(--muted)}
@@ -233,7 +235,7 @@ details.sum>summary b{font-family:var(--mono);font-size:1.05rem}
 <body>
 <header class="top"><div class="wrap">
   <h1>MTG Dashboard <small id="count"></small></h1>
-  <nav class="topnav" aria-label="Sections"><button id="nav-decks" aria-current="page">Decks</button><button id="nav-play">Playtest</button></nav>
+  <nav class="topnav" aria-label="Sections"><button id="nav-decks" aria-current="page">Decks</button><button id="nav-play">Playtest</button><button id="nav-rep">Replays</button></nav>
   <button class="chip" id="filtbtn" aria-expanded="false" aria-controls="ctlbox">Menu</button>
   <div class="ctl" id="ctlbox">
     <label for="since">New since</label><input type="date" id="since">
@@ -693,7 +695,7 @@ function toggleCheck(open){const p=$('#checkpanel');p.hidden=!open;if(!open)retu
       const missing=rows.filter(r=>r.a.missing),cond=rows.filter(r=>!r.a.missing&&r.a.generic),fine=rows.length-missing.length-cond.length;
       const notFound=[...where.entries()].filter(([k])=>!found.has(k)).map(([,v])=>v.name);
       const li=r=>`<li><b>${esc(r.c.name)}</b> <span class="note">· ${esc(r.decks.join(', '))}</span><ul style="margin:2px 0 6px;padding-left:16px">${r.a.lines.filter(x=>x.status==='missing'||x.status==='generic').map(x=>`<li class="note">${x.status==='missing'?'✗':'?'} ${esc(x.line)}</li>`).join('')}</ul></li>`;
-      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v64',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
+      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v65',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
       $('#chkres').innerHTML=`<p><b>${rows.length}</b> cards checked: <b>${fine}</b> fully covered, <b>${cond.length}</b> with a condition unverified, <b>${missing.length}</b> with text not modelled.${notFound.length?` <span class="err">${notFound.length} name${notFound.length===1?'':'s'} not found on Scryfall: ${esc(notFound.join(', '))}</span>`:''}</p>
         ${flagged.length?`<div class="row"><button class="chip pri" id="chkcopy">Copy report for Claude</button><button class="chip" id="chkdl">Download report</button><span class="note" id="chkcopied"></span></div>`:''}
         ${missing.length?`<h4>Not modelled</h4><ul style="padding-left:18px">${missing.map(li).join('')}</ul>`:''}
@@ -842,12 +844,12 @@ function cardRow({c,s,sc},d,list,kept){
 
 // ---------- playtest (goldfish table) ----------
 (function(){const b=document.getElementById('filtbtn');if(b)b.onclick=()=>{const on=document.body.classList.toggle('ctlopen');b.setAttribute('aria-expanded',on);b.setAttribute('aria-pressed',on);};})();
-function showView(v){$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detail';$('#play').hidden=v!=='play';if(v!=='detail')S.cur=null;
-  document.body.classList.toggle('playing',v==='play');$('#nav-decks').toggleAttribute('aria-current',v!=='play');$('#nav-play').toggleAttribute('aria-current',v==='play');
-  if(v==='play'){if(!location.hash.startsWith('#playtest'))history.replaceState(null,'','#playtest')}else if(location.hash.startsWith('#playtest'))history.replaceState(null,'',location.pathname+location.search);
+function showView(v){const rep=v==='replays';if(rep)v='play';$('#home').hidden=v!=='home';$('#detail').hidden=v!=='detail';$('#play').hidden=v!=='play';if(v!=='detail')S.cur=null;
+  document.body.classList.toggle('playing',v==='play');$('#nav-decks').toggleAttribute('aria-current',v!=='play');$('#nav-play').toggleAttribute('aria-current',v==='play'&&!rep);$('#nav-rep').toggleAttribute('aria-current',rep);
+  if(rep){if(!location.hash.startsWith('#replays'))history.replaceState(null,'','#replays')}else if(v==='play'){if(!location.hash.startsWith('#playtest'))history.replaceState(null,'','#playtest')}else if(location.hash.startsWith('#playtest')||location.hash.startsWith('#replays'))history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=64').then(()=>loadScript('playtest-ui.js?v=64'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=65').then(()=>loadScript('playtest-ui.js?v=65'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();
@@ -931,19 +933,47 @@ function popularityMap(){const m={};for(const c of (S.snap&&S.snap.commanders)||
 async function startGame(cfg){
   const el=$('#play');el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>';
   if(Goldfish.setPopularity)Goldfish.setPopularity(popularityMap());
-  const seats=[];
+  const seats=[],raw=[];const uidBase=Goldfish.uid?Goldfish.uid.get():0;
   for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===cfg.slugs[i]);const list=S.decks[d.slug].list;
     let cards=[];try{cards=await cardsNamed([...new Set(list)])}catch(e){}
     const byName=new Map(cards.map(c=>[norm(c.name),c]));const cmd=commanderNames(d);
     const full=list.map(n=>byName.get(norm(n))).filter(Boolean);
     let cmdCards=[...cmd].map(n=>byName.get(n)).filter(Boolean);
     if(!cmdCards.length){const cc=S.cmdr[d.slug]||await commanderCard(d);if(cc)cmdCards=[cc]}
-    const deck=Goldfish.buildDeck(full.filter(c=>!cmd.has(norm(c.name))).concat(cmdCards),cmdCards.map(c=>c.name));
+    const deckCards=full.filter(c=>!cmd.has(norm(c.name))).concat(cmdCards);const deck=Goldfish.buildDeck(deckCards,cmdCards.map(c=>c.name));
     if(deck.library.length<40){el.innerHTML=`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards were found on Scryfall. Check the list for typos.</div><button class="chip" id="ptback2">Back to setup</button>`;$('#ptback2').onclick=openPlaytest;return}
     const human=i===0&&!cfg.watch;
-    seats.push({name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'expert'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')});
+    const seat={name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'expert'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')};seats.push(seat);
+    raw.push({name:seat.name,deckName:seat.deckName,human,level:seat.level,art:seat.art,cmd:cmdCards.map(c=>c.name),cards:deckCards.map(c=>({name:c.name,mana:c.mana,type:c.type,oracle:c.oracle,cmc:c.cmc,power:c.power,toughness:c.toughness,power2:c.power2,toughness2:c.toughness2,loyalty:c.loyalty,colors:c.colors,ci:c.ci,img:c.img,imgN:c.imgN,artc:c.artc}))});
   }
-  el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg),cfg});
+  const pm=popularityMap(),inDecks=new Set(raw.flatMap(r=>r.cards.map(c=>c.name))),pop={};for(const n of inDecks)if(pm[n]!=null)pop[n]=pm[n];
+  el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg),cfg,rawSeats:raw,uidBase,pop});
+}
+
+// ---------- replays ----------
+async function openReplays(msg){
+  if(PT.table){PT.table.aborted=true;PT.table=null}
+  showView('replays');const el=$('#play');el.innerHTML='<div class="empty">Loading replays…</div>';
+  try{await loadPlaytest()}catch(e){el.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return}
+  const R=GoldfishUI.replays;let list=[];try{list=await R.list()}catch(e){el.innerHTML=`<div class="empty">This browser blocks storage for this site, so replays can't be saved here (${esc(e.message)}).</div>`;return}
+  const when=t=>{try{return new Date(t).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})}catch(e){return t}};
+  el.innerHTML=`<h2 style="font-size:1.4rem;margin-bottom:4px">Replays</h2>
+  <p class="note">Every game you play from engine v65 on is saved here automatically (newest ${R.CAP} kept). Upload a <b>recording (.json)</b> to watch it again, or a <b>log (.txt)</b> to keep it for reading. Text logs from older games can't be replayed: they don't contain the shuffle seed or your decisions.</p>
+  ${msg?`<p class="warn">${esc(msg)}</p>`:''}
+  <div class="gt-ctl" style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0"><label class="chip" style="cursor:pointer">Upload recording or log<input type="file" id="repup" accept=".json,.txt,application/json,text/plain" multiple hidden></label><span class="note">${list.length} / ${R.CAP} stored</span>${list.length?'<button class="chip" id="repclear">Delete all</button>':''}</div>
+  ${list.length?`<div class="replist">${list.map(m=>`<div class="repitem" data-id="${m.id}"><div><b>${esc(m.name||'Game')}</b><div class="note">${esc(when(m.at||m.id))} · ${esc(m.result||'')}${m.turns?` · turn ${m.turns}`:''}${m.engine?` · ${esc(m.engine)}`:''}${m.logOnly?' · <span class="warn">log only</span>':''}</div></div><div class="gt-ctl" style="display:flex;gap:6px;flex-wrap:wrap">${m.logOnly?'':'<button class="chip pri" data-r="play">Watch</button>'}<button class="chip" data-r="log">Log</button>${m.logOnly?'':'<button class="chip" data-r="dl">Download</button>'}<button class="chip" data-r="del">Delete</button></div></div>`).join('')}</div>`:'<div class="empty">No games saved yet. Finish (or leave) a playtest game and it appears here.</div>'}
+  <div id="replog"></div>`;
+  $('#repup').onchange=async e=>{let n=0,bad=[];for(const f of e.target.files){try{const txt=await f.text();let entry;
+      if(/^\s*\{/.test(txt)){const rec=JSON.parse(txt);if(!rec.moves||!rec.seats)throw new Error('not a playtest recording');entry={id:Date.now()+n,at:rec.at,engine:rec.engine,name:rec.seats.map(s=>(s.deckName||s.name).split(',')[0]).join(' · '),seats:rec.seats.map(s=>({name:s.name,deckName:s.deckName})),result:rec.result||'',turns:rec.turns||0,moves:rec.moves.length,rec}}
+      else{const lines=txt.split(/\r?\n/);const seats=lines.filter(l=>/^seat \d+:/.test(l)).map(l=>l.replace(/^seat \d+: /,''));const res=(lines.find(l=>/^result:/.test(l))||'').replace(/^result: /,'');const eng=((lines[0]||'').match(/engine (v\d+)/)||[])[1];const at=((lines[0]||'').match(/\d{4}-\d\d-\d\dT[\d:.]+Z/)||[])[0];if(!/MTG Dashboard playtest log/.test(lines[0]||''))throw new Error('not a playtest log');entry={id:Date.now()+n,at:at||new Date().toISOString(),engine:eng,name:seats.map(s=>s.split(' — ')[0].replace(/^(You|AI) · /,'')).join(' · ')||f.name,result:res.split(' · ')[0],turns:+((res.match(/turn (\d+)/)||[])[1]||0),logOnly:true,text:txt}}
+      await R.put(entry);n++}catch(err){bad.push(f.name+': '+err.message)}}
+    openReplays(bad.length?`Skipped ${bad.join('; ')}`:'')};
+  if($('#repclear'))$('#repclear').onclick=async()=>{if(!confirm('Delete all '+list.length+' saved games?'))return;for(const m of list)await R.del(m.id);openReplays()};
+  el.querySelectorAll('.repitem [data-r]').forEach(b=>b.onclick=async()=>{const id=+b.closest('.repitem').dataset.id,act=b.dataset.r;const e=await R.get(id);if(!e)return openReplays();
+    if(act==='del'){await R.del(id);return openReplays()}
+    if(act==='dl'){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({...e.rec,result:e.result,turns:e.turns})],{type:'application/json'}));a.download=`playtest-rec-${(e.name||'game').replace(/[^a-z0-9]+/gi,'-').toLowerCase()}-${id}.json`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);return}
+    if(act==='log'){const txt=e.text||((e.rec&&e.rec.log)||[]).join('\n')||'(no log stored)';$('#replog').innerHTML=`<h3 style="margin:14px 0 6px">${esc(e.name)} — log</h3><pre class="replogtxt">${esc(txt)}</pre>`;$('#replog').scrollIntoView({behavior:'smooth'});return}
+    if(act==='play'){el.innerHTML='';try{PT.table=GoldfishUI.replay(el,e.rec,{onExit:()=>openReplays()})}catch(err){openReplays('Could not start the replay: '+err.message)}}});
 }
 
 // ---------- controls ----------
@@ -962,7 +992,7 @@ function wire(){
   $('#cmode').onchange=()=>{S.cmode=$('#cmode').value;syncF();toHome()};
   $('#fclear').onclick=()=>{S.colors.clear();S.brackets=new Set(['2','3','4','cEDH']);syncF();toHome()};syncF();
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#checkbtn').onclick=()=>toggleCheck($('#checkpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-rep').onclick=()=>openReplays();$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#checkbtn').onclick=()=>toggleCheck($('#checkpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};
@@ -990,7 +1020,7 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
   renderHome();
 }
 (async()=>{wire();try{await loadSnapshot()}catch(e){$('#status').innerHTML='<span>Snapshot failed to load.</span>';return}
-  renderHome();await Promise.all([initDb().then(()=>syncTok()&&Promise.race([syncNow(),new Promise(r=>setTimeout(r,10000))])),resolveCommanders()]);renderHome();syncStatus(S.syncMsg||'',S.syncErr);applyCmdrPrints();refreshPrices();if(location.hash==='#playtest')openPlaytest();
+  renderHome();await Promise.all([initDb().then(()=>syncTok()&&Promise.race([syncNow(),new Promise(r=>setTimeout(r,10000))])),resolveCommanders()]);renderHome();syncStatus(S.syncMsg||'',S.syncErr);applyCmdrPrints();refreshPrices();if(location.hash==='#playtest')openPlaytest();else if(location.hash==='#replays')openReplays();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&syncTok())syncNow()});
   window.addEventListener('hashchange',()=>{if(location.hash==='#playtest'&&$('#play').hidden)openPlaytest();else if(location.hash==='#playtest'&&PT.table&&!PT.table.aborted){/* back from a live game: the table asks first */}else if(!location.hash.startsWith('#playtest')&&!$('#play').hidden){setTimeout(()=>{if(location.hash.startsWith('#playtest'))return;if(PT.table){PT.table.aborted=true;if(PT.table.sfx)PT.table.sfx.musicStop();PT.table=null}showView('home');renderHome()},0)}});})();
 })();

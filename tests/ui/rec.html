@@ -1,0 +1,20 @@
+<!doctype html><meta charset=utf-8><body style="width:1500px"><div id=t></div>
+<script>window.localStorage.setItem('pt-settings',JSON.stringify({anim:false,sound:false,speed:'fast',stops:'all'}))</script>
+<script src="../../playtest.js"></script><script src="../../playtest-ui.js"></script>
+<script>
+// a self-contained recording harness: raw card lists exactly as the app passes them
+const mk=(name,type,mana,oracle,cmc,p,t)=>({name,type,mana,oracle,cmc,power:p,toughness:t});
+function cards(){const L=[];
+ for(let i=0;i<16;i++)L.push(mk('Plains','Basic Land — Plains','','({T}: Add {W}.)',0));for(let i=0;i<16;i++)L.push(mk('Island','Basic Land — Island','','({T}: Add {U}.)',0));
+ for(let i=0;i<4;i++)L.push(mk('Evolving Wilds','Land','','{T}, Sacrifice Evolving Wilds: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.',0));
+ for(let i=0;i<4;i++)L.push(mk('Swords','Instant','{W}','Exile target creature.',1));for(let i=0;i<4;i++)L.push(mk('Opt','Instant','{U}','Scry 1. Draw a card.',1));
+ for(let i=0;i<4;i++)L.push(mk('Charm','Instant','{1}{U}','Choose one —\n• Draw a card.\n• Return target creature to its owner\'s hand.',2));
+ for(let i=0;i<14;i++)L.push(mk('Knight','Creature — Knight','{1}{W}','First strike',2,2,2));for(let i=0;i<10;i++)L.push(mk('Angel','Creature — Angel','{3}{W}{W}','Flying',5,4,4));
+ for(let i=0;i<8;i++)L.push(mk('Sphinx','Creature — Sphinx','{2}{U}{U}','Flying',4,3,3));for(let i=0;i<10;i++)L.push(mk('Divination','Sorcery','{2}{U}','Draw two cards.',3));
+ for(let i=0;i<9;i++)L.push(mk('Wall','Creature — Wall','{1}{U}','Defender',2,0,4));
+ L.push(mk('Cmdr','Legendary Creature — Human','{W}{U}','Flying',2,3,3));return L}
+window.errs=[];window.onerror=(m)=>errs.push(String(m));window.onunhandledrejection=e=>errs.push(String(e.reason&&e.reason.stack||e.reason));
+window.boot=(watch)=>{const raw=[0,1,2,3].map(i=>({name:(i||watch?'AI · P':'You · P')+i,deckName:'T'+i,human:i===0&&!watch,level:i||watch?'expert':null,art:'',cmd:['Cmdr'],cards:cards()}));
+  const uidBase=Goldfish.uid.get();const seats=raw.map(r=>({name:r.name,deckName:r.deckName,human:r.human,level:r.level,art:'',deck:Goldfish.buildDeck(r.cards,r.cmd)}));
+  return GoldfishUI.start(document.getElementById('t'),seats,{rawSeats:raw,uidBase,pop:{},onExit:()=>{}})};
+</script>

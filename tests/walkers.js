@@ -1,0 +1,82 @@
+// planeswalker rules and every walker interaction in the Tam deck — real Oracle text
+require(__dirname+'/../playtest.js');const {Game,AI,buildDeck,tagCard}=Goldfish;const R=[...require(__dirname+'/fixtures/tamterra.json'),...require(__dirname+'/fixtures/pw8.json')];
+const C=n=>{const a=R.find(x=>x[0]===n);if(!a)throw new Error('no '+n);return tagCard({name:a[0],mana:a[1],type:a[2],oracle:a[3],cmc:a[4],power:a[5],toughness:a[6],loyalty:a[7]})};
+const mk=(name,type,mana,oracle,cmc,p,t)=>({name,type,mana,oracle,cmc,power:p,toughness:t});
+const deck=()=>buildDeck([...Array(40)].map(()=>mk('Island','Basic Land — Island','','',0)).concat([...Array(59)].map(()=>mk('Elf','Creature — Elf Warrior','{1}{G}','',2,2,2))).concat([mk('Cmdr','Legendary Creature — Elf','{G}','',1,1,1)]),['Cmdr']);
+const fresh=()=>{const g=new Game([0,1,2,3].map(i=>({name:'P'+i,deck:deck(),ai:new AI('expert')})),{seed:11,hooks:{emit:()=>{}}});g.active=0;g.phase='main1';g.turn=6;for(const p of g.players)p.hand=p.library.splice(-4);return g};
+const tick=async g=>{await g.emit({type:'tick'});await g.flushPending?.();await g.emit({type:'tick'})};let fails=0;const ok=(n,c,x='')=>{if(!c){fails++;console.log('FAIL',n,x)}else console.log('PASS',n)};
+const cast=async(g,p,name,opts={})=>{const c=typeof name==='string'?C(name):name;p.hand.push(c);p.pool=Array(14).fill(0).map((_,i)=>({c:'WUBRGC'[i%6]}));await g.cast(p,c,'hand',opts.target||null);while(g.stack.length)await g.resolve();await tick(g);return p.battlefield.find(b=>b.card===c)||p.battlefield.find(b=>b.card.name===c.name&&!b.card.token)};
+const act=async(g,p,pm,label,opt={})=>{const own=pm.card.abilities.find(a=>a.label===label);const gr=g.abilityOptions(p,{}).find(o=>o.perm===pm&&(o.ab.label===label||o.ab.label.startsWith(label+' (')));const ab=own||(gr&&gr.ab);if(!ab)return 'NOAB';if(!own&&gr){p.pool=Array(10).fill(0).map((_,i)=>({c:'WUBRGC'[i%6]}));await g.activate(p,{...gr,...opt});while(g.stack.length)await g.resolve();await tick(g);return 'OK'}if(!g.canUseAbility(p,pm.card,ab,pm))return 'CANT';p.pool=Array(10).fill(0).map((_,i)=>({c:'WUBRGC'[i%6]}));await g.activate(p,{card:pm.card,ab,perm:pm,...opt});while(g.stack.length)await g.resolve();await tick(g);return 'OK'};
+const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=false;await tick(g);return pm};
+(async()=>{
+ // ---- loyalty basics
+ { const g=fresh();const [a,b]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');ok('walker enters with printed loyalty (4)',t&&t.loyalty===4,'loyalty='+(t&&t.loyalty));
+   ok('+1 ability',await act(g,a,t,'+1')==='OK'&&t.loyalty===5);ok('one loyalty ability per turn',await act(g,a,t,'−3')==='CANT');
+   g.turn++;const bear=await g.enterPerm(b,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,2,2)));bear.summoning=false;g.active=1;
+   await g.combatPhase(b,[{attacker:bear,defender:a,pw:t}]);await tick(g);ok('combat damage to a walker removes loyalty',t.loyalty===3,'loyalty='+t.loyalty);
+   t.loyalty=1;g.active=0;g.turn++;await act(g,a,t,'−3');ok('a walker can’t pay more loyalty than it has',a.battlefield.includes(t)&&t.loyalty===1); }
+ // ---- Doubling Season
+ { const g=fresh();const [a]=g.players;await put(g,a,'Doubling Season');const t=await cast(g,a,'Teferi, Hero of Dominaria');ok('Doubling Season: walker enters with double loyalty (8)',t.loyalty===8,'loyalty='+t.loyalty);
+   await act(g,a,t,'+1');ok('Doubling Season does NOT double a + loyalty cost (8 → 9)',t.loyalty===9,'loyalty='+t.loyalty);
+   const og=await put(g,a,'Oath of Gideon');const e=await cast(g,a,"Elspeth, Sun's Champion");ok('Oath of Gideon + Doubling Season: (4+1)×2 = 10',e.loyalty===10,'loyalty='+e.loyalty);
+   await act(g,a,e,'+1');ok('Doubling Season doubles tokens from a walker (+1 → six Soldiers)',a.battlefield.filter(x=>x.card.token&&x.card.name==='Soldier').length===6); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'Oath of Gideon');const t=await cast(g,a,'Teferi, Hero of Dominaria');ok('Oath of Gideon alone: +1 starting loyalty (5)',t.loyalty===5); }
+ // ---- Lae'zel, Carth
+ { const g=fresh();const [a]=g.players;await put(g,a,"Lae'zel, Vlaakith's Champion");const t=await cast(g,a,'Teferi, Hero of Dominaria');ok("Lae'zel: walker enters with one extra loyalty (5)",t.loyalty===5,'loyalty='+t.loyalty);
+   await act(g,a,t,'+1');ok("Lae'zel: +1 ability puts two (5 → 7)",t.loyalty===7,'loyalty='+t.loyalty); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'Carth the Lion');const t=await cast(g,a,'Teferi, Hero of Dominaria');await act(g,a,t,'+1');ok('Carth: +1 costs an additional +1 (4 → 6)',t.loyalty===6,'loyalty='+t.loyalty);
+   g.turn++;await act(g,a,t,'−3',{target:null});ok('Carth: −3 becomes −2 (6 → 4)',t.loyalty===4,'loyalty='+t.loyalty); }
+ { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');const L=a.library.length;a.library.push(C('Chandra, Torch of Defiance'));await cast(g,a,'Carth the Lion');
+   ok('Carth ETB: finds a walker in the top seven',a.hand.some(c=>c.name==='Chandra, Torch of Defiance'),g.log.slice(-3).map(l=>l.m).join(' | ')); }
+ // ---- Deepglow Skate, Spark Double
+ { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');const c=await cast(g,a,'Chandra, Torch of Defiance');await cast(g,a,'Deepglow Skate');
+   ok('Deepglow Skate doubles loyalty on your walkers (4→8, 4→8)',t.loyalty===8&&c.loyalty===8,t.loyalty+'/'+c.loyalty); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'Doubling Season');const t=await cast(g,a,'Teferi, Hero of Dominaria');await cast(g,a,'Deepglow Skate');ok('Deepglow + Doubling Season: 8 → 24 (adds 8, doubled to 16)',t.loyalty===24,'loyalty='+t.loyalty); }
+ { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');const sd=await cast(g,a,'Spark Double');const cp=a.battlefield.find(x=>x!==t&&x.card.name==='Teferi, Hero of Dominaria');
+   ok('Spark Double copies a walker: nonlegendary, printed loyalty +1 (5), both stay',cp&&!cp.card.isLegendary&&cp.loyalty===5&&a.battlefield.includes(t),cp?JSON.stringify([cp.card.isLegendary,cp.loyalty]):g.log.slice(-4).map(l=>l.m).join(' | ')); }
+ // ---- proliferate: Tam, Tekuthal, Karn's Bastion, Ichormoon Gauntlet, All Will Be One
+ { const g=fresh();const [a]=g.players;const tam=await put(g,a,'Tam, the Possibility');const t=await cast(g,a,'Teferi, Hero of Dominaria');const c=await cast(g,a,'Chandra, Torch of Defiance');
+   const ab=tam.card.abilities.find(x=>x.tap);a.pool=Array(6).fill(0).map((_,i)=>({c:'WUBRGC'[i]}));await g.activate(a,{card:tam.card,ab,perm:tam});while(g.stack.length)await g.resolve();await tick(g);
+   ok('Tam: proliferate X times, X = planeswalker types (Teferi, Chandra → 2)',t.loyalty===6&&c.loyalty===6,t.loyalty+'/'+c.loyalty);
+   const tf2=C('Teferi, Master of Time');const t2=await cast(g,a,tf2);ok('Tam: walker spells cost {1} less',g.costOf(a,C('Narset, Parter of Veils'),'hand').total===2); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'Tekuthal, Inquiry Dominus');const t=await cast(g,a,'Teferi, Hero of Dominaria');const kb=await put(g,a,"Karn's Bastion");
+   const ab=kb.card.abilities.find(x=>x.ops.some(o=>o.op==='proliferate'));a.pool=Array(5).fill(0).map(()=>({c:'C'}));await g.activate(a,{card:kb.card,ab,perm:kb});while(g.stack.length)await g.resolve();await tick(g);
+   ok("Tekuthal: Karn's Bastion proliferates twice (4 → 6)",t.loyalty===6,'loyalty='+t.loyalty); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'Ichormoon Gauntlet');const t=await cast(g,a,'Teferi, Hero of Dominaria');
+   ok('Ichormoon Gauntlet grants [0]: Proliferate',await act(g,a,t,'0')==='OK'&&t.loyalty===5,'loyalty='+t.loyalty+' abil='+t.card.abilities.map(x=>x.label).join(','));
+   g.turn++;const before=t.loyalty;await cast(g,a,tagCard(mk('Opt','Instant','{U}','Draw a card.',1)));ok('Ichormoon: noncreature spell adds a counter of a kind already there',t.loyalty===before+1,before+' → '+t.loyalty);
+   t.loyalty=12;g.turn++;const r=await act(g,a,t,'−12');ok('Ichormoon grants [−12]: extra turn',r==='OK'&&/extra turn/.test(g.log.slice(-3).map(l=>l.m).join(' ')),r+' '+g.log.slice(-3).map(l=>l.m).join(' | ')); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'All Will Be One');const L=g.opponentsOf(a).map(q=>q.life);const t=await cast(g,a,'Teferi, Hero of Dominaria');
+   ok('All Will Be One: a walker entering with 4 loyalty deals 4 damage',g.opponentsOf(a).some((q,i)=>q.life===L[i]-4)||/deals 4 damage/.test(g.log.slice(-5).map(l=>l.m).join(' ')),g.log.slice(-4).map(l=>l.m).join(' | ')); }
+ // ---- end-step and death engines
+ { const g=fresh();const [a]=g.players;await put(g,a,'Brokers Ascendancy');const t=await cast(g,a,'Teferi, Hero of Dominaria');const guff=await cast(g,a,'Commodore Guff');
+   await g.fireTriggers?.(a,'end');await tick(g);ok('Brokers Ascendancy + Commodore Guff at end step: Teferi +2, Guff +1',t.loyalty===6&&guff.loyalty===6,t.loyalty+'/'+guff.loyalty+' '+g.log.slice(-4).map(l=>l.m).join(' | ')); }
+ { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');await cast(g,a,'Way of the Necromancer');const jace=a.battlefield.find(x=>x.card.isPlaneswalker&&/Jace/.test(x.card.name)&&x.card.token);
+   ok('Way of the Necromancer: empower Jace 2 (Jace token with 2 loyalty)',jace&&jace.loyalty===2,jace?'jace='+jace.loyalty:g.log.slice(-3).map(l=>l.m).join(' | '));
+   const e=await g.enterPerm(a,tagCard(mk('Elk','Creature — Elk','{1}{G}','',2,2,2)));await g.destroy(a,e);await tick(g);ok('…a creature dying puts a loyalty counter on each walker',t.loyalty===5&&jace&&jace.loyalty===3,t.loyalty+'/'+(jace&&jace.loyalty)); }
+ { const g=fresh();const [a]=g.players;await cast(g,a,'Way of the Paradox');const t=await cast(g,a,'Teferi, Hero of Dominaria');const L=a.life;await act(g,a,t,'+1');ok('Way of the Paradox: gain 1 life on activating a loyalty ability',a.life===L+1,'life '+L+' → '+a.life); }
+ { const g=fresh();const [a]=g.players;await put(g,a,'Sanctum Lurker');const t=await cast(g,a,'Teferi, Hero of Dominaria');ok('Sanctum Lurker grants [+2]',g.abilityOptions(a,{}).some(o=>o.perm===t&&/^\+2/.test(o.ab.label)));
+   t.loyalty=3;await act(g,a,t,'−3');ok('Sanctum Lurker: a walker at 0 loyalty stays',a.battlefield.includes(t)&&t.loyalty===0,'loyalty='+t.loyalty); }
+ // ---- emblems
+ { const g=fresh();const [a]=g.players;const e=await cast(g,a,"Elspeth, Sun's Champion");e.loyalty=7;await act(g,a,e,'−7');const elk=await g.enterPerm(a,tagCard(mk('Elk','Creature — Elk','{1}{G}','',2,2,2)));await tick(g);
+   ok('Elspeth emblem: creatures get +2/+2 and flying',g.powerOf(a,elk)===4&&g.toughOf(a,elk)===4&&g.hasKw?.(a,elk,'flying')!==false,g.powerOf(a,elk)+'/'+g.toughOf(a,elk)); }
+ { const g=fresh();const [a]=g.players;const c=await cast(g,a,'Chandra, Torch of Defiance');c.loyalty=7;await act(g,a,c,'−7');const L=g.opponentsOf(a).map(q=>q.life);ok('Chandra −7 makes an emblem, not a one-off 5 damage',(a.b12_emblems||[]).some(e=>e.kind==='castBurn')&&g.opponentsOf(a).every((q,i)=>q.life===L[i]));await cast(g,a,tagCard(mk('Opt','Instant','{U}','Draw a card.',1)));
+   ok('Chandra emblem: each spell deals 5 damage',g.opponentsOf(a).some((q,i)=>q.life===L[i]-5)||/5 damage/.test(g.log.slice(-6).map(l=>l.m).join(' ')),g.log.slice(-4).map(l=>l.m).join(' | ')); }
+ { const g=fresh();const [a,b]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');t.loyalty=8;await act(g,a,t,'−8');const x=await g.enterPerm(b,tagCard(mk('Relic','Artifact','{3}','',3)));await g.draw(a,1);await tick(g);
+   ok('Teferi emblem: drawing a card exiles an opponent permanent',!b.battlefield.includes(x),g.log.slice(-3).map(l=>l.m).join(' | ')); }
+ { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Teferi, Who Slows the Sunset');t.loyalty=7;await act(g,a,t,'−7');ok('Teferi, Who Slows the Sunset −7: emblem recorded',/emblem/.test(g.log.slice(-4).map(l=>l.m).join(' ')),g.log.slice(-3).map(l=>l.m).join(' | ')); }
+ { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Tamiyo, Field Researcher');t.loyalty=7;const h=a.hand.length;await act(g,a,t,'−7');const big=tagCard(mk('Colossus','Creature — Golem','{12}','',12,12,12));a.hand.push(big);a.pool=[];
+   ok('Tamiyo emblem: draw three, then cast spells from hand free',a.hand.length===h+4&&g.castMode(a,big,'hand')==='free',(a.hand.length-h)+' '+g.castMode(a,big,'hand')); }
+ { const g=fresh();const [a]=g.players;const w=await cast(g,a,'Wrenn and Realmbreaker');w.loyalty=7;await act(g,a,w,'−7');const e=tagCard(mk('Elk','Creature — Elk','{1}{G}','',2,2,2));a.graveyard.push(e);a.pool=[{c:'G'},{c:'G'}];
+   ok('Wrenn and Realmbreaker emblem: cast permanent spells from graveyard',!!g.castMode(a,e,'gy')); }
+ { const g=fresh();const [a,b]=g.players;const c=await cast(g,a,'Chandra, Awakened Inferno');await act(g,a,c,'+2');ok('Chandra, Awakened Inferno +2: each opponent gets the upkeep-damage emblem',g.opponentsOf(a).every(q=>q.burnEmblems===1)); }
+ // ---- statics & sweepers
+ { const g=fresh();const [a,b]=g.players;await cast(g,a,'Narset, Parter of Veils');const h=b.hand.length;await g.draw(b,1);await g.draw(b,1);ok('Narset: an opponent draws at most one card a turn',b.hand.length===h+1,'drew '+(b.hand.length-h)); }
+ { const g=fresh();const [a,b]=g.players;await cast(g,a,'Teferi, Time Raveler');g.active=0;ok('Teferi, Time Raveler: opponents can’t cast instants on your turn',!g.castMode(b,tagCard(mk('Shock','Instant','{R}','Shock deals 2 damage to any target.',1)),'hand',{instant:true})); }
+ { const g=fresh();const [a,b]=g.players;const u=await cast(g,a,'Ugin, the Spirit Dragon');const x1=await g.enterPerm(b,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,2,2)));const x2=await g.enterPerm(b,tagCard(mk('Wurm','Creature — Wurm','{5}{G}{G}','',7,7,7)));const art=await g.enterPerm(b,tagCard(mk('Relic','Artifact','{3}','',3)));
+   await act(g,a,u,'−X',{x:3});ok('Ugin −3 exiles coloured permanents MV ≤ 3 only (Ugin and colourless survive)',!b.battlefield.includes(x1)&&b.battlefield.includes(x2)&&b.battlefield.includes(art)&&a.battlefield.includes(u),g.log.slice(-3).map(l=>l.m).join(' | ')); }
+ { const g=fresh();const [a]=g.players;const v=C("Vraska, Betrayal's Sting");a.hand.push(v);a.pool=Array(6).fill(0).map(()=>({c:'C'})).concat([{c:'B'}]);a.life=40;
+   await g.cast(a,v,'hand');while(g.stack.length)await g.resolve();await tick(g);const vp=a.battlefield.find(x=>x.card===v);ok('Vraska compleated: paying life for {B/P} → two fewer loyalty (4)',vp&&(vp.loyalty===4&&a.life===38||vp.loyalty===6&&a.life===40),vp?vp.loyalty+' life '+a.life:'not cast'); }
+ { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');const L=a.library.length;a.library.push(C('Narset, Parter of Veils'));await cast(g,a,'Entrust the Spark');ok('Entrust the Spark: sacrifice a walker, fetch a walker onto the battlefield',!a.battlefield.includes(t)&&a.battlefield.some(x=>x.card.isPlaneswalker),g.log.slice(-3).map(l=>l.m).join(' | ')); }
+ { const g=fresh();const [a]=g.players;a.library.push(C('Narset, Parter of Veils'));const r=await put(g,a,'Arena Rector');await g.destroy(a,r);await tick(g);ok('Arena Rector dies → a walker onto the battlefield',a.battlefield.some(x=>x.card.isPlaneswalker),g.log.slice(-3).map(l=>l.m).join(' | ')); }
+ console.log(fails+' failed');})();

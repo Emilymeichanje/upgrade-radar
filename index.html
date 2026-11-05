@@ -695,7 +695,7 @@ function toggleCheck(open){const p=$('#checkpanel');p.hidden=!open;if(!open)retu
       const missing=rows.filter(r=>r.a.missing),cond=rows.filter(r=>!r.a.missing&&r.a.generic),fine=rows.length-missing.length-cond.length;
       const notFound=[...where.entries()].filter(([k])=>!found.has(k)).map(([,v])=>v.name);
       const li=r=>`<li><b>${esc(r.c.name)}</b> <span class="note">· ${esc(r.decks.join(', '))}</span><ul style="margin:2px 0 6px;padding-left:16px">${r.a.lines.filter(x=>x.status==='missing'||x.status==='generic').map(x=>`<li class="note">${x.status==='missing'?'✗':'?'} ${esc(x.line)}</li>`).join('')}</ul></li>`;
-      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v65',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
+      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v66',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
       $('#chkres').innerHTML=`<p><b>${rows.length}</b> cards checked: <b>${fine}</b> fully covered, <b>${cond.length}</b> with a condition unverified, <b>${missing.length}</b> with text not modelled.${notFound.length?` <span class="err">${notFound.length} name${notFound.length===1?'':'s'} not found on Scryfall: ${esc(notFound.join(', '))}</span>`:''}</p>
         ${flagged.length?`<div class="row"><button class="chip pri" id="chkcopy">Copy report for Claude</button><button class="chip" id="chkdl">Download report</button><span class="note" id="chkcopied"></span></div>`:''}
         ${missing.length?`<h4>Not modelled</h4><ul style="padding-left:18px">${missing.map(li).join('')}</ul>`:''}
@@ -849,7 +849,7 @@ function showView(v){const rep=v==='replays';if(rep)v='play';$('#home').hidden=v
   if(rep){if(!location.hash.startsWith('#replays'))history.replaceState(null,'','#replays')}else if(v==='play'){if(!location.hash.startsWith('#playtest'))history.replaceState(null,'','#playtest')}else if(location.hash.startsWith('#playtest')||location.hash.startsWith('#replays'))history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=65').then(()=>loadScript('playtest-ui.js?v=65'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=66').then(()=>loadScript('playtest-ui.js?v=66'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();
@@ -947,7 +947,10 @@ async function startGame(cfg){
     raw.push({name:seat.name,deckName:seat.deckName,human,level:seat.level,art:seat.art,cmd:cmdCards.map(c=>c.name),cards:deckCards.map(c=>({name:c.name,mana:c.mana,type:c.type,oracle:c.oracle,cmc:c.cmc,power:c.power,toughness:c.toughness,power2:c.power2,toughness2:c.toughness2,loyalty:c.loyalty,colors:c.colors,ci:c.ci,img:c.img,imgN:c.imgN,artc:c.artc}))});
   }
   const pm=popularityMap(),inDecks=new Set(raw.flatMap(r=>r.cards.map(c=>c.name))),pop={};for(const n of inDecks)if(pm[n]!=null)pop[n]=pm[n];
-  el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg),cfg,rawSeats:raw,uidBase,pop});
+  // two-card infinite combos (Commander Spellbook) whose pieces are both in one of the decks at the table
+  let combos=[];try{await Promise.race([loadCombos(),new Promise(r=>setTimeout(r,4000))]);if(CB.m){const seen=new Set();for(const r of raw){const ns=new Set(r.cards.map(c=>norm(c.name)).concat(r.cards.map(c=>norm(c.name.split(' // ')[0]))));for(const n of ns)for(const row of CB.m.get(n)||[]){const k=row[0]+'|'+row[1];if(seen.has(k))continue;if((ns.has(norm(row[0]))||ns.has(norm(row[0].split(' // ')[0])))&&(ns.has(norm(row[1]))||ns.has(norm(row[1].split(' // ')[0])))){seen.add(k);combos.push(row.slice(0,5))}}}}}catch(e){}
+  if(Goldfish.setCombos)Goldfish.setCombos(combos);
+  el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg),cfg,rawSeats:raw,uidBase,pop,combos});
 }
 
 // ---------- replays ----------

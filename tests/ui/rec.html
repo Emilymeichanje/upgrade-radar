@@ -17,4 +17,17 @@ window.errs=[];window.onerror=(m)=>errs.push(String(m));window.onunhandledreject
 window.boot=(watch)=>{const raw=[0,1,2,3].map(i=>({name:(i||watch?'AI · P':'You · P')+i,deckName:'T'+i,human:i===0&&!watch,level:i||watch?'expert':null,art:'',cmd:['Cmdr'],cards:cards()}));
   const uidBase=Goldfish.uid.get();const seats=raw.map(r=>({name:r.name,deckName:r.deckName,human:r.human,level:r.level,art:'',deck:Goldfish.buildDeck(r.cards,r.cmd)}));
   return GoldfishUI.start(document.getElementById('t'),seats,{rawSeats:raw,uidBase,pop:{},onExit:()=>{}})};
+
+window.comboCards=(kind)=>{const L=[];const lands=(n,t)=>{for(let i=0;i<n;i++)L.push(mk(t,'Basic Land — '+t,'','',0))};
+ if(kind==='kinnan'){lands(18,'Forest');lands(18,'Island');for(let i=0;i<14;i++)L.push(mk('Basalt Monolith','Artifact','{3}',"This artifact doesn't untap during your untap step.\n{T}: Add {C}{C}{C}.\n{3}: Untap this artifact.",3));
+   for(let i=0;i<14;i++)L.push(mk('Kinnan, Bonder Prodigy','Legendary Creature — Human Druid','{G}{U}','Whenever you tap a nonland permanent for mana, add one mana of any type that permanent produced.\n{5}{G}{U}: Look at the top five cards of your library. You may put a non-Human creature card from among them onto the battlefield. Put the rest on the bottom of your library in a random order.',2,2,2));
+   for(let i=0;i<35;i++)L.push(mk('Colossus','Artifact Creature — Golem','{12}','Trample',12,12,12));}
+ else {lands(20,'Swamp');lands(16,'Island');for(let i=0;i<12;i++)L.push(mk("Bolas's Citadel",'Legendary Artifact','{3}{B}{B}{B}',"You may look at the top card of your library any time.\nYou may play lands and cast spells from the top of your library. If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost.\n{T}, Sacrifice ten nonland permanents: Each opponent loses 10 life.",6));
+   for(let i=0;i<12;i++)L.push(mk('Aetherflux Reservoir','Artifact','{4}',"Whenever you cast a spell, you gain 1 life for each spell you've cast this turn.\nPay 50 life: This artifact deals 50 damage to any target.",4));
+   for(let i=0;i<12;i++)L.push(mk("Sensei's Divining Top",'Artifact','{1}',"{1}: Look at the top three cards of your library, then put them back in any order.\n{T}: Draw a card, then put Sensei's Divining Top on top of its owner's library.",1));
+   for(let i=0;i<27;i++)L.push(mk('Wall','Creature — Wall','{1}{U}','Defender',2,0,4));}
+ L.push(mk('Cmdr','Legendary Creature — Human','{W}{U}','Flying',2,3,3));return L};
+window.bootCombo=()=>{const kinds=['kinnan','citadel','kinnan','kinnan'];const raw=[0,1,2,3].map(i=>({name:(i?'AI · P':'You · P')+i,deckName:'T'+i,human:i===0,level:i?'expert':null,art:'',cmd:['Cmdr'],cards:comboCards(kinds[i])}));
+  const uidBase=Goldfish.uid.get();const seats=raw.map(r=>({name:r.name,deckName:r.deckName,human:r.human,level:r.level,art:'',deck:Goldfish.buildDeck(r.cards,r.cmd)}));
+  return GoldfishUI.start(document.getElementById('t'),seats,{rawSeats:raw,uidBase,pop:{},combos:[],onExit:()=>{}})};
 </script>

@@ -3961,15 +3961,17 @@ class Game {
     return out;
   }
   b12_prolifGood(p, c) { if (c.q) return c.q === p ? true : (c.q.poison || 0) > 0; if (c.owner === p) return !c.kinds.every(k => k === 'stun') && !(c.kinds.includes('lore') && this.b11_saga(c.b.card) && (c.b.lore || 0) >= this.b11_saga(c.b.card).last - 0 && false); return c.kinds.includes('stun'); }
-  async b12_prolifOne(p, c) {
-    if (c.q) { const q = c.q; let any = false; if ((q.poison || 0) > 0) { q.poison++; any = true; if (q.poison >= 10) await this.kill(q, 'ten poison counters'); } if ((q.energy || 0) > 0) { q.energy++; any = true; } if ((q.experience || 0) > 0) { q.experience++; any = true; } return any; }
-    const b = c.b, o = c.owner; if (!o.battlefield.includes(b)) return false; const mine = o === p; const ks = this.counterKinds(b); let any = false;
-    for (const kk of Object.keys(ks)) { any = true;
-      if (kk === '+1/+1') { const add = mine ? this.counterAmt(p, 1) : 1; b.counters = (b.counters || 0) + add; if (mine) await this.countersPut(p, b, add); }
-      else if (kk === 'loyalty') { const add = mine ? this.counterAmt(p, 1) : 1; b.loyalty = (b.loyalty || 0) + add; if (mine) await this.countersPut(p, b, add); }
-      else if (kk === 'charge') b.charge = (b.charge || 0) + 1; else if (kk === 'suspect') b.suspect = (b.suspect || 0) + 1; else if (kk === 'indestructible') {} else if (b.ck && b.ck[kk] != null) b.ck[kk]++; }
-    if ((b.lore || 0) > 0 && this.b11_saga(b.card)) { any = true; await this.loreUp(o, b); } // proliferating a Saga adds a lore counter, which triggers its chapter
-    return any;
+  async b12_prolifOne(p, c) { // b13: All Will Be One sees every counter you put — any permanent (opponents' too), any player, any kind — once per object, for the total
+    if (c.q) { const q = c.q; let n = 0; if ((q.poison || 0) > 0) { q.poison++; n++; } if ((q.energy || 0) > 0) { q.energy++; n++; } if ((q.experience || 0) > 0) { q.experience++; n++; } if (n) await this.allWillBeOne(p, n); if (q.poison >= 10 && !q.dead) await this.kill(q, 'ten poison counters'); return n > 0; }
+    const b = c.b, o = c.owner; if (!o.battlefield.includes(b)) return false; const mine = o === p; const ks = this.counterKinds(b); let n = 0;
+    for (const kk of Object.keys(ks)) {
+      if (kk === '+1/+1') { const add = mine ? this.counterAmt(p, 1) : 1; b.counters = (b.counters || 0) + add; n += add; if (mine) await this.countersPut(p, b, add, { noAwbo: true }); }
+      else if (kk === 'loyalty') { const add = mine ? this.counterAmt(p, 1) : 1; b.loyalty = (b.loyalty || 0) + add; n += add; if (mine) await this.countersPut(p, b, add, { noAwbo: true }); }
+      else if (kk === 'charge') { b.charge = (b.charge || 0) + 1; n++; } else if (kk === 'suspect') { b.suspect = (b.suspect || 0) + 1; n++; } else if (kk === 'indestructible') { n++; } else if (b.ck && b.ck[kk] != null) { b.ck[kk]++; n++; } }
+    const saga = (b.lore || 0) > 0 && this.b11_saga(b.card); if (saga) n++;
+    if (n) await this.allWillBeOne(p, n);
+    if (saga && o.battlefield.includes(b)) await this.loreUp(o, b); // proliferating a Saga adds a lore counter, which triggers its chapter
+    return n > 0;
   }
   b11_saga(c) { return (c && (c.saga || (c.orig && c.orig.saga))) || null; }
   b11_hasOp(c, op) { const sg = c && (c.saga || (c.orig && c.orig.saga)); return !!(sg && sg.ch.some(ch => ch.ops.some(o => o.op === op))); }
@@ -4523,8 +4525,10 @@ class Game {
     let target = null;
     if (card.roles.includes('removal')) target = p.ai ? (p.ai.bestTarget(this, p, b => b.card.isCreature) || {}).perm || null : await this.pickPerm(p, card, this.oppPerms(p, b => b.card.isCreature), { harmful: true });
     if (card.roles.includes('removal') && !target) { owner.graveyard.push(card); this.say(`— ${card.name} has no target`, p); return false; }
-    if (card.roles.includes('counter')) { owner.graveyard.push(card); return false; }
-    p.hand.push(card); return this.cast(p, card, 'hand', target, { free: true, owner });
+    if (card.roles.includes('counter') && !(card.modes && card.modes.some(m => m.card && !(m.card.roles || []).includes('counter')))) { owner.graveyard.push(card); return false; }
+    p.hand.push(card); const ok = await this.cast(p, card, 'hand', target, { free: true, owner });
+    if (!ok) { const i = p.hand.indexOf(card); if (i >= 0) { p.hand.splice(i, 1); owner.exile.push(card); this.say(`— ${card.name} could not be cast and stays in exile`, p); } } // b13: a failed free cast must not leave the card in your hand
+    return ok;
   }
   hideawayOk(q, perm) {
     const c = perm.hideawayCond;
@@ -6449,7 +6453,7 @@ class Game {
   legalActions(q) {
     if (q.dead) return [];
     const out = [];
-    for (const c of q.hand) if (this.canFlash(q, c) && !c.roles.includes('counter') && !(c.redirect && !this.redirectable(q)) && this.castMode(q, c, 'hand', { instant: true })) out.push({ kind: 'cast', card: c });
+    for (const c of q.hand) if (this.canFlash(q, c) && (!c.roles.includes('counter') || (c.modes && c.modes.some(m => m.card && !(m.card.roles || []).includes('counter')))) && /* b13: Dawn Charm-style modal cards with a counter mode still offer their other modes */ !(c.redirect && !this.redirectable(q)) && this.castMode(q, c, 'hand', { instant: true })) out.push({ kind: 'cast', card: c });
     for (const b of q.battlefield) if (b.card.fetch && this.canActivate(q, b)) out.push({ kind: 'fetch', perm: b, card: b.card });
     out.push(...this.gyCastOptions(q, { instant: true }), ...this.abilityOptions(q, { instant: true }));
     return out;
@@ -6558,9 +6562,9 @@ class Game {
       if (killable && p.ai) { const o = this.ownerOf(killable); this.say(`— ${b.card.name} deals ${n} damage to ${killable.card.name}`, p); if (killable.card.isPlaneswalker) await this.pwDamage(o, killable, n); else { await this.dealtDamage(o, killable, n, b.card); await this.sba(); } }
       else if (!p.ai && this.hooks.humanChoice) { const perms = this.oppPerms(p, x => x.card.isCreature || x.card.isPlaneswalker); const opts = [...opps.map(q => `${q.name} (${q.life} life)`), ...perms.map(x => `${x.card.name} — ${this.ownerOf(x).name}${x.card.isPlaneswalker ? ` (loyalty ${x.loyalty})` : ` (${this.powerOf(this.ownerOf(x), x)}/${this.toughOf(this.ownerOf(x), x)})`}`)]; const ch = await this.hooks.humanChoice({ p, card: b.card, question: `${b.card.name}: deal ${n} damage to which opponent, creature or planeswalker?`, options: opts }); const k = opts.indexOf(ch); if (k >= 0 && k < opps.length) { const q = opps[k]; this.say(`— ${b.card.name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, b.card, { by: p }); } else if (k >= opps.length) { const x = perms[k - opps.length]; const o = this.ownerOf(x); this.say(`— ${b.card.name} deals ${n} damage to ${x.card.name}`, p); if (x.card.isPlaneswalker) await this.pwDamage(o, x, n); else { await this.dealtDamage(o, x, n, b.card); await this.sba(); } } }
       else { const q = p.ai ? [...opps].sort((a, z) => a.life - z.life)[0] : await this.choosePlayer(p, b.card, opps, `${b.card.name}: deal ${n} damage to which opponent?`); if (q) { this.say(`— ${b.card.name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, b.card, { by: p }); } } } finally { this._awbo--; } } }
-  async countersPut(p, perm, n) {
+  async countersPut(p, perm, n, opts = {}) {
     if (!n || !perm) return;
-    await this.allWillBeOne(p, n);
+    if (!opts.noAwbo) await this.allWillBeOne(p, n);
     if (perm.card.isCreature && !matchesFilter(perm.card, 'kree')) for (const cm of p.battlefield.filter(x => x !== perm && x.card.statics && x.card.statics.captainMarvel && !x.neutral)) { cm.counters = (cm.counters || 0) + n; this.say(`— ${cm.card.name} gets ${n} +1/+1 counter${n > 1 ? 's' : ''} too`, p); }
     const firstThisTurn = perm.counterTurn !== this.turn;
     perm.counterTurn = this.turn;

@@ -128,4 +128,11 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
  { const g=fresh();const [a,b]=g.players;const c=await put(g,a,'Chandra, Legacy of Fire');await put(g,a,'Teferi, Hero of Dominaria');const l0=b.life;const tr=c.card.triggers.find(x=>x.when==='end');await g.runTrig(a,c,tr,{});
    ok('Chandra, Legacy of Fire end step: X = 2 walkers → 2 damage each opponent',b.life===l0-2,'−'+(l0-b.life)); }
  { const tr=C('Teferi, Time Raveler').abilities.find(x=>x.label==='−3');ok('Teferi, Time Raveler −3 bounces before drawing',tr.ops[0].op==='bounceTarget'&&tr.ops[1].op==='draw'); }
+ // ---- Sevinne's Reclamation can return a land
+ { const SR={name:"Sevinne's Reclamation",mana:'{W}',type:'Sorcery',cmc:1,oracle:'Return target permanent card with mana value 3 or less from your graveyard to the battlefield. If this spell was cast from a graveyard, you may copy this spell and may choose a new target for the copy.\nFlashback {4}{W}'};
+   const g=fresh();const [a]=g.players;a.ai=null;a.human=true;const land=tagCard({name:'Bountiful Promenade',type:'Land',mana:'',cmc:0,oracle:'({T}: Add {R} or {W}.)'});a.graveyard.push(land,tagCard(mk('Bloom Tender','Creature — Elf Druid','{1}{G}','',2,1,1)));let offered=null;
+   g.hooks.humanSearch=async o=>{offered=o.pool.map(c=>c.name);return o.pool.filter(c=>c===land)};await cast(g,a,tagCard(SR));
+   ok("Sevinne's Reclamation offers lands and returns the chosen land",offered&&offered.includes('Bountiful Promenade')&&a.battlefield.some(b=>b.card===land),'offered '+offered); }
+ { const g=fresh();const [a]=g.players;a.graveyard.push(tagCard({name:'Forest',type:'Basic Land — Forest',mana:'',cmc:0,oracle:''}),tagCard(mk('Coffin','Artifact','{2}','',2)));
+   await g.runOps(a,[{op:'gyPermToBf',what:'artifact',max:3}],tagCard(mk('X','Sorcery','{W}','',1)),{});ok('…but an "artifact card" version still ignores lands',a.graveyard.some(c=>c.name==='Forest')&&a.battlefield.some(b=>b.card.name==='Coffin')); }
  console.log(fails+' failed');})();

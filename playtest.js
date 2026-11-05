@@ -4799,9 +4799,10 @@ class Game {
           if (hit && hit.protTurn !== this.turn) await this.bounce(this.ownerOf(hit), hit, p); break;
         }
         case 'gyPermToBf': {
-          const ok = c => !c.isLand && !c.isInstant && !c.isSorcery && c.cmc <= op.max && (op.what === 'permanent' || matchesFilter(c, op.what));
+          const ok = c => (!c.isLand || op.what === 'permanent') && !c.isInstant && !c.isSorcery && (c.cmc || 0) <= op.max && (op.what === 'permanent' || matchesFilter(c, op.what)); /* b13: a land is a permanent card (mana value 0) — Sevinne's Reclamation */
           const pool = p.graveyard.filter(c => ok(c) && c !== src); const pick = (await this.chooseFromList(p, src, pool, 1, 'reanimate'))[0];
-          if (pick) { p.graveyard.splice(p.graveyard.indexOf(pick), 1); const pm = await this.enterPerm(p, pick); this.say(`— returns ${pick.name} to the battlefield`, p); if (pm) { await this.emit({ type: 'reanimate', p, card: pick, perm: pm, from: p }); if (pm.card.etbOps) await this.trigger(p, pm, pm.card.etbOps, { perm: pm }, 'ETB'); await this.creatureEntered(p, pm); await this.permEntered(p, pm); } }
+          if (pick && pick.isLand) { p.graveyard.splice(p.graveyard.indexOf(pick), 1); const [lp] = await this.landEnters(p, pick); this.say(`— returns ${pick.name} to the battlefield`, p); await this.landfall(p, lp); }
+          else if (pick) { p.graveyard.splice(p.graveyard.indexOf(pick), 1); const pm = await this.enterPerm(p, pick); this.say(`— returns ${pick.name} to the battlefield`, p); if (pm) { await this.emit({ type: 'reanimate', p, card: pick, perm: pm, from: p }); if (pm.card.etbOps) await this.trigger(p, pm, pm.card.etbOps, { perm: pm }, 'ETB'); await this.creatureEntered(p, pm); await this.permEntered(p, pm); } }
           break;
         }
         case 'amass': { let army = p.battlefield.find(b => b.card.army); if (!army) { army = { id: UID++, card: { uid: UID++, name: 'Orc Army', type: 'Token Creature — Orc Army', isCreature: true, power: 0, toughness: 0, kw: [], roles: [], colors: ['B'], mana: manaInfo(''), cmc: 0, token: true, army: true, oracle: '', triggers: [], abilities: [], statics: {}, anthems: [] }, tapped: false, summoning: true, counters: 0 }; p.battlefield.push(army); } army.counters = (army.counters || 0) + this.counterAmt(p, op.n); this.say(`— amasses ${op.n}`, p); break; }

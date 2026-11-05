@@ -180,6 +180,12 @@ function parseOps(t) {
   if (/\binvestigate\b/.test(t)) ops.push({ op: 'artifactTokens', n: 1, kind: 'clue' });
   if ((m = t.match(/exile target noncreature artifact or noncreature enchantment/))) ops.push({ op: 'destroyUpTo', n: 1, what: 'noncreature artifact or noncreature enchantment', exile: true });
   if (/^you may tap or untap target permanent\.?$/.test(t)) ops.push({ op: 'tapOrUntap' });
+  // ==== fixes b11 (parse) ====  Esper Terra / The Apprentice's Folly
+  if (/^create a token that's a copy of target nonlegendary enchantment you control\. it gains haste\. if it's a saga, put up to three lore counters on it\. sacrifice it at the beginning of your next end step/.test(t)) return [{ op: 'b11_copyEnch' }];
+  if (/^add \{w\}\{w\}, \{u\}\{u\}, \{b\}\{b\}, \{r\}\{r\}, and \{g\}\{g\}\. exile (?:this card|esper terra), then return it to the battlefield/.test(t)) return [{ op: 'addMana', colors: ['W', 'W', 'U', 'U', 'B', 'B', 'R', 'R', 'G', 'G'], eot: false }, { op: 'b11_exileFront' }];
+  if (/^choose target nontoken creature you control that doesn't have the same name as a token you control\. create a token that's a copy of it, except it isn't legendary, is a reflection in addition to its other types, and has haste/.test(t)) return [{ op: 'b11_follyCopy' }];
+  if (/^sacrifice all reflections you control\.?$/.test(t)) return [{ op: 'b11_sacReflections' }];
+  // ---- end b11 (parse)
   if (/^put this card on top of its owner's library\.?$/.test(t)) ops.push({ op: 'selfToTop' });
   if (/, then put this card on top of its owner's library\.?$/.test(t) && !ops.some(o => o.op === 'selfToTop')) ops.push({ op: 'selfToTop' }); // b11 Sensei's Divining Top: draw first, then Top goes on top
   if (/copy target instant spell, sorcery spell, activated ability, or triggered ability/.test(t)) ops.push({ op: 'copySpell', ability: true });
@@ -3853,11 +3859,21 @@ class Game {
     const ready = p.library.length >= 2 && (topBf ? !topBf.tapped : p.life > (topLib.cmc || 0));
     return [{ id: 'citadelTop', kind: 'win', pieces: [cit.card.name, (topBf ? topBf.card : topLib).name, af.card.name], ready, label: 'storm loop: Aetherflux gains life, then 50 damage to each opponent' }];
   }
+  b11_esperCombo(p) {
+    const esperCopy = p.battlefield.find(b => !b.neutral && this.b11_isEsper(b.card) && !b.card.isLegendary);
+    const terra = p.battlefield.find(b => !b.neutral && !b.card.token && b.card.backFace && this.b11_isEsper(b.card.backFace));
+    const starter = p.battlefield.find(b => !b.neutral && this.b11_hasOp(b.card, 'b11_follyCopy'));
+    if (esperCopy) return [{ id: 'esper', kind: 'win', pieces: [esperCopy.card.name], ready: true, label: 'infinite WUBRG mana + lethal hasty flying tokens' }];
+    if (!terra || !starter) return [];
+    const tr = terra.card.abilities.find(a => a.ops.some(o => o.op === 'exileReturnTransformed'));
+    const ready = !!tr && this.canUseAbility(p, terra.card, tr, terra) && this.canPayCost(p, tr.cost);
+    return [{ id: 'esper', kind: 'win', pieces: [terra.card.name.split(' // ')[0], starter.card.name], ready, label: 'Trance → Esper Terra copies the Saga → nonlegendary Esper Terra loop: infinite WUBRG mana + lethal hasty flying tokens' }];
+  }
   b11_listCombos(p) {
-    const native = [...this.b11_manaLoops(p), ...this.b11_citadelTop(p)];
+    const native = [...this.b11_manaLoops(p), ...this.b11_citadelTop(p), ...this.b11_esperCombo(p)];
     const names = new Set(p.battlefield.filter(b => !b.neutral).map(b => ((b.card.orig || b.card).name || '').toLowerCase()));
     const has = n => names.has(n.toLowerCase()) || names.has(n.toLowerCase().split(' // ')[0]);
-    const covered = new Set(native.flatMap(x => x.pieces.map(n => n.toLowerCase())));
+    const covered = new Set(native.flatMap(x => x.pieces.map(n => n.toLowerCase()))); if (native.some(x => x.id === 'esper')) for (const b of p.battlefield) if (b.card.backFace && this.b11_isEsper(b.card.backFace) || this.b11_isEsper(b.card)) { covered.add(((b.card.orig || b.card).name || '').toLowerCase()); }
     for (const r of COMBOS) { const [a, b, , result] = r; if (!has(a) || !has(b)) continue; if (covered.has(a.toLowerCase()) && covered.has(b.toLowerCase())) continue; if (covered.has(a.toLowerCase()) && /mana/i.test(result) || covered.has(b.toLowerCase()) && /mana/i.test(result)) continue;
       const res = String(result); const win = /(infinite|near-infinite) (damage|lifeloss|life loss|life drain|drain|mill)(?! .*self)|win the game/i.test(res) && !/self-?mill/i.test(res);
       const mana = !win && /infinite (?:[a-z]+ )?mana(?! value)/i.test(res);
@@ -3870,6 +3886,7 @@ class Game {
     await this.emit({ type: 'combo', p, combo: c });
     if (c.kind === 'mana') { p.infMana = { turn: this.turn, colors: c.colors }; this.say(`— ∞ ${c.pieces.join(' + ')}: ${c.label} (until end of turn)`, p); return true; }
     if (c.id === 'citadelTop') return this.b11_runCitadelTop(p, c);
+    if (c.id === 'esper') return this.b11_runEsper(p);
     if (c.kind === 'win') { this.say(`— ∞ ${c.pieces.join(' + ')}: ${c.label}`, p); for (const o of this.opponentsOf(p)) await this.kill(o, `infinite combo: ${c.pieces.join(' + ')}`); return true; }
     this.say(`— ∞ ${c.pieces.join(' + ')}: ${c.label} (no automatic win — play it out)`, p); return true;
   }
@@ -3888,6 +3905,49 @@ class Game {
       this.say(`— ∞ loop: cast ${c.pieces[1]} ${casts} times, life ${p.life}`, p);
       if (af && p.battlefield.includes(af)) for (const o of this.opponentsOf(p)) { if (p.life <= 50 || o.dead) break; await this.changeLife(p, -50, af.card); this.say(`— ${af.card.name} deals 50 damage to ${o.name}`, p); await this.damagePlayer(o, 50, af.card, { by: p }); }
     } finally { this.shortcutting = false; }
+    return true;
+  }
+  b11_saga(c) { return (c && (c.saga || (c.orig && c.orig.saga))) || null; }
+  b11_hasOp(c, op) { const sg = c && (c.saga || (c.orig && c.orig.saga)); return !!(sg && sg.ch.some(ch => ch.ops.some(o => o.op === op))); }
+  b11_isEsper(c) { return this.b11_hasOp(c, 'b11_copyEnch'); }
+  /** token copy of the permanent's current face (a transformed DFC copies its back face) */
+  b11_tokenCopy(p, t, { haste = false, nonLegend = false, reflection = false, sacAtEnd = false, flying = false } = {}) {
+    const c = { ...t.card, uid: UID++, token: true, isCommander: false, kwBase: null };
+    if (nonLegend) { c.isLegendary = false; c.type = (c.type || '').replace(/\bLegendary\s+/, ''); }
+    if (reflection && !/\bReflection\b/.test(c.type)) c.type = c.type + (c.type.includes('—') ? ' Reflection' : ' — Reflection');
+    if (haste || flying) c.kw = [...new Set([...(c.kw || []), ...(haste ? ['haste'] : []), ...(flying ? ['flying'] : [])])];
+    const pm = { id: UID++, card: c, tapped: false, summoning: !haste, counters: 0, enteredTurn: this.turn, sacAtEnd }; p.battlefield.push(pm); return pm;
+  }
+  async b11_entered(p, pm, { lore = true } = {}) { if (pm.card.etbOps) await this.trigger(p, pm, pm.card.etbOps, { perm: pm }, 'ETB'); if (pm.card.isCreature) await this.creatureEntered(p, pm); await this.permEntered(p, pm); if (lore && this.b11_saga(pm.card) && p.battlefield.includes(pm)) { pm.lore = 0; await this.loreUp(p, pm); } }
+  /** several lore counters at once: every chapter passed triggers together and the controller orders them — "sacrifice Reflections" first, then ascending */
+  async b11_loreAdd(p, pm, n) {
+    const sg = this.b11_saga(pm.card); if (!sg) return; const from = pm.lore || 0; pm.lore = from + n;
+    const hit = sg.ch.filter(c => c.nums.some(k => k > from && k <= pm.lore)).map(c => ({ c, k: Math.min(...c.nums.filter(k => k > from && k <= pm.lore)) }));
+    hit.sort((a, b) => (b.c.ops.some(o => o.op === 'b11_sacReflections') - a.c.ops.some(o => o.op === 'b11_sacReflections')) || a.k - b.k);
+    for (const { c, k } of hit) { if (this.winner || p.dead) return; this.say(`— ${pm.card.name}: chapter ${k}`, p); await this.runOps(p, c.ops, pm.card, { perm: pm }); }
+    if (pm.lore >= sg.last && p.battlefield.includes(pm)) { this.say(`— ${pm.card.name} is sacrificed (final chapter)`, p); await this.sacrifice(p, pm); }
+  }
+  /** run the combo with the real cards: activate Trance (paying {4}{R}{G}); the chapters choose the loop line; the self-copy is then shortcut */
+  async b11_runEsper(p) {
+    const esperCopy = p.battlefield.find(b => !b.neutral && this.b11_isEsper(b.card) && !b.card.isLegendary); if (esperCopy) return this.b11_esperInfinite(p, esperCopy);
+    const terra = p.battlefield.find(b => !b.neutral && !b.card.token && b.card.backFace && this.b11_isEsper(b.card.backFace)); if (!terra) return false;
+    const tr = terra.card.abilities.find(a => a.ops.some(o => o.op === 'exileReturnTransformed'));
+    this.shortcutting = true; try { await this.activate(p, { card: terra.card, ab: tr, perm: terra }); while (this.stack.length) await this.resolve(); await this.flushPending(); } finally { this.shortcutting = false; }
+    return true;
+  }
+  /** shortcut for the Esper Terra loop: infinite five-colour mana, and enough hasty flying Esper Terra tokens to be lethal through normal combat */
+  async b11_esperInfinite(p, t) {
+    this.b11_loopDone = true;
+    try {
+      p.infMana = { turn: this.turn, colors: ['W', 'U', 'B', 'R', 'G', 'C'] };
+      await this.emit({ type: 'combo', p, combo: { pieces: [t.card.name], kind: 'win', label: 'infinite loop' } });
+      this.say(`— ∞ ${t.card.name} loop: infinite {W}{U}{B}{R}{G} mana, infinite hasty token copies, infinite ETB/LTB triggers`, p);
+      const opps = this.opponentsOf(p); const pow = Math.max(1, this.powerOf(p, t) || 1); const blockers = opps.reduce((s, o) => s + o.battlefield.filter(b => b.card.isCreature && !b.tapped).length, 0);
+      const n = Math.min(80, Math.ceil(opps.reduce((s, o) => s + Math.max(0, o.life), 0) / pow) + blockers + 2);
+      const made = []; for (let k = 0; k < n; k++) { const pm = this.b11_tokenCopy(p, t, { haste: true, flying: true, sacAtEnd: true }); pm.lore = 1; made.push(pm); }
+      this.say(`— keeps ${n} hasty flying ${t.card.name} tokens (each also triggers your enter-the-battlefield effects)`, p);
+      for (const pm of made) { if (this.winner) break; if (pm.card.isCreature) await this.creatureEntered(p, pm); await this.permEntered(p, pm); }
+    } finally { this.b11_loopDone = false; }
     return true;
   }
   // ---- end b11
@@ -5496,6 +5556,31 @@ class Game {
         case 'b7_thrasios': { await this.runOpsCore(p, [{ op: 'scry', n: 1 }], src, ctx); const top = p.library[p.library.length - 1]; if (!top) break; this.say(`— reveals ${top.name}`, p); if (top.isLand) { p.library.pop(); await this.landEnters(p, top, true); } else await this.draw(p, 1); break; }
         // ---- end b7 (ops)
         //
+        // ==== fixes b11 (ops) ====
+        case 'b11_copyEnch': { // Esper Terra I–III
+          const pool = p.battlefield.filter(b => !b.neutral && b.card.isEnchantment && !b.card.isLegendary);
+          const loopy = b => this.b11_isEsper(b.card) && !b.card.isLegendary; const folly = b => this.b11_hasOp(b.card, 'b11_follyCopy');
+          let t = ctx.target && pool.includes(ctx.target) ? ctx.target : (p.ai || this.shortcutting) ? (pool.find(loopy) || pool.find(folly) || [...pool].sort((a, z) => (p.ai ? p.ai.permBase(z) - p.ai.permBase(a) : 0))[0] || null) : await this.pickPerm(p, src, pool, {});
+          if (!t) { this.say(`— ${src.name}: no nonlegendary enchantment to copy`, p); break; }
+          if (loopy(t) && !this.b11_loopDone) { // a nonlegendary Esper Terra copying a nonlegendary Esper Terra: the Spellbook loop
+            const go = p.ai || this.shortcutting ? true : !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: src, question: `${t.card.name} copying itself is an infinite loop (infinite WUBRG mana, hasty flying tokens, ETB/LTB triggers). Go infinite?` }));
+            if (go) { await this.b11_esperInfinite(p, t); break; } }
+          const pm = this.b11_tokenCopy(p, t, { haste: true, sacAtEnd: true }); this.say(`— creates a token copy of ${t.card.name} (haste; sacrificed at your next end step)`, p);
+          const isSaga = !!this.b11_saga(pm.card); await this.b11_entered(p, pm, { lore: false });
+          // the copy's own enter-with-a-lore-counter and the up-to-three extra counters land before anything resolves, so all those chapters trigger together
+          if (isSaga && p.battlefield.includes(pm)) { const n = p.ai || this.shortcutting ? 3 : Math.max(0, Math.min(3, +(this.hooks.humanNumber ? await this.hooks.humanNumber({ p, card: src, question: `Put how many extra lore counters on ${pm.card.name}? (up to three)`, min: 0, max: 3 }) : 3) || 0)); pm.lore = 0; await this.b11_loreAdd(p, pm, 1 + n); }
+          break; }
+        case 'b11_exileFront': { const pm = ctx.perm; if (!pm || !p.battlefield.includes(pm)) break; const base = pm.card.orig || pm.card; p.battlefield.splice(p.battlefield.indexOf(pm), 1); await this.emit({ type: 'destroy', owner: p, perm: pm, quiet: true }); await this.leftBattlefield(p, pm);
+          if (pm.card.token) { this.say(`— ${pm.card.name} (token) is exiled`, p); break; } this.say(`— ${base.name} is exiled and returns front face up`, p); const np = await this.enterPerm(p, base); if (np && base.etbOps) await this.trigger(p, np, base.etbOps, { perm: np }, 'ETB'); break; }
+        case 'b11_follyCopy': { // The Apprentice's Folly I, II
+          const legal = b => !b.neutral && b.card.isCreature && !b.card.token && p.battlefield.includes(b) && !p.battlefield.some(x => x.card.token && x.card.name === b.card.name);
+          const pool = p.battlefield.filter(legal);
+          let t = ctx.target && pool.includes(ctx.target) ? ctx.target : (p.ai || this.shortcutting) ? (pool.find(b => this.b11_isEsper(b.card)) || [...pool].sort((a, z) => (p.ai ? p.ai.permBase(z) - p.ai.permBase(a) : 0))[0] || null) : await this.pickPerm(p, src, pool, {});
+          if (!t || !legal(t)) { this.say(`— ${src.name}: no legal creature to copy (a token with that name exists)`, p); break; }
+          const pm = this.b11_tokenCopy(p, t, { haste: true, nonLegend: true, reflection: true }); this.say(`— creates a Reflection token copy of ${t.card.name} (not legendary, haste)`, p);
+          await this.b11_entered(p, pm); break; }
+        case 'b11_sacReflections': { const rs = p.battlefield.filter(b => /\bReflection\b/.test(b.card.type || '')); for (const b of rs) await this.sacrifice(p, b); if (rs.length) this.say(`— sacrifices ${rs.length} Reflection${rs.length > 1 ? 's' : ''}`, p); break; }
+        // ---- end b11 (ops)
         // ==== fixes b8 (ops) ====
         case 'b8_finale': { const x = (ctx.x != null ? ctx.x : ctx.spell && ctx.spell.x) || 0; if (x >= 10) { p.library.push(...p.graveyard.splice(0)); shuffle(p.library, this.rng); this.say('— shuffles the graveyard into the library', p); await this.draw(p, x); await this.runOpsCore(p, [{ op: 'untapLands', n: 5 }], src, ctx); p.noMaxHand = true; this.say('— no maximum hand size for the rest of the game', p); } else await this.draw(p, x); break; }
         case 'b8_mindMatter': { const x = (ctx.x != null ? ctx.x : ctx.spell && ctx.spell.x) || 0; await this.draw(p, x); const pool = p.hand.filter(c => !c.isInstant && !c.isSorcery && (c.cmc || 0) <= x); if (!pool.length) break; const pick = p.human ? (await this.chooseFromList(p, src, pool, 1, 'battlefield'))[0] : [...pool].sort((a, z) => (z.isLand ? -1 : z.cmc || 0) - (a.isLand ? -1 : a.cmc || 0))[0]; if (!pick || !p.hand.includes(pick)) break; p.hand.splice(p.hand.indexOf(pick), 1); await this.b8_putOnBf(p, pick, { tapped: true }); break; }

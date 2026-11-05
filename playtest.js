@@ -2387,6 +2387,9 @@ function tagCard(c) {
       free: /exile a blue card from your hand rather than pay/.test(o) ? (/not your turn/.test(o) ? 'pitchNotTurn' : 'pitch') : /if you control a commander, you may cast this spell without paying/.test(o) ? 'commander' : null,
     };
   }
+  { const CW = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' }; // b13: Pyroblast / Red Elemental Blast / Hydroblast — colour-conditional counter and destroy
+    const cc = o.match(/counter target spell if it's (white|blue|black|red|green)/) || o.match(/counter target (white|blue|black|red|green) spell/); if (cc && card.counter) card.counter.color = CW[cc[1]];
+    const dc = o.match(/destroy target permanent if it's (white|blue|black|red|green)/) || o.match(/destroy target (white|blue|black|red|green) permanent/); if (dc) card.rmColor = CW[dc[1]]; }
   if (card.reanimate && r.includes('removal')) r.splice(r.indexOf('removal'), 1);
   if (/creatures you control get \+|each creature you control gets \+/.test(o)) r.push('pump');
   if (/create (a|an|two|three|x|\d+) .* tokens?/.test(o)) r.push('tokens');
@@ -2464,6 +2467,7 @@ function tagCard(c) {
 function counterHits(counterCard, spell) {
   const h = counterCard.counter && counterCard.counter.hits;
   if (!h) return false;
+  if (counterCard.counter.color && !((spell.colors || []).includes(counterCard.counter.color))) return false; // b13: "if it's blue" does nothing to other spells
   if (h === 'any') return true;
   if (h === 'creature') return spell.isCreature;
   if (h === 'noncreature') return !spell.isCreature;
@@ -4245,6 +4249,7 @@ class Game {
         this.say(`pays {${unl}} for ${card.name}`, victim.caster); await this.emit({ type: 'paid', p: victim.caster, n: unl });
       } else if (card.counter.steal) { if (this.stack.includes(victim)) await this.stealSpell(p, victim); }
       else if (this.isUncounterable(victim)) this.say(`— ${victim.card.name} can't be countered`, p);
+      else if (card.counter.color && !((victim.card.colors || []).includes(card.counter.color))) this.say(`— ${victim.card.name} isn't ${({ W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' })[card.counter.color]}, so ${card.name} does nothing`, p);
       else { const i = this.stack.indexOf(victim); if (i >= 0) { this.stack.splice(i, 1); victim.countered = true; this.say(`— ${victim.card.name} is countered`, p); await this.emit({ type: 'countered', p: victim.caster, card: victim.card, obj: victim, by: card }); await this.leaveStack(victim, 'countered'); if (card.counter.exile) { const o = victim.caster; const vc = victim.card.orig || victim.card; for (const z of [o.graveyard, o.hand]) { const gi = z.indexOf(vc); if (gi >= 0) { z.splice(gi, 1); o.exile.push(vc); this.say(`— ${vc.name} is exiled`, p); break; } } } if (card.counterRider) await this.runOps(p, card.counterRider, card, { victim }); } }
       if (card.spellOps) await this.runOps(p, card.spellOps, card, { target });
       if (victim.countered && p.battlefield.some(b => b.card.statics && b.card.statics.baral && !b.neutral)) { const go = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card, question: 'Baral: draw a card, then discard a card?' })) : true; if (go) { await this.draw(p, 1); await this.runOps(p, [{ op: 'discard', n: 1 }], card, {}); } }
@@ -5800,7 +5805,7 @@ class Game {
         case 'odricBlocks': this.odricBlock = { turn: this.turn, p }; this.say(`— ${p.name} chooses how creatures block this combat (no blocks)`, p); break;
         case 'burnEmblem': for (const q of this.opponentsOf(p)) { q.burnEmblems = (q.burnEmblems || 0) + 1; this.say(`— ${q.name} gets an emblem (1 damage each upkeep)`, p); } break;
         case 'chandraLegacy': { const pool = p.battlefield.filter(b => b.card.isPlaneswalker && (b.loyalty || 0) > (b === ctx.perm ? 1 : 1)); let picks = pool; if (p.human) { const cs = await this.chooseFromList(p, src, pool.map(b => b.card), pool.length, 'remove a loyalty counter'); picks = pool.filter(b => cs.includes(b.card)); } for (const b of picks) b.loyalty--; if (picks.length) await this.runOps(p, [{ op: 'impulse', n: picks.length }], src, ctx); break; }
-        case 'loyaltyOther': { const pool = p.battlefield.filter(b => b.card.isPlaneswalker && b !== ctx.perm); const t = p.ai ? [...pool].sort((a, z) => (a.loyalty || 0) - (z.loyalty || 0))[0] : await this.pickPerm(p, src, pool); if (t) { t.loyalty = (t.loyalty || 0) + op.n; this.say(`— ${t.card.name} gets a loyalty counter (${t.loyalty})`, p); await this.allWillBeOne(p, op.n); } break; }
+        case 'loyaltyOther': { const pool = p.battlefield.filter(b => b.card.isPlaneswalker && b !== ctx.perm && b.card !== src && !(src && b.card.orig === src)); /* b13: "another" — Commodore Guff was targeting himself */ const t = p.ai ? [...pool].sort((a, z) => (a.loyalty || 0) - (z.loyalty || 0))[0] : await this.pickPerm(p, src, pool); if (t) { t.loyalty = (t.loyalty || 0) + op.n; this.say(`— ${t.card.name} gets a loyalty counter (${t.loyalty})`, p); await this.allWillBeOne(p, op.n); } break; }
         case 'doubleAllKinds': { const pool = p.battlefield.filter(b => Object.keys(this.counterKinds(b)).length); let picks = pool; if (p.human) { const cs = await this.chooseFromList(p, src, pool.map(b => b.card), pool.length, 'double counters'); picks = pool.filter(b => cs.includes(b.card)); } let tot = 0; for (const b of picks) { const mine = this.ownerOf(b) === p; if ((b.counters || 0) > 0) { const add = mine ? this.counterAmt(p, b.counters) : b.counters; tot += add; b.counters += add; } if (b.card.isPlaneswalker && (b.loyalty || 0) > 0) { const add = mine ? this.counterAmt(p, b.loyalty) : b.loyalty; tot += add; b.loyalty += add; } if ((b.charge || 0) > 0) { tot += b.charge; b.charge *= 2; } for (const k of Object.keys(b.ck || {})) if (b.ck[k] > 0 && k !== 'stun') { tot += b.ck[k]; b.ck[k] *= 2; } } this.say(`— doubles the counters on ${picks.length} permanent${picks.length === 1 ? '' : 's'}`, p); if (tot) await this.allWillBeOne(p, tot); break; }
         case 'oneMoreCounter': { const pool = p.battlefield.filter(b => (b.counters || 0) > 0 || (b.card.isPlaneswalker && (b.loyalty || 0) > 0) || (b.charge || 0) > 0); const t = p.ai ? [...pool].sort((a, z) => (z.card.isPlaneswalker ? 3 : 0) - (a.card.isPlaneswalker ? 3 : 0) || p.ai.permBase(z) - p.ai.permBase(a))[0] : await this.pickPerm(p, src, pool); if (!t) break; if (t.card.isPlaneswalker && (t.loyalty || 0) > 0) t.loyalty++; else if ((t.counters || 0) > 0) { t.counters++; await this.countersPut(p, t, 1); } else t.charge++; this.say(`— an additional counter on ${t.card.name}`, p); await this.allWillBeOne(p, 1); break; }
         case 'jaceShrinkAttackers': p.jaceShrinkUntil = (p.turnCount || 0) + 1; this.say(`— until ${p.name}'s next turn, attacking creatures of opponents get -1/-0`, p); break;
@@ -6516,6 +6521,7 @@ class Game {
     if (!perm || !perm.card) return false; const o = (card.oracle || '').split('\n//\n')[0].toLowerCase(); const c = perm.card; const ctrl = this.ownerOf(perm);
     if (ctrl && ctrl !== caster && perm.hexUntil && (perm.hexUntil.by.turnCount || 0) < perm.hexUntil.n) return false; if (ctrl && ctrl !== caster && (c.kw.includes('hexproof') || c.kw.includes('shroud'))) return false; if (c.kw.includes('shroud')) return false;
     if (perm.protColors && (card.colors || []).some(x => perm.protColors.includes(x))) return false;
+    if (card.rmColor && !(c.colors || []).includes(card.rmColor)) return false; // b13: Pyroblast-style "destroy target permanent if it's blue"
     if (this.b1_hexUB(card, ctrl, caster)) return false;
     if (c.protMulti && (card.colors || []).length > 1) return false;
     if (ctrl && ctrl !== caster && c.isPlaneswalker && ctrl.battlefield.some(b => b.card.statics && b.card.statics.pwHexproof && !b.neutral && (!b.chosenType || matchesFilter(c, b.chosenType)))) return false;

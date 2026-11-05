@@ -112,4 +112,12 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
  { const g=fresh();const [a,b]=g.players;const t=await cast(g,a,'Tamiyo, Field Researcher');const elf=a.battlefield.find(x=>x.card.isCreature)||await g.enterPerm(a,tagCard(mk('Elf','Creature — Elf','{G}','',1,2,2)));elf.summoning=false;const h0=a.hand.length;
    await act(g,a,t,'+1');ok('Tamiyo +1 no longer draws right away',a.hand.length===h0,'hand +'+(a.hand.length-h0));
    await g.combatPhase(a,[{attacker:elf,defender:b}]);await tick(g);ok('…draws when the chosen creature deals combat damage',a.hand.length===h0+1,'hand +'+(a.hand.length-h0)); }
+ // ---- b13: Pyroblast family colour checks, Guff "another"
+ { const PY={name:'Pyroblast',mana:'{R}',type:'Instant',cmc:1,oracle:"Choose one —\n• Counter target spell if it's blue.\n• Destroy target permanent if it's blue."};
+   const g=fresh();const [a,b]=g.players;const sram=tagCard(mk('Sram, Senior Edificer','Legendary Creature — Dwarf Advisor','{1}{W}','',2,2,2));const py=tagCard(PY);
+   ok('AI won’t aim Pyroblast at a white spell (counterHits false)',!Goldfish.counterHits?.(py.modes?py.modes[0].card:py,sram)||false);
+   for (const [vic,col,want] of [[sram,'white',false],[tagCard(mk('Jace Cantrip','Instant','{U}','Draw a card.',1)),'blue',true]]) { const v={id:777,card:vic,caster:b,kind:'spell'};g.stack.push(v);const mc=tagCard(PY).modes[0].card;const o={id:778,card:mc,caster:a,target:{spell:v},isMode:true};g.stack.push(o);await g.resolve(o);
+     ok(`Pyroblast vs a ${col} spell: ${want?'countered':'nothing happens'}`,!g.stack.includes(v)===want,'stack '+g.stack.map(o=>o.card.name)); g.stack.length=0; } }
+ { const g=fresh();const [a]=g.players;const gf=await put(g,a,'Commodore Guff');gf.loyalty=4;const tr=gf.card.triggers.find(t=>t.when==='end');await g.runTrig(a,gf,tr,{});ok('Guff end step with no other walker: no counter on himself',gf.loyalty===4,'loyalty '+gf.loyalty);
+   const t=await put(g,a,'Teferi, Hero of Dominaria');const l0=t.loyalty;await g.runTrig(a,gf,tr,{});ok('…with another walker, that one gets it',gf.loyalty===4&&t.loyalty===l0+1,'guff '+gf.loyalty+' teferi '+t.loyalty); }
  console.log(fails+' failed');})();

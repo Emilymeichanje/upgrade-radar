@@ -1,0 +1,28 @@
+// on touch, a single library pick is tap-then-confirm (owner's Sisay picked the neighbouring card after a mis-tap)
+const {chromium,devices}=require('playwright');
+(async()=>{const b=await chromium.launch();const ctx=await b.newContext({...devices['Pixel 7']});const pg=await ctx.newPage();const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));
+const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
+await pg.goto('file://'+__dirname+'/rec.html');
+await pg.evaluate(()=>{Math.random=Goldfish.mulberry(5);boot()});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.tap('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy&&!GoldfishUI.current.prompt,null,{timeout:60000});
+await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me;const {tagCard}=Goldfish;
+ const sis=tagCard({name:'Sisay, Weatherlight Captain',type:'Legendary Creature — Human Soldier',mana:'{2}{W}',cmc:3,power:2,toughness:2,oracle:"Sisay, Weatherlight Captain gets +1/+1 for each color among other legendary permanents you control.\n{W}{U}{B}{R}{G}: Search your library for a legendary permanent card with mana value less than Sisay's power, put that card onto the battlefield, then shuffle."});
+ const pm={id:94000,card:sis,tapped:false,summoning:false,counters:3};me.battlefield.push(pm);
+ const L=(n,t,m,c,l)=>tagCard({name:n,type:t,mana:m,cmc:c,oracle:'',loyalty:l});
+ me.library.push(L('Tamiyo, Field Researcher','Legendary Planeswalker — Tamiyo','{1}{G}{W}{U}',4,'4'),L('Tekuthal, Inquiry Dominus','Legendary Creature — Phyrexian Horror','{2}{U}{U}',4));
+ me.pool=['W','U','B','R','G'].map(c=>({c}));const o=U.game.abilityOptions(me,{}).find(o=>o.perm===pm);U.act(()=>U.exec('doAction',me,{...o,instant:false}))});
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;const P=U.prompt;if(P&&P.kind==='priority'){P.res(null);return false}return P&&P.kind==='search'},null,{timeout:15000});
+const btn0=await pg.evaluate(()=>{const e=document.querySelector('[data-act=search-go]');return e&&{t:e.textContent,dis:e.disabled}});
+ok('touch: a confirm button waits for a pick',btn0&&btn0.dis&&/Tap a card/.test(btn0.t),JSON.stringify(btn0));
+await pg.locator('.sgrid .sopt[data-name="tekuthal, inquiry dominus"]').tap();
+const st1=await pg.evaluate(()=>({open:!!GoldfishUI.current.prompt,btn:document.querySelector('[data-act=search-go]').textContent}));
+ok('a tap only selects (prompt still open, button names the card)',st1.open&&/Tekuthal/.test(st1.btn),JSON.stringify(st1));
+await pg.locator('.sgrid .sopt[data-name="tamiyo, field researcher"]').tap();
+const st2=await pg.evaluate(()=>document.querySelector('[data-act=search-go]').textContent);
+ok('tapping another card changes the pick',/Tamiyo/.test(st2),st2);
+await pg.tap('[data-act=search-go]');
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;if(U.prompt&&U.prompt.kind==='priority'){U.prompt.res(null);return false}return !U.busy},null,{timeout:15000});
+ok('confirm puts the chosen card onto the battlefield',await pg.evaluate(()=>GoldfishUI.current.me.battlefield.some(b=>b.card.name==='Tamiyo, Field Researcher')&&!GoldfishUI.current.me.battlefield.some(b=>b.card.name==='Tekuthal, Inquiry Dominus')));
+console.log('errors',errs);await b.close()})();

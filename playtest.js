@@ -107,6 +107,7 @@ function parseOps(t) {
       [/^search your library for a legendary permanent card with mana value less than (?:this card|[a-z]+)'s power, put that card onto the battlefield, then shuffle$/, () => [{ op: 'b12_sisay' }]],
       // b13: Ugin −10 — the "put up to seven permanents" clause was dropped; Teferi Hero +1 untaps at the NEXT END STEP, not now
       [/^you gain (\d+) life, draw (\w+) cards, then put up to (\w+) permanent cards from your hand onto the battlefield$/, m => [{ op: 'gain', n: +m[1] }, { op: 'draw', n: numOf(m[2]) }, { op: 'b13_putPerms', n: numOf(m[3]) }]],
+      [/^draw a card, then put a card from your hand on top of your library$/, () => [{ op: 'draw', n: 1 }, { op: 'b13_handToTop', n: 1 }]], // Aminatou +1 (the second half was dropped)
       [/^draw a card\. at the beginning of the next end step, untap up to (\w+) lands$/, m => [{ op: 'draw', n: 1 }, { op: 'untapLands', n: numOf(m[1]), atEnd: true }]],
       [/^you get an emblem with "whenever you cast a spell, this emblem deals (\d+) damage to any target\.?"$/, m => [{ op: 'b12_emblem', kind: 'castBurn', n: +m[1] }]],
       [/^you get an emblem with "whenever you draw a card, exile target permanent an opponent controls\.?"$/, () => [{ op: 'b12_emblem', kind: 'drawExile' }]],
@@ -5657,6 +5658,10 @@ class Game {
         case 'b12_drawTappedOpp': { const n = this.opponentsOf(p).reduce((s, q) => s + q.battlefield.filter(b => b.card.isCreature && b.tapped).length, 0); if (n) await this.draw(p, n); this.say(`— draws ${n} card${n === 1 ? '' : 's'} (tapped creatures your opponents control)`, p); break; }
         case 'b12_titan': { const pool = p.battlefield.filter(b => b.card.isCreature && b !== ctx.perm); const t = ctx.target && pool.includes(ctx.target) ? ctx.target : p.ai ? [...pool].sort((a, z) => this.powerOf(p, z) - this.powerOf(p, a))[0] : await this.pickPerm(p, src, pool, {}); if (!t) break; const x = p.battlefield.filter(b => b.card.isLand).length; t.tempPump = (t.tempTurn === this.turn ? t.tempPump || 0 : 0) + x; t.tempTurn = this.turn; this.toughAdj(t, x); (t.kwTurn === this.turn ? t.kwT : (t.kwT = [])).push('trample'); t.kwTurn = this.turn; this.say(`— ${t.card.name} gets +${x}/+${x} and trample until end of turn`, p); break; }
         case 'b12_valefor': for (const q of this.opponentsOf(p)) { const cs = q.battlefield.filter(b => b.card.isCreature); if (!cs.length) continue; const mx = Math.max(...cs.map(b => b.card.cmc || 0)); const tied = cs.filter(b => (b.card.cmc || 0) === mx); const t = q.ai ? [...tied].sort((a, z) => q.ai.permBase(a) - q.ai.permBase(z))[0] : (tied.length === 1 ? tied[0] : await this.pickPerm(q, src, tied, { dest: 'bounce' })) || tied[0]; await this.bounce(q, t, p); this.say(`— ${q.name} returns ${t.card.name} to hand`, p); } break;
+        case 'b13_handToTop': { for (let k = 0; k < (op.n || 1) && p.hand.length; k++) { let c = null;
+            if (p.human && !this.shortcutting && this.hooks.humanSearch) { for (let tries = 0; tries < 3 && !c; tries++) c = ([].concat(await this.hooks.humanSearch({ p, card: src, pool: [...p.hand], n: 1, dest: 'handtop', must: true }) || []))[0] || null; }
+            if (!c) c = p.ai ? p.ai.chooseDiscard(this, p) : p.hand[p.hand.length - 1];
+            if (!c || !p.hand.includes(c)) continue; p.hand.splice(p.hand.indexOf(c), 1); p.library.push(c); this.say(`— puts a card from hand on top of the library`, p); } break; }
         case 'b13_putPerms': { const pool = p.hand.filter(c => !c.isInstant && !c.isSorcery); let picks;
           if (p.human && !this.shortcutting) picks = await this.chooseFromList(p, src, pool, op.n, 'battlefield');
           else picks = [...pool].sort((a, z) => (z.isLand ? -1 : z.cmc || 0) - (a.isLand ? -1 : a.cmc || 0)).slice(0, op.n);
@@ -7601,6 +7606,7 @@ class AI {
       case 'bounceSpell': case 'bounceSpellOrPerm': v += game.stack.some(o => o.caster !== me) ? 4 : (op.op === 'bounceSpellOrPerm' ? 2 : -5); break;
       case 'untapAll': case 'extraCombat': v += me.battlefield.filter(b => b.card.isCreature).length; break;
       case 'scry': case 'surveil': v += 0.5 * (op.n || 1); break;
+      case 'b13_handToTop': v -= 0.8 * (op.n || 1); break; // Aminatou +1 is card quality, not card advantage
       case 'gyToHand': v += me.graveyard.length ? 3 : -3; break;
       case 'landToHand': case 'landToBf': v += 2; break;
       case 'addMana': v += 0.5; break;

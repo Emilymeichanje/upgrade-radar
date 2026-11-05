@@ -63,6 +63,15 @@ const dc=await pg.evaluate(()=>({seen:window.__seen,mode:window.__mode,lifeBefor
 ok('Dawn Charm is offered when an opponent declares attacks on you',dc.seen&&/Dawn Charm/.test(dc.seen),JSON.stringify(dc));
 ok('…and its fog mode prevents the 5 damage',dc.life===dc.lifeBefore,JSON.stringify(dc));
 await pg.evaluate(()=>{GoldfishUI.current.game.active=0});
+// b13: Aminatou +1 — human picks a card to put back; no Skip
+await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game,me=U.me;const {tagCard}=Goldfish;const am=tagCard({name:'Aminatou, the Fateshifter',mana:'{W}{U}{B}',type:'Legendary Planeswalker — Aminatou',cmc:3,loyalty:'3',oracle:'+1: Draw a card, then put a card from your hand on top of your library.\n−1: Exile another target permanent you own, then return it to the battlefield under your control.\n−6: Choose left or right. Each player gains control of all nonland permanents other than Aminatou controlled by the next player in the chosen direction.'});
+  const pm={id:93300,card:am,tapped:false,summoning:false,counters:0,loyalty:3};me.battlefield.push(pm);window.__h=me.hand.length;window.__l=me.library.length;const o=g.abilityOptions(me,{}).find(o=>o.perm===pm&&o.ab.label==='+1');U.act(()=>U.exec('doAction',me,o))});
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;const P=U.prompt;if(P&&P.kind==='priority'){P.res(null);return false}if(P&&P.kind==='choice'){P.res(P.options[0]);return false}return P&&P.kind==='search'&&P.dest==='handtop'},null,{timeout:15000}).catch(()=>{});
+const am=await pg.evaluate(()=>{const P=GoldfishUI.current.prompt;return P&&P.pool?{dest:P.dest,n:P.pool.length,skip:!!document.querySelector('[data-act=search-none]'),head:document.querySelector('.prm h4').textContent}:{kind:P&&P.kind,opts:P&&P.options,busy:GoldfishUI.current.busy}});
+ok('Aminatou +1 asks which card to put on top, with no Skip',am&&am.dest==='handtop'&&!am.skip,JSON.stringify(am));
+await pg.evaluate(()=>{const P=GoldfishUI.current.prompt;window.__pick=P.pool[0];P.res([P.pool[0]])});
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;if(U.prompt&&U.prompt.kind==='priority'){U.prompt.res(null);return false}return !U.busy},null,{timeout:15000});
+ok('…and that card is now on top of the library',await pg.evaluate(()=>{const me=GoldfishUI.current.me;return me.library[me.library.length-1]===window.__pick&&me.hand.length===window.__h}));
 // mid-turn win: kill everyone on your own main phase → end screen
 await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game;U.act(async()=>{for(const q of g.opponentsOf(U.me))await g.kill(q,'test');})});
 await pg.waitForFunction(()=>GoldfishUI.current.ended&&!!document.querySelector('.over'),null,{timeout:15000}).catch(()=>{});

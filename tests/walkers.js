@@ -96,4 +96,6 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
  { const g=fresh();const [a]=g.players;const t=await cast(g,a,'Teferi, Hero of Dominaria');const lands=a.battlefield.filter(b=>b.card.isLand);for(const b of lands)b.tapped=true;
    await act(g,a,t,'+1');ok('Teferi Hero +1 does NOT untap lands right away',lands.every(b=>b.tapped)&&(g.endUntaps||[]).length===1,'queued '+(g.endUntaps||[]).length);
    const q=g.endUntaps[0];g.endUntaps=[];for(const b of q.p.battlefield.filter(b=>b.card.isLand&&b.tapped).slice(0,q.n))b.tapped=false;ok('…it untaps two at the next end step',lands.filter(b=>!b.tapped).length===Math.min(2,lands.length)); }
+ { const g=fresh();const [a]=g.players;const am=await cast(g,a,'Aminatou, the Fateshifter');const h0=a.hand.length,l0=a.library.length;
+   await act(g,a,am,'+1');ok('Aminatou +1: draw a card, then put a card from hand on top (hand size and library size unchanged)',a.hand.length===h0&&a.library.length===l0,'hand '+h0+'→'+a.hand.length+' lib '+l0+'→'+a.library.length); }
  console.log(fails+' failed');})();

@@ -98,4 +98,18 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const q=g.endUntaps[0];g.endUntaps=[];for(const b of q.p.battlefield.filter(b=>b.card.isLand&&b.tapped).slice(0,q.n))b.tapped=false;ok('…it untaps two at the next end step',lands.filter(b=>!b.tapped).length===Math.min(2,lands.length)); }
  { const g=fresh();const [a]=g.players;const am=await cast(g,a,'Aminatou, the Fateshifter');const h0=a.hand.length,l0=a.library.length;
    await act(g,a,am,'+1');ok('Aminatou +1: draw a card, then put a card from hand on top (hand size and library size unchanged)',a.hand.length===h0&&a.library.length===l0,'hand '+h0+'→'+a.hand.length+' lib '+l0+'→'+a.library.length); }
+ // ---- b13 walker audit
+ { const g=fresh();const [a,b]=g.players;await put(g,a,'Teferi, Hero of Dominaria');const gf=await cast(g,a,'Commodore Guff');gf.loyalty=5;const h0=a.hand.length,l0=b.life;
+   await act(g,a,gf,'−3');ok('Commodore Guff −3: X = 2 walkers → draw 2 and 2 damage to each opponent',a.hand.length===h0+2&&b.life===l0-2,'hand +'+(a.hand.length-h0)+' opp −'+(l0-b.life)); }
+ { const g=fresh();const [a]=g.players;const d=await cast(g,a,'Dihada, Binder of Wills');d.loyalty=5;a.library.push(tagCard(mk('Island','Basic Land — Island','','',0)),C('Teferi, Master of Time'),tagCard(mk('Elf','Creature — Elf','{G}','',1,1,1)),C('Narset, Parter of Veils'));const h0=a.hand.length;
+   await act(g,a,d,'−3');ok('Dihada −3: legendary cards to hand, rest to graveyard, a Treasure for each',a.hand.length===h0+2&&a.hand.some(c=>c.name==='Narset, Parter of Veils')&&a.battlefield.filter(b=>/treasure/i.test(b.card.name)).length===2,'hand +'+(a.hand.length-h0)+' treasures '+a.battlefield.filter(b=>/treasure/i.test(b.card.name)).length); }
+ { const g=fresh();const [a]=g.players;const j=await cast(g,a,'Jace, Multiverse Architect');const h0=a.hand.length,l0=a.library.length;
+   await act(g,a,j,'+1');ok('Jace, Multiverse Architect +1: draw two, put one on the bottom (net +1 card)',a.hand.length===h0+1&&a.library.length===l0-1,'hand +'+(a.hand.length-h0)); }
+ { const g=fresh();const [a]=g.players;const w=await cast(g,a,'Wrenn and Realmbreaker');a.library.push(tagCard(mk('Shock','Instant','{R}','Shock deals 2 damage to any target.',1)),C('Doubling Season'),tagCard(mk('Shock','Instant','{R}','Shock deals 2 damage to any target.',1)));const h0=a.hand.length;
+   await act(g,a,w,'−2');ok('Wrenn and Realmbreaker −2: mill 3, take a permanent card',a.hand.length===h0+1&&a.hand.some(c=>c.name==='Doubling Season')&&a.graveyard.filter(c=>c.name==='Shock').length===2); }
+ { const g=fresh();const [a,b]=g.players;const nb=await cast(g,a,'Nicol Bolas, God-Pharaoh');nb.loyalty=7;const big=await g.enterPerm(b,tagCard(mk('Dragon','Creature — Dragon','{5}{R}{R}','Flying',7,6,6)));for(const q of g.opponentsOf(a))q.life=40;
+   await act(g,a,nb,'−4');ok('Nicol Bolas −4 can hit a creature an opponent controls (AI kills the 6/6)',!b.battlefield.includes(big)&&g.opponentsOf(a).every(q=>q.life===40)); }
+ { const g=fresh();const [a,b]=g.players;const t=await cast(g,a,'Tamiyo, Field Researcher');const elf=a.battlefield.find(x=>x.card.isCreature)||await g.enterPerm(a,tagCard(mk('Elf','Creature — Elf','{G}','',1,2,2)));elf.summoning=false;const h0=a.hand.length;
+   await act(g,a,t,'+1');ok('Tamiyo +1 no longer draws right away',a.hand.length===h0,'hand +'+(a.hand.length-h0));
+   await g.combatPhase(a,[{attacker:elf,defender:b}]);await tick(g);ok('…draws when the chosen creature deals combat damage',a.hand.length===h0+1,'hand +'+(a.hand.length-h0)); }
  console.log(fails+' failed');})();

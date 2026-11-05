@@ -107,6 +107,13 @@ function parseOps(t) {
       [/^search your library for a legendary permanent card with mana value less than (?:this card|[a-z]+)'s power, put that card onto the battlefield, then shuffle$/, () => [{ op: 'b12_sisay' }]],
       // b13: Ugin −10 — the "put up to seven permanents" clause was dropped; Teferi Hero +1 untaps at the NEXT END STEP, not now
       [/^you gain (\d+) life, draw (\w+) cards, then put up to (\w+) permanent cards from your hand onto the battlefield$/, m => [{ op: 'gain', n: +m[1] }, { op: 'draw', n: numOf(m[2]) }, { op: 'b13_putPerms', n: numOf(m[3]) }]],
+      // b13 walker audit (Tam deck): dropped clauses
+      [/^you draw x cards and (?:this card|[^,]+?) deals x damage to each opponent, where x is the number of planeswalkers you control$/, () => [{ op: 'b13_guff' }]],
+      [/^reveal the top four cards of your library\. put any number of legendary cards from among them into your hand and the rest into your graveyard\. create a treasure token for each card put into your graveyard this way$/, () => [{ op: 'b13_dihada' }]],
+      [/^draw two cards, then put a card from your hand on the bottom of your library$/, () => [{ op: 'draw', n: 2 }, { op: 'b13_handToTop', n: 1, bottom: true }]],
+      [/^choose up to two target creatures\. until your next turn, whenever either of those creatures deals combat damage, you draw a card$/, () => [{ op: 'b13_tamiyo1' }]],
+      [/^mill three cards\. you may put a permanent card from among the milled cards into your hand$/, () => [{ op: 'b13_millTake', n: 3 }]],
+      [/^(?:this card|[^,]+?) deals (\d+) damage to target opponent, creature an opponent controls, or planeswalker an opponent controls$/, m => [{ op: 'b13_oppAny', n: +m[1] }]],
       [/^draw a card, then put a card from your hand on top of your library$/, () => [{ op: 'draw', n: 1 }, { op: 'b13_handToTop', n: 1 }]], // Aminatou +1 (the second half was dropped)
       [/^draw a card\. at the beginning of the next end step, untap up to (\w+) lands$/, m => [{ op: 'draw', n: 1 }, { op: 'untapLands', n: numOf(m[1]), atEnd: true }]],
       [/^you get an emblem with "whenever you cast a spell, this emblem deals (\d+) damage to any target\.?"$/, m => [{ op: 'b12_emblem', kind: 'castBurn', n: +m[1] }]],
@@ -5659,9 +5666,22 @@ class Game {
         case 'b12_titan': { const pool = p.battlefield.filter(b => b.card.isCreature && b !== ctx.perm); const t = ctx.target && pool.includes(ctx.target) ? ctx.target : p.ai ? [...pool].sort((a, z) => this.powerOf(p, z) - this.powerOf(p, a))[0] : await this.pickPerm(p, src, pool, {}); if (!t) break; const x = p.battlefield.filter(b => b.card.isLand).length; t.tempPump = (t.tempTurn === this.turn ? t.tempPump || 0 : 0) + x; t.tempTurn = this.turn; this.toughAdj(t, x); (t.kwTurn === this.turn ? t.kwT : (t.kwT = [])).push('trample'); t.kwTurn = this.turn; this.say(`— ${t.card.name} gets +${x}/+${x} and trample until end of turn`, p); break; }
         case 'b12_valefor': for (const q of this.opponentsOf(p)) { const cs = q.battlefield.filter(b => b.card.isCreature); if (!cs.length) continue; const mx = Math.max(...cs.map(b => b.card.cmc || 0)); const tied = cs.filter(b => (b.card.cmc || 0) === mx); const t = q.ai ? [...tied].sort((a, z) => q.ai.permBase(a) - q.ai.permBase(z))[0] : (tied.length === 1 ? tied[0] : await this.pickPerm(q, src, tied, { dest: 'bounce' })) || tied[0]; await this.bounce(q, t, p); this.say(`— ${q.name} returns ${t.card.name} to hand`, p); } break;
         case 'b13_handToTop': { for (let k = 0; k < (op.n || 1) && p.hand.length; k++) { let c = null;
-            if (p.human && !this.shortcutting && this.hooks.humanSearch) { for (let tries = 0; tries < 3 && !c; tries++) c = ([].concat(await this.hooks.humanSearch({ p, card: src, pool: [...p.hand], n: 1, dest: 'handtop', must: true }) || []))[0] || null; }
+            if (p.human && !this.shortcutting && this.hooks.humanSearch) { for (let tries = 0; tries < 3 && !c; tries++) c = ([].concat(await this.hooks.humanSearch({ p, card: src, pool: [...p.hand], n: 1, dest: op.bottom ? 'handbottom' : 'handtop', must: true }) || []))[0] || null; }
             if (!c) c = p.ai ? p.ai.chooseDiscard(this, p) : p.hand[p.hand.length - 1];
-            if (!c || !p.hand.includes(c)) continue; p.hand.splice(p.hand.indexOf(c), 1); p.library.push(c); this.say(`— puts a card from hand on top of the library`, p); } break; }
+            if (!c || !p.hand.includes(c)) continue; p.hand.splice(p.hand.indexOf(c), 1); if (op.bottom) p.library.unshift(c); else p.library.push(c); this.say(`— puts a card from hand on the ${op.bottom ? 'bottom' : 'top'} of the library`, p); } break; }
+        case 'b13_guff': { const X = p.battlefield.filter(b => b.card.isPlaneswalker && !b.neutral).length; this.say(`— X = ${X} (planeswalkers you control)`, p); if (X) await this.runOpsCore(p, [{ op: 'draw', n: X }, { op: 'damage', n: X, to: 'each opponent' }], src, ctx); break; }
+        case 'b13_dihada': { const top = p.library.splice(-Math.min(4, p.library.length)).reverse(); if (!top.length) break; this.say(`— reveals ${top.map(c => c.name).join(', ')}`, p); const legs = top.filter(c => c.isLegendary);
+          const picks = !legs.length ? [] : p.human && !this.shortcutting ? await this.chooseFromList(p, src, legs, legs.length, 'hand') : legs; const rest = top.filter(c => !picks.includes(c));
+          p.hand.push(...picks); p.graveyard.push(...rest); if (picks.length) this.say(`— puts ${picks.map(c => c.name).join(', ')} into hand`, p); if (rest.length) { this.milledHook && this.milledHook(p, rest); await this.runOpsCore(p, [{ op: 'artifactTokens', n: rest.length, kind: 'treasure', tapped: false }], src, ctx); } break; }
+        case 'b13_millTake': { const n = Math.min(op.n, p.library.length); const top = p.library.slice(-n); await this.runOpsCore(p, [{ op: 'mill', n }], src, ctx); const pool = top.filter(c => p.graveyard.includes(c) && !c.isInstant && !c.isSorcery); if (!pool.length) break;
+          const c = p.human && !this.shortcutting ? (await this.chooseFromList(p, src, pool, 1, 'gyhand'))[0] : [...pool].sort((a, z) => (z.isLand ? 0.5 : (z.cmc || 0) + 1) - (a.isLand ? 0.5 : (a.cmc || 0) + 1))[0];
+          if (c) { p.graveyard.splice(p.graveyard.indexOf(c), 1); p.hand.push(c); this.say(`— puts ${c.name} into hand`, p); } break; }
+        case 'b13_oppAny': await this.b13_dmgOppAny(p, src, op.n); break;
+        case 'b13_tamiyo1': { const pool = this.alive().flatMap(q => q.battlefield.filter(b => b.card.isCreature && b.neutral !== 'land'));
+          const picks = p.human && !this.shortcutting ? await this.chooseFromList(p, src, pool.map(b => b.card), 2, 'target') : null;
+          const chosen = picks ? pool.filter(b => picks.includes(b.card)) : p.battlefield.filter(b => b.card.isCreature && b.neutral !== 'land').sort((a, z) => this.powerOf(p, z) - this.powerOf(p, a)).slice(0, 2);
+          for (const b of chosen) (b.b13Tam = b.b13Tam || []).push({ p, until: p.turnCount || 0 });
+          this.say(chosen.length ? `— until your next turn, you draw when ${chosen.map(b => b.card.name).join(' or ')} deals combat damage` : '— chooses no creatures', p); break; }
         case 'b13_putPerms': { const pool = p.hand.filter(c => !c.isInstant && !c.isSorcery); let picks;
           if (p.human && !this.shortcutting) picks = await this.chooseFromList(p, src, pool, op.n, 'battlefield');
           else picks = [...pool].sort((a, z) => (z.isLand ? -1 : z.cmc || 0) - (a.isLand ? -1 : a.cmc || 0)).slice(0, op.n);
@@ -6320,6 +6340,7 @@ class Game {
     }
   }
   async combatDamageTriggers(p, attacker) {
+    await this.b13_tamiyo(attacker);
     if (this._cdDefender && attacker) { if (attacker.b3HitTurn !== this.turn) { attacker.b3HitTurn = this.turn; attacker.b3Hit = []; } if (!attacker.b3Hit.includes(this._cdDefender)) attacker.b3Hit.push(this._cdDefender); }
     await this.b6_cd(p, attacker);
     if (attacker.ringBearer && (p.ringLevel || 0) >= 4) { this.say(`— Ring-bearer hits: each opponent loses 3 life`, p); for (const o of this.opponentsOf(p)) await this.changeLife(o, -3, attacker.card); }
@@ -6567,6 +6588,13 @@ class Game {
       if (killable && p.ai) { const o = this.ownerOf(killable); this.say(`— ${b.card.name} deals ${n} damage to ${killable.card.name}`, p); if (killable.card.isPlaneswalker) await this.pwDamage(o, killable, n); else { await this.dealtDamage(o, killable, n, b.card); await this.sba(); } }
       else if (!p.ai && this.hooks.humanChoice) { const perms = this.oppPerms(p, x => x.card.isCreature || x.card.isPlaneswalker); const opts = [...opps.map(q => `${q.name} (${q.life} life)`), ...perms.map(x => `${x.card.name} — ${this.ownerOf(x).name}${x.card.isPlaneswalker ? ` (loyalty ${x.loyalty})` : ` (${this.powerOf(this.ownerOf(x), x)}/${this.toughOf(this.ownerOf(x), x)})`}`)]; const ch = await this.hooks.humanChoice({ p, card: b.card, question: `${b.card.name}: deal ${n} damage to which opponent, creature or planeswalker?`, options: opts }); const k = opts.indexOf(ch); if (k >= 0 && k < opps.length) { const q = opps[k]; this.say(`— ${b.card.name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, b.card, { by: p }); } else if (k >= opps.length) { const x = perms[k - opps.length]; const o = this.ownerOf(x); this.say(`— ${b.card.name} deals ${n} damage to ${x.card.name}`, p); if (x.card.isPlaneswalker) await this.pwDamage(o, x, n); else { await this.dealtDamage(o, x, n, b.card); await this.sba(); } } }
       else { const q = p.ai ? [...opps].sort((a, z) => a.life - z.life)[0] : await this.choosePlayer(p, b.card, opps, `${b.card.name}: deal ${n} damage to which opponent?`); if (q) { this.say(`— ${b.card.name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, b.card, { by: p }); } } } finally { this._awbo--; } } }
+  async b13_tamiyo(perm) { if (!perm || !perm.b13Tam) return; perm.b13Tam = perm.b13Tam.filter(t => !t.p.dead && (t.p.turnCount || 0) === t.until); for (const t of perm.b13Tam) { this.say(`— ${perm.card.name} dealt combat damage: draw a card (Tamiyo)`, t.p); await this.runOpsCore(t.p, [{ op: 'draw', n: 1 }], perm.card, {}); } }
+  async b13_dmgOppAny(p, src, n) { const opps = this.opponentsOf(p); const name = (src && src.name) || 'it';
+    const hit = async x => { const o = this.ownerOf(x); this.say(`— ${name} deals ${n} damage to ${x.card.name}`, p); if (x.card.isPlaneswalker) await this.pwDamage(o, x, n); else { await this.dealtDamage(o, x, n, src); await this.sba(); } };
+    const face = async q => { this.say(`— ${name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, src, { by: p }); };
+    if (p.ai || this.shortcutting || !this.hooks.humanChoice) { const k = this.oppPerms(p, x => (x.card.isCreature && this.toughOf(this.ownerOf(x), x) - this.markedOf(x) <= n) || (x.card.isPlaneswalker && (x.loyalty || 0) <= n)).sort((a, z) => p.ai ? p.ai.permBase(z) - p.ai.permBase(a) : 0)[0]; const low = [...opps].sort((a, z) => a.life - z.life)[0]; if (low && low.life <= n) return face(low); if (k) return hit(k); if (low) return face(low); return; }
+    const perms = this.oppPerms(p, x => x.card.isCreature || x.card.isPlaneswalker); const opts = [...opps.map(q => `${q.name} (${q.life} life)`), ...perms.map(x => `${x.card.name} — ${this.ownerOf(x).name}${x.card.isPlaneswalker ? ` (loyalty ${x.loyalty})` : ` (${this.powerOf(this.ownerOf(x), x)}/${this.toughOf(this.ownerOf(x), x)})`}`)];
+    const ch = await this.hooks.humanChoice({ p, card: src, question: `${name}: deal ${n} damage to which opponent, creature or planeswalker?`, options: opts }); const i = opts.indexOf(ch); if (i < 0) return; if (i < opps.length) return face(opps[i]); return hit(perms[i - opps.length]); }
   async countersPut(p, perm, n, opts = {}) {
     if (!n || !perm) return;
     if (!opts.noAwbo) await this.allWillBeOne(p, n);
@@ -6612,8 +6640,8 @@ class Game {
       if (toB && this.shieldUp(defender, blocker)) toB = 0;
       if (toA && this.shieldUp(p, attacker)) toA = 0;
       if (toA && p.battlefield.some(x => x.card.statics && x.card.statics.preventAttackerDmg && !x.neutral)) toA = 0;
-      if (toB) { if (has(attacker, 'wither') || has(attacker, 'infect')) { blocker.counters = (blocker.counters || 0) - toB; await this.minusPut(blocker, toB); } else blocker.cDmg += toB; await this.dealtDamage(defender, blocker, toB, attacker.card); }
-      if (toA) { if (has(blocker, 'wither') || has(blocker, 'infect')) { attacker.counters = (attacker.counters || 0) - toA; await this.minusPut(attacker, toA); } else attacker.cDmg += toA; await this.dealtDamage(p, attacker, toA, blocker.card); }
+      if (toB) { if (has(attacker, 'wither') || has(attacker, 'infect')) { blocker.counters = (blocker.counters || 0) - toB; await this.minusPut(blocker, toB); } else blocker.cDmg += toB; await this.dealtDamage(defender, blocker, toB, attacker.card); await this.b13_tamiyo(attacker); }
+      if (toA) { if (has(blocker, 'wither') || has(blocker, 'infect')) { attacker.counters = (attacker.counters || 0) - toA; await this.minusPut(attacker, toA); } else attacker.cDmg += toA; await this.dealtDamage(p, attacker, toA, blocker.card); await this.b13_tamiyo(blocker); }
       if (toPlayer) pending.push({ defender, dmg: toPlayer, attacker });
       if (has(attacker, 'lifelink') && toB) await this.changeLife(p, toB, attacker.card);
       if (has(blocker, 'lifelink') && toA) await this.changeLife(defender, toA, blocker.card);
@@ -6640,8 +6668,8 @@ class Game {
       let toA = 0; const hitters = live.filter(b => first ? fs(b) : (!fs(b) || has(b, 'double strike')));
       for (const b of hitters) toA += Math.max(0, this.combatPow(defender, b));
       if (toA && (this.shieldUp(p, attacker) || p.battlefield.some(x => x.card.statics && x.card.statics.preventAttackerDmg && !x.neutral))) toA = 0;
-      for (const [b, n0] of toB) { const n = this.shieldUp(defender, b) ? 0 : n0; if (!n) continue; if (has(attacker, 'wither') || has(attacker, 'infect')) { b.counters = (b.counters || 0) - n; await this.minusPut(b, n); } else b.cDmg += n; await this.dealtDamage(defender, b, n, attacker.card); if (has(attacker, 'lifelink')) await this.changeLife(p, n, attacker.card); }
-      if (toA) { if (hitters.some(b => has(b, 'wither') || has(b, 'infect'))) { attacker.counters = (attacker.counters || 0) - toA; await this.minusPut(attacker, toA); } else attacker.cDmg += toA; await this.dealtDamage(p, attacker, toA, hitters[0].card); for (const b of hitters) if (has(b, 'lifelink')) await this.changeLife(defender, Math.max(0, this.combatPow(defender, b)), b.card); }
+      for (const [b, n0] of toB) { const n = this.shieldUp(defender, b) ? 0 : n0; if (!n) continue; if (has(attacker, 'wither') || has(attacker, 'infect')) { b.counters = (b.counters || 0) - n; await this.minusPut(b, n); } else b.cDmg += n; await this.dealtDamage(defender, b, n, attacker.card); if (has(attacker, 'lifelink')) await this.changeLife(p, n, attacker.card); } if ([...toB].some(([, n]) => n > 0)) await this.b13_tamiyo(attacker);
+      if (toA) { if (hitters.some(b => has(b, 'wither') || has(b, 'infect'))) { attacker.counters = (attacker.counters || 0) - toA; await this.minusPut(attacker, toA); } else attacker.cDmg += toA; await this.dealtDamage(p, attacker, toA, hitters[0].card); for (const b of hitters) if (has(b, 'lifelink')) await this.changeLife(defender, Math.max(0, this.combatPow(defender, b)), b.card); for (const b of hitters) await this.b13_tamiyo(b); }
       if (toPlayer) pending.push({ defender, dmg: toPlayer, attacker });
       for (const [b] of toB) if (defender.battlefield.includes(b) && !has(b, 'indestructible') && (b.cDmg >= this.toughOf(defender, b) || this.toughOf(defender, b) <= 0 || has(attacker, 'deathtouch'))) { this.say(`— ${b.card.name} dies`, defender); gone.add(b); await kill(defender, b); }
       if (toA && p.battlefield.includes(attacker) && !has(attacker, 'indestructible') && (attacker.cDmg >= this.toughOf(p, attacker) || this.toughOf(p, attacker) <= 0 || hitters.some(b => has(b, 'deathtouch')))) { this.say(`— ${attacker.card.name} dies`, p); aGone = true; await kill(p, attacker); }
@@ -7606,7 +7634,12 @@ class AI {
       case 'bounceSpell': case 'bounceSpellOrPerm': v += game.stack.some(o => o.caster !== me) ? 4 : (op.op === 'bounceSpellOrPerm' ? 2 : -5); break;
       case 'untapAll': case 'extraCombat': v += me.battlefield.filter(b => b.card.isCreature).length; break;
       case 'scry': case 'surveil': v += 0.5 * (op.n || 1); break;
-      case 'b13_handToTop': v -= 0.8 * (op.n || 1); break; // Aminatou +1 is card quality, not card advantage
+      case 'b13_handToTop': v -= 0.8 * (op.n || 1); break;
+      case 'b13_guff': v += 2.5 * me.battlefield.filter(b => b.card.isPlaneswalker).length; break;
+      case 'b13_dihada': v += 3; break;
+      case 'b13_millTake': v += 1.5; break;
+      case 'b13_oppAny': v += 6; break;
+      case 'b13_tamiyo1': v += 1; break; // Aminatou +1 is card quality, not card advantage
       case 'gyToHand': v += me.graveyard.length ? 3 : -3; break;
       case 'landToHand': case 'landToBf': v += 2; break;
       case 'addMana': v += 0.5; break;

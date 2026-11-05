@@ -316,12 +316,20 @@ function themeRoles(deck){const set=new Set();for(const t of (deck.tags||[]))for
 // ---------- snapshot ----------
 async function loadSnapshot(){
   const r=await fetch('data/snapshot.json');S.snap=await r.json();buildIndex();
-  $('#status').innerHTML=`<span>EDHREC snapshot <b>${esc(S.snap.date)}</b></span><span>Scryfall: live</span><span id="livest">EDHREC live: checking…</span>`;
+  $('#status').innerHTML=`<span>EDHREC snapshot <b>${esc(S.snap.date)}</b></span><span>Scryfall: live</span><span id="livest">EDHREC live: checking…</span><button class="chip" id="refresh" title="Fetch the latest EDHREC lists and Scryfall cards (new sets, previews)">↻ Refresh data</button><span id="refst"></span>`;
+  $('#refresh').onclick=refreshData;
 }
+// Refresh: drop every in-memory EDHREC/Scryfall result and refetch past the browser cache, so new sets and EDHREC updates appear without reloading
+async function refreshData(){const b=$('#refresh');if(b.disabled)return;b.disabled=true;$('#refst').textContent='refreshing…';
+  try{S.live={};S.scry={};S.fresh=true;
+    try{const r=await fetch('data/snapshot.json',{cache:'no-cache'});if(r.ok){S.snap=await r.json();buildIndex();if(S.cur)S.cur=S.index.find(x=>x.slug===S.cur.slug)||S.cur;}}catch(e){}
+    if(S.cur){await liveEdh(S.cur);await renderTab();}
+    const t=new Date();$('#refst').textContent=`updated ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;}
+  catch(e){$('#refst').textContent='refresh failed: '+e.message}finally{b.disabled=false}}
 // try live EDHREC per commander; fall back silently
 async function liveEdh(deck){
   if(S.live[deck.slug]!==undefined)return S.live[deck.slug];
-  try{const r=await fetch(`https://json.edhrec.com/pages/commanders/${deck.edh||deck.slug}.json`,{mode:'cors'});
+  try{const r=await fetch(`https://json.edhrec.com/pages/commanders/${deck.edh||deck.slug}.json`,{mode:'cors',cache:S.fresh?'no-cache':'default'});
     if(!r.ok)throw 0;const j=await r.json();const jd=(j.container||j).json_dict||j;const out={lists:{},decks:(jd.card||{}).num_decks};
     for(const L of jd.cardlists||[])out.lists[L.tag]=L.cardviews.map(c=>({n:c.name,s:+(c.synergy||0).toFixed(3),d:c.num_decks||0,p:c.potential_decks||1,l:+(c.lift||0).toFixed(2),z:+(c.trend_zscore||0).toFixed(2)}));
     S.live[deck.slug]=out;if(!deck.decks&&out.decks)deck.decks=out.decks;$('#livest').textContent='EDHREC live: on';return out;
@@ -340,10 +348,12 @@ async function scryPages(q,max=3){
   for(let i=0;i<max&&url;i++){const r=await fetch(url);if(r.status===404)break;if(!r.ok)throw new Error('Scryfall '+r.status);const j=await r.json();out=out.concat(j.data||[]);url=j.has_more?j.next_page:null;if(url)await sleep(120)}
   return out;
 }
+function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+// unreleased (preview) cards are "not legal" on Scryfall until release day — include them so a new set shows up as soon as it's spoiled
 async function newCards(ci){
   const key=ciKey(ci)+'|'+S.since+'|'+S.reprints;if(S.scry[key])return S.scry[key];
   const id=ci.length?'id<='+ci.join(''):'id=c';
-  const q=`${id} legal:commander date>=${S.since} ${S.reprints?'':'-is:reprint'} -t:basic -is:funny game:paper`;
+  const q=`${id} (legal:commander OR date>${todayStr()}) date>=${S.since} ${S.reprints?'':'-is:reprint'} -t:basic -is:funny game:paper`;
   const cards=(await scryPages(q,4)).map(slim);S.scry[key]=cards;return cards;
 }
 async function cardsNamed(names){ // batch via /cards/collection (75 per call)
@@ -832,7 +842,7 @@ function cardRow({c,s,sc},d,list,kept){
   const inc=s?pct(s.d,s.p):null;const syn=s?Math.round(s.s*100):null;
   return`<div class="card" data-name="${esc(c.name)}">${c.img?`<img src="${esc(c.img)}" alt="" loading="lazy">`:'<div class="ph"></div>'}<div style="min-width:0">
     <div class="name"><a href="${esc(c.uri)}" target="_blank" rel="noopener">${esc(c.name)}</a><span class="mana">${esc(c.mana)}</span><span class="score">score ${sc.s}</span></div>
-    <div class="type">${esc(c.type)} · ${esc(c.set)} · <span class="num">${esc(c.date)}</span>${c.price?` · <span class="num">$${esc(c.price)}</span>`:''}</div>
+    <div class="type">${esc(c.type)} · ${esc(c.set)} · <span class="num">${esc(c.date)}</span>${c.date&&c.date>todayStr()?` · <span class="up" title="Previewed, not yet released or legal">preview — out ${esc(c.date)}</span>`:''}${c.price?` · <span class="num">$${esc(c.price)}</span>`:''}</div>
     <div class="stats">${s?`<span>inclusion <b>${inc}%</b></span><span>synergy <b class="${syn>0?'up':syn<0?'dn':''}">${syn>0?'+':''}${syn}</b></span><span>lift <b>${s.l}</b></span>${s.z>1?`<span class="up">▲ trending</span>`:''}${s.list==='newcards'?'<span class="up">new on EDHREC</span>':''}`:c.rank?`<span>EDHREC rank <b>#${fmt(c.rank)}</b></span>`:'<span>no EDHREC data yet</span>'}</div>
     ${s?`<div class="bar"><i style="width:${inc}%"></i></div>`:''}
     <div class="roles">${sc.roles.map(r=>`<span class="role ${sc.fit.includes(r)?'fit':''}">${esc(r)}</span>`).join('')}</div>

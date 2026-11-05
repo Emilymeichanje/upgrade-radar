@@ -354,7 +354,7 @@ async function newCards(ci){
   const key=ciKey(ci)+'|'+S.since+'|'+S.reprints;if(S.scry[key])return S.scry[key];
   const id=ci.length?'id<='+ci.join(''):'id=c';
   const q=`${id} (legal:commander OR date>${todayStr()}) date>=${S.since} ${S.reprints?'':'-is:reprint'} -t:basic -is:funny game:paper`;
-  const cards=(await scryPages(q,4)).map(slim);S.scry[key]=cards;return cards;
+  const cards=(await scryPages(q,12)).map(slim);S.scry[key]=cards;return cards; // up to 2100 cards: a big set (Star Trek is 311) plus a few months of others overflowed 700, cutting off late-alphabet names
 }
 async function cardsNamed(names){ // batch via /cards/collection (75 per call)
   const out=[];for(let i=0;i<names.length;i+=75){const chunk=names.slice(i,i+75).map(name=>({name}));

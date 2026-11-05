@@ -958,7 +958,7 @@ class Table {
     if (a === 'undo' && this.myTurn && !this.busy && !P) { this.undo(); return; }
     if (a === 'end' && this.myTurn && !this.busy && !P) { this.endTurn({ action: this.turnPhase === 'main1' ? 'end' : 'done' }); return; }
     if (a === 'to-main2' && this.myTurn && !this.busy && !P) { this.endTurn({ action: 'attack', assignments: [] }); return; }
-    if (a === 'attack' && this.myTurn && !this.busy && (this.turnPhase === 'main1' || this.turnPhase === 'combat2')) { this.mode = { kind: 'attack', map: new Map(), def: g.opponentsOf(me)[0] }; this.render(); return; }
+    if (a === 'attack' && this.myTurn && !this.busy && (this.turnPhase === 'main1' || this.turnPhase === 'combat2')) { if (g.winner || !g.opponentsOf(me).length) { if (g.winner && !this.ended && this.endTurn) this.endTurn({ action: 'end' }); return; } this.mode = { kind: 'attack', map: new Map(), def: g.opponentsOf(me)[0] }; this.render(); return; }
     if (a === 'atk-all' && this.mode && this.mode.kind === 'attack') { for (const b of me.battlefield) if (g.canAttackWith(me, b) && g.powerOf(me, b) > 0) this.mode.map.set(b, this.mode.def); this.render(); return; }
     if (a === 'def' && this.mode && this.mode.kind === 'attack') { this.mode.def = g.players[+btn.dataset.p]; this.render(); return; }
     if (a === 'defpw' && this.mode && this.mode.kind === 'attack') { const id = +btn.dataset.pid; for (const q of g.opponentsOf(me)) { const pw = q.battlefield.find(b => b.id === id); if (pw) { this.mode.def = { q, pw }; } } this.render(); return; }
@@ -1013,7 +1013,7 @@ class Table {
     const P = this.prompt;
     if (P && P.kind === 'block') { if (owner === me && P.blockers.includes(b)) { cls.push('clk'); if (P.sel.includes(b)) cls.push('sel'); if ([...P.map.values()].some(bs => bs.includes(b))) cls.push('blk'); } if (P.attacks.some(a => a.attacker === b)) { cls.push('atk'); cls.push('clk'); if (P.atkSel === b) cls.push('sel'); } if (owner === me && P.atkSel && P.blockers.includes(b) && !g.canBlock(b, P.atkSel)) cls.push('dim'); }
     let badge = '';
-    if (this.mode && this.mode.kind === 'attack' && this.mode.map.has(b)) badge = `<span class="bd">→ ${esc(short(this.mode.map.get(b).pw ? this.mode.map.get(b).pw.card.name : this.mode.map.get(b).name).slice(0, 10))}</span>`;
+    if (this.mode && this.mode.kind === 'attack' && this.mode.map.get(b)) badge = `<span class="bd">→ ${esc(short(this.mode.map.get(b).pw ? this.mode.map.get(b).pw.card.name : this.mode.map.get(b).name).slice(0, 10))}</span>`;
     else if (this.attacking.has(b.id)) badge = `<span class="bd">→ ${esc(short(g.players[this.attacking.get(b.id)].name).slice(0, 10))}</span>`;
     if (P && P.kind === 'block') { for (const [a, bl] of P.map) if (bl.includes(b)) badge = `<span class="bd" style="background:var(--accent)">blocks ${esc(a.card.name.slice(0, 10))}</span>`; }
     let pt = '';

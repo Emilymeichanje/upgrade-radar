@@ -328,4 +328,19 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    await g.runOps(me,[{op:'copyDeadToken'}],{name:'Ashling, the Limitless',uid:999},{sacrificed:pm});
    ok('Ashling token copy of Foundation Breaker gets its ETB (destroys the artifact)',!g.players[1].battlefield.includes(art)&&me.battlefield.some(b=>b.card.token&&b.card.name==='Foundation Breaker'),'art '+g.players[1].battlefield.includes(art));
  }
+
+ // ==== v88: behold / blight are the player's choice ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let asked=null; g.hooks.humanSearch=async c=>{asked=c;return [c.pool.find(x=>x.name==='Bane of Progress')]};
+   const bane=tagCard(mk('Bane of Progress','Creature — Elemental','{4}{G}{G}','When this creature enters, destroy all artifacts and enchantments.',6,'2','2')); const sm=tagCard(mk('Smokebraider','Creature — Elemental','{1}{R}','',2,'2','2'));
+   me.hand.push(bane,sm); const ch=tagCard(mk('Champion of the Path','Creature — Elemental','{2}{R}','As an additional cost to cast this spell, behold an Elemental and exile it.\nWhen this creature dies, return the exiled card to its owner\'s hand.',3,'3','3'));
+   me.hand.push(ch); me.pool=[{c:'R'},{c:'R'},{c:'R'}]; await g.cast(me,ch,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Behold: you choose which Elemental to exile (Bane, not the cheapest Smokebraider)',!!asked&&me.exile.includes(bane)&&me.hand.includes(sm),'asked '+!!asked+' exile '+me.exile.map(c=>c.name));
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let asked=null;
+   const a=await g.enterPerm(me,tagCard(mk('Big','Creature — Elemental','{3}{G}','',4,'4','4'))); const b=await g.enterPerm(me,tagCard(mk('Small','Creature — Elemental','{G}','',1,'1','1')));
+   g.hooks.humanPick=async c=>{asked=c;return c.pool.find(x=>x===a||x.card===a.card)||c.pool[0]}; g.hooks.humanSearch=async c=>{asked=c;return [c.pool.find(x=>x.name==='Big')||c.pool[0]]};
+   const morc=await g.enterPerm(g.players[1],tagCard(mk('High Perfect Morcant','Legendary Creature — Elf Warlock','{2}{B}{G}','Whenever this creature or another Elf you control enters, each opponent blights 1.',4,'3','3')));
+   await g.creatureEntered(g.players[1],morc); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Blight: the blighted player chooses the creature (Big took the -1/-1 counter, Small untouched)',!!asked&&a.counters===-1&&!b.counters,'asked '+!!asked+' a '+a.counters+' b '+b.counters);
+ }
  console.log(fails+' failed');})();

@@ -256,6 +256,7 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 .hcd{width:var(--hand);flex:none;margin-left:-18px;aspect-ratio:.716;border-radius:7px;position:relative;transition:transform .18s ease,box-shadow .18s;background:var(--soft);cursor:not-allowed}
 .hcd:first-child{margin-left:0}
 .hcd img{width:100%;height:100%;border-radius:7px;object-fit:cover;pointer-events:none}
+.gc .ctr.saga{top:2px;bottom:auto;background:#4b2d6b;color:#fff;font-weight:700}.gc .ctr.saga small{opacity:.75;font-weight:400}.gc .ctr.lvl{top:2px;bottom:auto;background:#2d5b6b;color:#fff}
 .hcd.can,.sopt.can{cursor:pointer;box-shadow:0 0 0 2px var(--accent),0 0 10px color-mix(in srgb,var(--accent) 60%,transparent)}
 .hcd:hover{transform:translateY(-22px) scale(1.18);z-index:5}
 .hcd.sel{transform:translateY(-14px);box-shadow:0 0 0 3px var(--warn)}
@@ -1038,7 +1039,9 @@ class Table {
     if (c.isCreature) { const pw = g.powerOf(owner, b), tg = g.toughOf(owner, b); pt = `<span class="pt ${pw > c.power ? 'up' : ''}" title="${(b.counters || 0) > 0 ? b.counters + ' +1/+1 counter' + (b.counters === 1 ? '' : 's') : ''}">${pw}/${tg}${(b.counters || 0) > 0 ? `<small>+${b.counters}</small>` : ''}</span>`; }
     if (c.isPlaneswalker) pt = `<span class="pt">◆${b.loyalty || 0}</span>`;
     if (c.altered) pt += `<span class="pt alt" title="Token copy with changed characteristics">${esc(c.altered)}</span>`;
-    { const kinds = g.counterKinds(b); delete kinds.loyalty; if (c.isCreature) delete kinds['+1/+1']; const ks = Object.entries(kinds); if (ks.length) { const ICON = { '+1/+1': '+1', '-1/-1': '−1', quest: 'Q', lore: 'ch', charge: '⚡', oil: 'oil', stun: 'stun', shield: '🛡', time: 't', age: 'age', hatchling: 'egg', indestructible: '∞', flying: 'fly', suspect: '?' }; pt += `<span class="ctr" title="${esc(ks.map(([k, v]) => v + ' ' + k + ' counter' + (v === 1 ? '' : 's')).join(', '))}">${ks.slice(0, 3).map(([k, v]) => `<b>${v}</b>${esc(ICON[k] || k.slice(0, 4))}`).join(' ')}</span>`; } }
+    if (c.saga) { const R = ['', 'I', 'II', 'III', 'IV', 'V', 'VI']; const cur = b.lore || 0, last = c.saga.last || 3; pt += `<span class="ctr saga" title="Saga: chapter ${cur} of ${last}${cur >= last ? ' — sacrificed after this chapter resolves' : ' — next chapter after your draw step'}">${R[cur] || cur}<small>/${R[last] || last}</small></span>`; } // b13: saga chapter badge
+    if (b.level) pt += `<span class="ctr lvl" title="Class level ${b.level}">lvl ${b.level}</span>`; // b13: Class level badge
+    { const kinds = g.counterKinds(b); delete kinds.loyalty; delete kinds.lore; if (c.isCreature) delete kinds['+1/+1']; const ks = Object.entries(kinds); if (ks.length) { const ICON = { '+1/+1': '+1', '-1/-1': '−1', quest: 'Q', lore: 'ch', charge: '⚡', oil: 'oil', stun: 'stun', shield: '🛡', time: 't', age: 'age', hatchling: 'egg', indestructible: '∞', flying: 'fly', suspect: '?' }; pt += `<span class="ctr" title="${esc(ks.map(([k, v]) => v + ' ' + k + ' counter' + (v === 1 ? '' : 's')).join(', '))}">${ks.slice(0, 3).map(([k, v]) => `<b>${v}</b>${esc(ICON[k] || k.slice(0, 4))}`).join(' ')}</span>`; } }
     const att = g.players.flatMap(q => q.battlefield).filter(x => x.attachedTo === b.id);
     if (b.neutral || b.pacified) { cls.push('neut'); badge = badge || `<span class="bd">${b.neutral ? 'neutralised' : "can't attack/block"}</span>`; }
     else if (att.length && !badge) badge = `<span class="bd" title="${esc(att.map(x => x.card.name).join(', '))}">+${esc(att.length === 1 ? att[0].card.name.split(/[ ,]/)[0].slice(0, 10) : att.length + ' attached')}</span>`;

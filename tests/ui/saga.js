@@ -1,0 +1,16 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const pg=await b.newPage({viewport:{width:1500,height:1000}});const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
+await pg.goto('file://'+__dirname+'/rec.html');await pg.evaluate(()=>{Math.random=Goldfish.mulberry(5);boot()});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.click('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy&&!GoldfishUI.current.prompt,null,{timeout:60000});
+await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me,g=U.game;const {tagCard}=Goldfish;
+  const saga=tagCard({name:'The Eldest Reborn',mana:'{4}{B}',type:'Enchantment — Saga',cmc:5,oracle:"(As this Saga enters and after your draw step, add a lore counter.)\nI — Each opponent sacrifices a creature or planeswalker.\nII — Each opponent discards a card.\nIII — Put target creature or planeswalker card from a graveyard onto the battlefield under your control."});
+  me.battlefield.push({id:9100,card:saga,tapped:false,summoning:false,counters:0,lore:2});window.__saga=saga.uid;
+  const cls=tagCard({name:'Fighter Class',mana:'{1}{R}',type:'Enchantment — Class',cmc:2,oracle:"(Gain the next level as a sorcery to add its ability.)\nWhen Fighter Class enters, search your library for an Equipment card, reveal it, put it into your hand, then shuffle.\n{2}{R}: Level 2\nEquip abilities you activate cost {2} less.\n{3}{R}: Level 3\nWhenever a creature you control attacks, it fights up to one target creature defending player controls."});
+  me.battlefield.push({id:9101,card:cls,tapped:false,summoning:false,counters:0,level:2});window.__cls=cls.uid;U.render();});
+ok('saga shows a chapter badge "II/III"',await pg.evaluate(()=>{const el=document.querySelector(`[data-uid="${window.__saga}"] .ctr.saga`);return !!el&&el.textContent.replace(/\s/g,'')==='II/III'}),await pg.evaluate(()=>{const el=document.querySelector(`[data-uid="${window.__saga}"] .ctr.saga`);return el&&el.textContent}));
+ok('class shows "lvl 2"',await pg.evaluate(()=>{const el=document.querySelector(`[data-uid="${window.__cls}"] .ctr.lvl`);return !!el&&/lvl 2/.test(el.textContent)}));
+const drew=await pg.evaluate(async()=>{const U=GoldfishUI.current,g=U.game,me=U.me;const n=g.log.length;await g.draw(me,2);return g.log.slice(n).map(x=>x.m).find(m=>/draws 2 cards: .+ \(hand \d+\)/.test(m))||g.log.slice(n).map(x=>x.m).join('|')});
+ok('your draws are logged with card names and hand size',/draws 2 cards: .+ \(hand \d+\)/.test(drew),drew);
+console.log('errors',errs);await b.close()})();

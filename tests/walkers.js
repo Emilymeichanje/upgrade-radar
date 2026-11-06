@@ -352,4 +352,28 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    await g.cast(me,m,'hand',null,{x:2}); while(g.stack.length)await g.resolve(); await tick(g);
    ok("March of Swirling Mist: you can phase out two of the opponent's creatures",!opp.battlefield.includes(a1)&&!opp.battlefield.includes(a2)&&me.battlefield.includes(mine),'opp bf '+opp.battlefield.map(b=>b.card.name)+' phased '+(opp.phased||[]).length);
  }
+
+ // ==== v91: Thranduil log — Dionus on any tap, Thranduil's graveyard mana abilities, Fauna Shaman ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   await g.enterPerm(me,tagCard(mk('Dionus, Elvish Archdruid','Legendary Creature — Elf Druid','{3}{G}','Elves you control have "Whenever this creature becomes tapped during your turn, untap it and put a +1/+1 counter on it. This ability triggers only once each turn."',4,'3','3')));
+   const dd=await g.enterPerm(me,tagCard(mk('Devoted Druid','Creature — Elf Druid','{1}{G}',"{T}: Add {G}.\nPut a -1/-1 counter on this creature: Untap this creature.",2,'0','2'))); dd.summoning=false; g.refreshStatics(); me.pool=[];
+   await g.tapForMana(me,dd,'G'); ok('Dionus: tapping an Elf for mana untaps it with a +1/+1 counter (once)',!dd.tapped&&dd.counters===1&&me.pool.length===1,'tapped '+dd.tapped+' counters '+dd.counters);
+   await g.tapForMana(me,dd,'G'); ok('…and the second tap that turn stays tapped',dd.tapped&&dd.counters===1&&me.pool.length===2,'tapped '+dd.tapped);
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const th=await g.enterPerm(me,tagCard(mk('Thranduil, the Elvenking','Legendary Creature — Elf Noble','{2}{B}{G}{U}','Thranduil has all activated abilities of all Elf cards in your graveyard.\nWhenever another legendary Elf you control enters, draw two cards, then discard a card.',5,'3','3'))); th.summoning=false;
+   const dd=tagCard(mk('Devoted Druid','Creature — Elf Druid','{1}{G}',"{T}: Add {G}.\nPut a -1/-1 counter on this creature: Untap this creature.",2,'0','2')); me.graveyard.push(dd); me.pool=[]; th.counters=3;
+   ok('Thranduil taps for {G} with Devoted Druid in the graveyard',g.manaSrcs(me).some(x=>x.b===th&&x.colors.includes('G')),'');
+   await g.tapForMana(me,th,'G'); const u=g.abilityOptions(me,{}).find(o=>o.perm===th&&o.card===dd); if(u){await g.activate(me,u);while(g.stack.length)await g.resolve();}
+   ok("…and Druid's untap (via Thranduil) untaps Thranduil for a -1/-1 counter on Thranduil",!!u&&!th.tapped&&th.counters===2&&me.pool.length===1,'tapped '+th.tapped+' counters '+th.counters);
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let asked=null; g.hooks.humanSearch=async c=>{asked=c;return [c.pool[0]]};
+   const fs=await g.enterPerm(me,tagCard(mk('Fauna Shaman','Creature — Elf Shaman','{G}{G}',"{G}, {T}, Discard a creature card: Search your library for a creature card, reveal it, put it into your hand, then shuffle.",2,'2','2'))); fs.summoning=false;
+   me.hand=[tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')),tagCard(mk('Forest','Basic Land — Forest','','',0))]; me.pool=[{c:'G'}];
+   const o=g.abilityOptions(me,{}).find(x=>x.perm===fs); ok('Fauna Shaman: ability offered with a creature in hand and {G} open',!!o,'');
+   if(o){await g.activate(me,o);while(g.stack.length)await g.resolve();}
+   ok('…discards the creature (not the land) and tutors a creature to hand',!!asked&&!me.hand.some(c=>c.name==='Bear')&&me.hand.some(c=>c.name==='Forest')&&me.hand.some(c=>c.isCreature),'hand '+me.hand.map(c=>c.name));
+   me.hand=[tagCard(mk('Forest','Basic Land — Forest','','',0))]; fs.tapped=false; me.pool=[{c:'G'}];
+   ok('…and is not offered with only a land in hand',!g.abilityOptions(me,{}).some(x=>x.perm===fs),'');
+ }
  console.log(fails+' failed');})();

@@ -52,7 +52,7 @@ function tagLandEntry(card, o) {
   card.etbTapped = !card.shock && !card.reveal && !card.etbCond && /enters (the battlefield )?tapped/.test(o) && !/unless/.test(o);
 }
 // ============================== ABILITIES: triggers, activated abilities, graveyard casting ==============================
-const NUMX = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, ten: 10, thirteen: 13, x: 2 };
+const NUMX = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fifteen: 15, twenty: 20, x: 2 }; // b13: 'twenty' was missing → Hellkite Tyrant won with 1 artifact
 const numOf = s => NUMX[s] || parseInt(s) || 1;
 /** oracle lines (lowercased) that engine code handles directly rather than through the parser; used by coverage audits */
 const HANDLED = [];
@@ -2760,7 +2760,7 @@ class Game {
         if (p.battlefield.some(b => b.card.statics && b.card.statics.labMan && !b.neutral)) { this.say(`— draws from an empty library and wins instead`, p); for (const q of this.opponentsOf(p)) await this.kill(q, `${p.name}'s win-instead effect`); return; }
         await this.kill(p, 'drew from an empty library'); return;
       }
-      p.hand.push(p.library.pop()); drawn++;
+      { const c = p.library.pop(); c.drawnTurn = this.turn; p.hand.push(c); drawn++; } // b13: remember the turn a card was drawn (Sylvan Library)
       for (const e of (p.b12_emblems || []).filter(e => e.kind === 'drawExile')) { const pool = this.oppPerms(p, b => true); const t = p.ai ? [...pool].sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0] : await this.pickPerm(p, { name: e.from + ' emblem' }, pool, { harmful: true }); if (t) { await this.exilePerm(this.ownerOf(t), t); this.say(`— ${e.from} emblem exiles ${t.card.name}`, p); } } // b12
     }
     p.drawsThisTurn += drawn;
@@ -4843,7 +4843,17 @@ class Game {
         case 'bounceAttackers': { const at = (this.curAttackers || []).filter(b => this.ownerOf(b) && this.phase === 'combat'); for (const b of at) await this.bounce(this.ownerOf(b), b, p); this.say(`— returns ${at.length} attacking creature${at.length === 1 ? '' : 's'} to hand`, p); break; }
         case 'drawerLoses': if (ctx.other) await this.changeLife(ctx.other, -op.n, src); break;
         case 'activeDraws': { const a = this.players[this.active]; if (!a.dead) await this.draw(a, op.n); break; }
-        case 'sylvan': { const keep = p.life > 24 ? 2 : p.life > 14 ? 1 : 0; if (!keep) break; await this.draw(p, keep); await this.changeLife(p, -4 * keep, src); this.say(`— draws ${keep} extra and pays ${4 * keep} life`, p); break; }
+        case 'sylvan': { // Sylvan Library: you MAY draw two more; if you do, choose two cards drawn this turn — for each, pay 4 life or put it back on top (b13: it used to force-draw and auto-pay 8)
+          if (p.human && !this.shortcutting) {
+            if (this.hooks.humanChoice) { const ch = await this.hooks.humanChoice({ p, card: src, question: 'Sylvan Library: draw two additional cards? (then put up to two of this turn\'s draws back on top, or pay 4 life each to keep them)', options: ['Draw two more', 'No thanks'] }); if (ch !== 'Draw two more') { this.say('— declines Sylvan Library', p); break; } }
+            const h0 = p.hand.length; await this.draw(p, 2); if (p.hand.length === h0) break;
+            const drawn = p.hand.filter(c => c.drawnTurn === this.turn); const mustChoose = Math.min(2, drawn.length);
+            const r = this.hooks.humanSearch ? await this.hooks.humanSearch({ p, card: src, pool: drawn, n: mustChoose, dest: 'sylvan', upTo: true, must: true }) : null; const back = [].concat(r || []).filter(c => drawn.includes(c)).slice(0, mustChoose);
+            const order = (r && r.keepOrder ? r.keepOrder.filter(c => back.includes(c)) : back); for (const c of [...order].reverse()) { p.hand.splice(p.hand.indexOf(c), 1); p.library.push(c); }
+            const pay = 4 * (mustChoose - back.length); if (pay) await this.changeLife(p, -pay, src);
+            this.say(`— draws 2 extra${back.length ? `, puts ${order.map(c => c.name).join(', ')} back on top` : ''}${pay ? `, pays ${pay} life` : ''}`, p); break; }
+          const keep = p.life > 24 ? 2 : p.life > 14 ? 1 : 0; if (!keep) break; await this.draw(p, 2); const drawn = p.hand.filter(c => c.drawnTurn === this.turn); const back = p.ai ? [...drawn].sort((a, z) => p.ai.castValue(this, p, a) - p.ai.castValue(this, p, z)).slice(0, 2 - keep) : drawn.slice(0, 2 - keep);
+          for (const c of back) { p.hand.splice(p.hand.indexOf(c), 1); p.library.push(c); } await this.changeLife(p, -4 * keep, src); this.say(`— draws 2 extra, keeps ${keep} (pays ${4 * keep} life)${back.length ? `, puts ${back.length} back on top` : ''}`, p); break; }
         case 'modal': {
           const modes = op.modes; let picks = [];
           const chosen = ctx.perm ? (ctx.perm.modeTurn === this.turn ? ctx.perm.modeChosen || [] : []) : [];

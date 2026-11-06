@@ -107,7 +107,7 @@ textarea{width:100%;min-height:220px;background:var(--panel);border:1px solid va
 .missing{border:1px solid var(--bad);border-radius:8px;padding:10px 12px;margin:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--panel)}
 .missing b{color:var(--bad)}
 .brbox{border:1px solid var(--line,var(--soft));border-radius:8px;padding:12px 14px;margin:0 0 12px;background:var(--panel);display:grid;gap:8px}
-.brbox h4{margin:0;font-size:1rem}.brbox .over{color:var(--warn)}
+.brbox h4{margin:0;font-size:1rem}.brbox .brover{color:var(--warn)}
 .brbox table{width:100%;border-collapse:collapse}.brbox td{padding:6px 4px;border-top:1px solid var(--soft);vertical-align:top;font-size:.88rem}
 .brbox td.lv{white-space:nowrap;font-family:var(--mono);font-size:.78rem}.brbox .hi{color:var(--warn);font-weight:600}.brbox .okc{color:var(--good)}
 .brbox ul{margin:4px 0 0;padding-left:18px}.brbox .fix{border-left:3px solid var(--warn);padding:4px 10px;font-size:.88rem}
@@ -316,8 +316,9 @@ function themeRoles(deck){const set=new Set();for(const t of (deck.tags||[]))for
 // ---------- snapshot ----------
 async function loadSnapshot(){
   const r=await fetch('data/snapshot.json');S.snap=await r.json();buildIndex();
-  $('#status').innerHTML=`<span>EDHREC snapshot <b>${esc(S.snap.date)}</b></span><span>Scryfall: live</span><span id="livest">EDHREC live: checking…</span><button class="chip" id="refresh" title="Fetch the latest EDHREC lists and Scryfall cards (new sets, previews)">↻ Refresh data</button><span id="refst"></span>`;
+  $('#status').innerHTML=`<span>EDHREC snapshot <b>${esc(S.snap.date)}</b></span><span>Scryfall: live</span><span id="livest">EDHREC live: checking…</span><button class="chip" id="refresh" title="Fetch the latest EDHREC lists and Scryfall cards (new sets, previews)">↻ Refresh data</button><button class="chip" id="pricego" title="Re-fetch TCGplayer prices for every saved list (otherwise weekly)">↻ Refresh prices</button><span id="refst"></span>`;
   $('#refresh').onclick=refreshData;
+  $('#pricego').onclick=async()=>{const b=$('#pricego');if(b.disabled||P.busy)return;b.disabled=true;b.textContent='↻ pricing…';try{await refreshPrices(true)}finally{b.disabled=false;b.textContent='↻ Refresh prices'}};
 }
 // Refresh: drop every in-memory EDHREC/Scryfall result and refetch past the browser cache, so new sets and EDHREC updates appear without reloading
 async function refreshData(){const b=$('#refresh');if(b.disabled)return;b.disabled=true;$('#refst').textContent='refreshing…';
@@ -592,7 +593,7 @@ function summaryHtml(){const act=active();const withList=act.filter(d=>S.decks[d
      <h4 style="margin-top:10px">Combinations</h4><table>${[...combo].sort((a,b)=>b[1]-a[1]||a[0].length-b[0].length).map(([k,n])=>`<tr><td><span class="pips">${k.split('').map(c=>`<i class="pip ${c}"></i>`).join('')}</span> ${esc(GUILD[k]||k)}</td><td class="r">${n}</td></tr>`).join('')}</table></div>
     <div><h4>Brackets</h4><table>${[['2','Bracket 2'],['3','Bracket 3'],['4','Bracket 4'],['cEDH','cEDH']].map(([b,l])=>`<tr><td>${l}</td><td class="r">${br.get(b)||0}</td></tr>`).join('')}</table>
      ${over.length?`<h4 style="margin-top:10px">Playing above the bracket you set</h4><table>${over.map(([d,s])=>`<tr><td>${esc(d.display||d.name)} <span class="note">set B${esc(s.dec)} → plays B${s.det}</span><div class="note" style="font-size:.76rem">${esc(s.rows.filter(r=>r.lvl>+s.dec).map(r=>r.label+': '+(r.k==='combo'?r.items.map(x=>x[0]+' + '+x[1]).join('; '):r.items.join(', '))).join(' · '))}</div></td></tr>`).join('')}</table><button class="chip sm" id="brapply" style="margin-top:6px">Set all ${over.length} to the bracket they play at</button>`:''}</div>
-    <div class="note" style="grid-column:1/-1">Prices: TCGplayer market via Scryfall, regular printing (no showcase/borderless/promo), non-foil, NM, converted at ${fxNote}. Singapore stores often differ — each card links to <a href="https://gishathfetch.com/" target="_blank" rel="noopener">Gishath Fetch</a> in the deck's list tab. Prices refresh weekly. <button class="chip sm" id="pricego" ${P.busy?'disabled':''}>Refresh prices now</button>${P.err?` <span class="err">${esc(P.err)}</span>`:''}</div>
+    <div class="note" style="grid-column:1/-1">Prices: TCGplayer market via Scryfall, regular printing (no showcase/borderless/promo), non-foil, NM, converted at ${fxNote}. Singapore stores often differ — each card links to <a href="https://gishathfetch.com/" target="_blank" rel="noopener">Gishath Fetch</a> in the deck's list tab. Prices refresh weekly (↻ Refresh prices in the toolbar forces it).${P.err?` <span class="err">${esc(P.err)}</span>`:''}</div>
    </div></details>`}
 
 // ---------- render home ----------
@@ -619,7 +620,7 @@ function renderHome(){
   if(ret.length)h+=`<div class="sect">Retired<small>${ret.length} — dismantled, kept for reference</small></div><div class="grid">${sortDecks(ret).map(deckCard).join('')}</div>`;
   if(!live.length&&!ret.length)h=summaryHtml()+'<div class="empty">No deck matches. Try part of a commander name, a bracket, or colors like "BG".</div>';
   $('#home').innerHTML=h;const sm=$('#sumbox');if(sm){sm.open=!!S.sumOpen;sm.ontoggle=()=>{S.sumOpen=sm.open}}
-  $('#pricego')?.addEventListener('click',()=>refreshPrices(true));
+
   $('#home').querySelectorAll('.deck').forEach(b=>b.onclick=()=>openDeck(b.dataset.slug));
   $('#home').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{openDeck(b.dataset.open).then(()=>{S.tab='list';renderTab()})});
   $('#brapply')?.addEventListener('click',async()=>{for(const d of active()){const a=assessBracket(d);if(a&&a.over)await saveDeck(d.slug,{bracket:a.det})}buildIndex();renderHome()});
@@ -705,7 +706,7 @@ function toggleCheck(open){const p=$('#checkpanel');p.hidden=!open;if(!open)retu
       const missing=rows.filter(r=>r.a.missing),cond=rows.filter(r=>!r.a.missing&&r.a.generic),fine=rows.length-missing.length-cond.length;
       const notFound=[...where.entries()].filter(([k])=>!found.has(k)).map(([,v])=>v.name);
       const li=r=>`<li><b>${esc(r.c.name)}</b> <span class="note">· ${esc(r.decks.join(', '))}</span><ul style="margin:2px 0 6px;padding-left:16px">${r.a.lines.filter(x=>x.status==='missing'||x.status==='generic').map(x=>`<li class="note">${x.status==='missing'?'✗':'?'} ${esc(x.line)}</li>`).join('')}</ul></li>`;
-      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v85',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
+      const flagged=[...missing,...cond];S.checkReport=JSON.stringify({generated:new Date().toISOString(),engine:'v86',cards:flagged.map(r=>[0,r.c.name,r.c.mana,r.c.type,r.c.oracle,r.c.cmc,r.c.power??null,r.c.toughness??null,r.c.loyalty??null,r.a.lines.filter(x=>x.status!=='ok'&&x.status!=='tested').map(x=>(x.status==='missing'?'MISSING ':'COND ')+x.line)]),notFound});
       $('#chkres').innerHTML=`<p><b>${rows.length}</b> cards checked: <b>${fine}</b> fully covered, <b>${cond.length}</b> with a condition unverified, <b>${missing.length}</b> with text not modelled.${notFound.length?` <span class="err">${notFound.length} name${notFound.length===1?'':'s'} not found on Scryfall: ${esc(notFound.join(', '))}</span>`:''}</p>
         ${flagged.length?`<div class="row"><button class="chip pri" id="chkcopy">Copy report for Claude</button><button class="chip" id="chkdl">Download report</button><span class="note" id="chkcopied"></span></div>`:''}
         ${missing.length?`<h4>Not modelled</h4><ul style="padding-left:18px">${missing.map(li).join('')}</ul>`:''}
@@ -729,7 +730,7 @@ function renderBracketBox(d){const el=$('#brbox');if(!el)return;const dk=S.decks
   if(!a){el.innerHTML=`<div class="brbox">${status}</div>`;return}
   const bl=b=>b==='cEDH'?'cEDH':'Bracket '+b+' ('+BR_NAME[b]+')';
   const head=a.dec==='cEDH'?`<h4>cEDH — set by you</h4><div class="note">The counted criteria below can't tell Bracket 4 from cEDH; cEDH is about intent and the competitive meta.</div>`
-    :a.over?`<h4 class="over">Plays as ${bl(a.det)} — you set ${bl(a.dec)}</h4>`
+    :a.over?`<h4 class="brover">Plays as ${bl(a.det)} — you set ${bl(a.dec)}</h4>`
     :a.under?`<h4>${bl(a.dec)} — set by you</h4><div class="note">Nothing counted here forces it above ${bl(a.det)}. You rated it higher, which is right if it wins fast or plays tight; the brackets judge intent and speed too.</div>`
     :`<h4>${bl(a.dec)} — fits</h4>`;
   const item=(r)=>r.k==='combo'?`<ul>${r.items.map(x=>`<li>${esc(x[0])} + ${esc(x[1])} → ${esc(x[3])} <span class="note">${x[2]!=null?'· needs '+x[2]+' mana'+(x[2]<=4?' (early)':''):''} · <a href="https://commanderspellbook.com/combo/${encodeURIComponent(x[4])}/" target="_blank" rel="noopener">Spellbook</a></span></li>`).join('')}</ul>`:`<div>${r.items.map(esc).join(', ')}</div>`;
@@ -859,7 +860,7 @@ function showView(v){const rep=v==='replays';if(rep)v='play';$('#home').hidden=v
   if(rep){if(!location.hash.startsWith('#replays'))history.replaceState(null,'','#replays')}else if(v==='play'){if(!location.hash.startsWith('#playtest'))history.replaceState(null,'','#playtest')}else if(location.hash.startsWith('#playtest')||location.hash.startsWith('#replays'))history.replaceState(null,'',location.pathname+location.search);
   window.scrollTo(0,0)}
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error(src+' failed to load'));document.head.appendChild(s)})}
-let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=85').then(()=>loadScript('playtest-ui.js?v=85'));return ptLoaded}
+let ptLoaded=null;function loadPlaytest(){if(!ptLoaded)ptLoaded=loadScript('playtest.js?v=86').then(()=>loadScript('playtest-ui.js?v=86'));return ptLoaded}
 const PT={cfg:null,table:null};
 /** the saved list as a Moxfield/Archidekt-style visual grid, grouped by type, plus a Playtest-pool check */
 const GRIDCACHE=new Map();
@@ -940,8 +941,11 @@ async function openPlaytest(){
 }
 /** EDHREC popularity (share of decks running a card) for every commander's lists: the AI treats widely played cards as strong */
 function popularityMap(){const m={};for(const c of (S.snap&&S.snap.commanders)||[])for(const v of Object.values(c.lists||{}))for(const x of v){const s=x.p?x.d/x.p:0;if(s>(m[x.n]||0))m[x.n]=s}return m}
+async function staleBuild(){ // b13: a tab left open for hours keeps running an old engine — warn before a game starts on one
+  try{const mine=+(((document.querySelector('script[src*="playtest.js"]')||{}).src||'').match(/v=(\d+)/)||[])[1];const r=await fetch(location.pathname.replace(/[^/]*$/,'')+'index.html',{cache:'no-cache'});if(!r.ok)return null;const live=+((await r.text()).match(/playtest\.js\?v=(\d+)/)||[])[1];return mine&&live&&live>mine?{mine,live}:null}catch(e){return null}}
 async function startGame(cfg){
   const el=$('#play');el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>';
+  { const st=await staleBuild(); if(st){el.innerHTML=`<div class="empty"><b>This tab is running engine v${st.mine}; v${st.live} is deployed.</b><div class="row" style="justify-content:center;margin-top:8px"><button class="chip pri" id="reloadnow">Reload for v${st.live}</button><button class="chip" id="playold">Play on v${st.mine} anyway</button></div></div>`;const go=await new Promise(res=>{$('#reloadnow').onclick=()=>res(true);$('#playold').onclick=()=>res(false)});if(go){location.reload();return}el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>'} }
   if(Goldfish.setPopularity)Goldfish.setPopularity(popularityMap());
   const seats=[],raw=[];const uidBase=Goldfish.uid?Goldfish.uid.get():0;
   for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===cfg.slugs[i]);const list=S.decks[d.slug].list;

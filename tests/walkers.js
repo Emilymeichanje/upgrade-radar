@@ -252,4 +252,57 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    await g.doAction(me,{...o,target:bear}); while(g.stack.length)await g.resolve(); await tick(g);
    ok('Citadel: Mortify from the top paid 3 life and destroyed the Bear',me.life===24&&!g.players[1].battlefield.includes(bear),'life '+me.life+' bear '+g.players[1].battlefield.includes(bear));
  }
+
+ { const g=fresh(); const me=g.players[0];
+   const cv=await g.enterPerm(me,tagCard(mk('Cordial Vampire','Creature — Vampire','{1}{B}','Whenever Cordial Vampire or another creature dies, you may put a +1/+1 counter on each Vampire you control.',2,1,1))); cv.summoning=false;
+   const bear=await g.enterPerm(g.players[1],tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,2,2)));
+   await g.destroy(g.players[1],bear,false); while(g.stack.length)await g.resolve(); await tick(g);
+   ok("Cordial Vampire: 'this or another creature dies' fires when an opponent's creature dies",cv.counters===1,'counters '+cv.counters);
+ }
+
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let asked=null;
+   g.hooks.humanChoice=async c=>{asked=c;return 'Vampire'};
+   me.library.push(tagCard(mk('Gifted Aetherborn','Creature — Aetherborn Vampire','{B}{B}','Deathtouch, lifelink',2,2,3)));
+   const cav=tagCard(mk('Cavern of Souls','Land','',"As Cavern of Souls enters, choose a creature type.\n{T}: Add {C}.\n{T}: Add one mana of any color. Spend this mana only to cast a creature spell of the chosen type, and that spell can't be countered.",0));
+   me.hand.push(cav); await g.playLand(me,cav); await tick(g);
+   const pm=me.battlefield.find(b=>b.card===cav);
+   ok('Cavern of Souls asks you for the creature type on entering',!!asked&&pm&&pm.chosenType==='vampire','asked '+!!asked+' type '+(pm&&pm.chosenType));
+   ok('…and offers a searchable list of every creature type in the deck',!!asked&&Array.isArray(asked.list)&&asked.list.some(x=>/^Elf \(\d+ in deck\)$/.test(x))&&asked.list.some(x=>/^Aetherborn/.test(x)),JSON.stringify(asked&&asked.list));
+   asked=null; g.hooks.humanChoice=async c=>{asked=c;return 'Elf (59 in deck)'};
+   const horn=tagCard(mk("Herald's Horn",'Artifact','{3}',"As Herald's Horn enters, choose a creature type.\nCreature spells you cast of the chosen type cost {1} less to cast.\nAt the beginning of your upkeep, look at the top card of your library. If it's a creature card of the chosen type, you may reveal it and put it into your hand.",3));
+   const hp=await g.enterPerm(me,horn);
+   ok("Herald's Horn: the picked chip label is stripped to the type",!!asked&&hp.chosenType==='elf','type '+hp.chosenType);
+ }
+
+ // ==== v86: every "choose a creature type" card behaves after the choice ====
+ { const T=(n,m,t,o,c,pw,tg)=>tagCard(mk(n,t,m,o,c,pw,tg)); const setup=async()=>{const g=fresh();const me=g.players[0];me.human=true;me.ai=null;g.hooks.humanChoice=async()=>'Elf';g.hooks.humanMay=async()=>true;const elf=await g.enterPerm(me,T('Elf1','{1}{G}','Creature — Elf Warrior','',2,'2','2'));elf.summoning=false;const bear=await g.enterPerm(g.players[1],T('Bear','{1}{G}','Creature — Bear','',2,'2','2'));return {g,me,elf,bear}};
+   { const {g,me,elf}=await setup(); await g.enterPerm(me,T('Brass Herald','{6}','Artifact Creature — Golem',"As Brass Herald enters, choose a creature type.\nWhen Brass Herald enters, reveal the top four cards of your library. Put all creature cards of the chosen type revealed this way into your hand and the rest on the bottom of your library in any order.\nCreatures of the chosen type get +1/+1.",6,'4','4')); g.refreshStatics();
+     const oe=await g.enterPerm(g.players[1],T('OppElf','{1}{G}','Creature — Elf','',2,'2','2')); g.refreshStatics();
+     ok('Brass Herald: +1/+1 to every Elf, yours and theirs',g.powerOf(me,elf)===3&&g.powerOf(g.players[1],oe)===3,g.powerOf(me,elf)+' '+g.powerOf(g.players[1],oe)); }
+   { const {g,me,elf}=await setup(); await g.enterPerm(me,T('Steely Resolve','{1}{G}','Enchantment',"As Steely Resolve enters, choose a creature type.\nCreatures of the chosen type have shroud.",2)); g.refreshStatics();
+     ok('Steely Resolve: Elves have shroud (not targetable)',!g.canTarget(g.players[1],elf,{}),''); }
+   { const {g,me,elf}=await setup(); await g.enterPerm(me,T('Coat of Arms','{5}','Artifact',"Each creature gets +1/+1 for each other creature on the battlefield that shares at least one creature type with it.",5)); await g.enterPerm(me,T('Elf3','{1}{G}','Creature — Elf Warrior','',2,'2','2')); await g.enterPerm(g.players[2],T('Elf4','{1}{G}','Creature — Elf','',2,'2','2')); g.refreshStatics();
+     ok('Coat of Arms: an Elf with two other Elves on the table (any owner) is +2/+2',g.powerOf(me,elf)===4,'power '+g.powerOf(me,elf)); }
+   { const {g,me,elf,bear}=await setup(); const cf=T('Crippling Fear','{2}{B}{B}','Sorcery',"Choose a creature type. Creatures that aren't of the chosen type get -3/-3 until end of turn.",4); me.hand.push(cf); me.pool=Array(14).fill(0).map((_,i)=>({c:'WUBRGC'[i%6]})); await g.cast(me,cf,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+     ok('Crippling Fear: you name Elf, the Bear dies, the Elf lives',!g.players[1].battlefield.includes(bear)&&me.battlefield.includes(elf),''); }
+   { const {g,me}=await setup(); me.graveyard.push(T('Elf2','{1}{G}','Creature — Elf Warrior','',2,'2','2')); g.players[1].graveyard.push(T('Bear2','{1}{G}','Creature — Bear','',2,'2','2')); const pb=T("Patriarch's Bidding",'{3}{B}{B}','Sorcery',"Each player chooses a creature type. Each player returns all creature cards of a type chosen this way from their graveyard to the battlefield.",5); me.hand.push(pb); me.pool=Array(14).fill(0).map((_,i)=>({c:'WUBRGC'[i%6]})); await g.cast(me,pb,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+     ok("Patriarch's Bidding: your Elf and the opponent's Bear both come back",me.battlefield.some(b=>b.card.name==='Elf2')&&g.players[1].battlefield.some(b=>b.card.name==='Bear2'),''); }
+   { const {g,me,elf}=await setup(); await g.enterPerm(me,T('Door of Destinies','{4}','Artifact',"As Door of Destinies enters, choose a creature type.\nWhenever you cast a spell of the chosen type, put a charge counter on Door of Destinies.\nCreatures you control of the chosen type get +1/+1 for each charge counter on Door of Destinies.",4)); const e2=T('Elf2','{1}{G}','Creature — Elf Warrior','',2,'2','2'); me.hand.push(e2); me.pool=[{c:'G'},{c:'G'},{c:'G'}]; await g.cast(me,e2,'hand'); while(g.stack.length)await g.resolve(); await tick(g); g.refreshStatics();
+     ok('Door of Destinies: casting an Elf adds a charge counter and pumps Elves',g.powerOf(me,elf)===3,'power '+g.powerOf(me,elf)); }
+   { const {g,me}=await setup(); await g.enterPerm(me,T('Reflections of Littjara','{4}{U}','Enchantment',"As Reflections of Littjara enters, choose a creature type.\nWhenever you cast a spell of the chosen type, copy that spell. (A copy of a permanent spell becomes a token.)",5)); const e2=T('Elf2','{1}{G}','Creature — Elf Warrior','',2,'2','2'); me.hand.push(e2); me.pool=[{c:'G'},{c:'G'},{c:'G'}]; await g.cast(me,e2,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+     ok('Reflections of Littjara: an Elf spell is copied (two Elf2s)',me.battlefield.filter(b=>b.card.name==='Elf2').length===2,String(me.battlefield.filter(b=>b.card.name==='Elf2').length)); }
+   { const {g,me}=await setup(); await g.enterPerm(me,T('Metallic Mimic','{2}','Artifact Creature — Shapeshifter',"As Metallic Mimic enters, choose a creature type.\nMetallic Mimic is the chosen type in addition to its other types.\nEach other creature you control of the chosen type enters the battlefield with an additional +1/+1 counter on it.",2,'2','1')); const e2=await g.enterPerm(me,T('Elf2','{1}{G}','Creature — Elf Warrior','',2,'2','2'));
+     ok('Metallic Mimic: the next Elf enters with a +1/+1 counter',(e2.counters||0)===1,'counters '+e2.counters); }
+ }
+
+ { const g=fresh(); const ai=g.players[1]; const me=g.players[0];
+   const god=await g.enterPerm(me,tagCard(mk('Xenagos, God of Revels','Legendary Enchantment Creature — God','{3}{R}{G}','Indestructible\nAs long as your devotion to red and green is less than seven, Xenagos isn\'t a creature.\nAt the beginning of combat on your turn, another target creature you control gains haste and gets +X/+X until end of turn, where X is that creature\'s power.',5,'6','5')));
+   const bear=await g.enterPerm(me,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')));
+   const gift=tagCard(mk('Generous Gift','Instant','{2}{W}','Destroy target permanent. Its controller creates a 3/3 green Elephant creature token.',3));
+   const t=ai.ai.bestTarget(g,ai,g.aiRmOk(gift,b=>!b.card.isLand));
+   ok("AI won't aim Generous Gift at an indestructible God when a Bear is available",t&&t.perm===bear,t&&t.perm.card.name);
+ }
+ { const g=fresh(); const ai=g.players[1]; ai.life=2; const tomb=await g.enterPerm(ai,tagCard(mk('Ancient Tomb','Land','',"{T}: Add {C}{C}. Ancient Tomb deals 2 damage to you.",0)));
+   ok("AI at 2 life doesn't count Ancient Tomb as a mana source",!g.manaSrcs(ai).some(x=>x.b===tomb),'');
+   ai.life=10; ok('…but does at 10 life',g.manaSrcs(ai).some(x=>x.b===tomb),''); }
  console.log(fails+' failed');})();

@@ -19,7 +19,10 @@ const TOKART = { cache: (() => { try { return JSON.parse(localStorage.getItem('p
 function tokKey(c) { return [c.name, c.isCreature ? (c.power ?? '') + '/' + (c.toughness ?? '') : '', (c.colors || []).join('')].join('|'); }
 function tokQueries(c) {
   const nm = '!"' + c.name.replace(/"/g, '') + '"', pt = c.isCreature && c.power != null ? ` pow=${c.power} tou=${c.toughness}` : '', col = (c.colors || []).length ? ' c=' + c.colors.join('').toLowerCase() : (c.isCreature ? ' c=c' : '');
-  const q = [`t:token ${nm}${pt}${col}`, `t:token ${nm}${pt}`, `t:token ${nm}`, `t:token name:"${c.name.replace(/"/g, '')}"`];
+  // b13: match the printed abilities too — a plain 1/1 black Vampire was getting the lifelink printing's art and text
+  const KW = ['flying', 'lifelink', 'deathtouch', 'haste', 'vigilance', 'menace', 'trample', 'first strike', 'double strike', 'hexproof', 'indestructible', 'reach'];
+  const has = new Set((c.kw || []).map(k => k.toLowerCase())); const kwq = c.isCreature ? ' ' + KW.map(k => (has.has(k) ? '' : '-') + 'kw:"' + k + '"').join(' ') : '';
+  const q = [`t:token ${nm}${pt}${col}${kwq}`, `t:token ${nm}${pt}${col}`, `t:token ${nm}${pt}`, `t:token ${nm}`, `t:token name:"${c.name.replace(/"/g, '')}"`];
   return [...new Set(q)];
 }
 async function tokLookup(c) {

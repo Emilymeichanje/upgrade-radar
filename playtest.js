@@ -338,7 +338,7 @@ function parseOps(t) {
   if ((m = t.match(/(?:^|\. )(non-human|non-[a-z]+|[a-z]+) creatures you control get \+(\d+)\/\+(\d+)(?: and gain ([a-z ,]+))? until end of turn/)) && !/^(other|all|attacking|tapped|untapped)$/.test(m[1])) ops.push({ op: 'pumpFilter', filter: m[1], p: +m[2], t: +m[3], kw: m[4] ? m[4].split(/,? and |, /)[0] : null });
   else if ((m = t.match(/creatures you control (?:gain [a-z ,]+ and )?get \+(\d+|x)\/\+(\d+|x)(?: and gain ([a-z ,]+))? until end of turn(?:, where x is the number of creatures you control)?/))) ops.push({ op: 'pumpAll', n: m[1] === 'x' ? 'creatures' : +m[1], kws: KW.filter(k => (m[3] || t).includes(k) && /gain/.test(t)) });
   if ((m = t.match(/creatures your opponents control get -(\d+)\/-(\d+) until end of turn/))) ops.push({ op: 'shrinkOpp', n: +m[2] });
-  if ((m = t.match(/(destroy|exile) all (artifacts|enchantments|creatures with mana value (\d+) or less|creatures with mana value (\d+) or greater|creatures with power (\d+) or greater|nontoken creatures|creatures|planeswalkers)/)) && !/destroy all creatures\.|exile all creatures\./.test(t)) ops.push({ op: 'destroyAll', how: m[1], what: m[2] });
+  if ((m = t.match(/(destroy|exile) all (artifacts|enchantments|creatures with mana value (\d+) or less|creatures with mana value (\d+) or greater|creatures with power (\d+) or greater|nontoken creatures|creatures|planeswalkers)/)) && !/destroy all creatures\./.test(t)) ops.push({ op: 'destroyAll', how: m[1], what: m[2] }); // b13: 'exile all creatures' is an op too (Farewell's mode used the destroy path → dies triggers)
   if (/you may play an additional land this turn/.test(t)) ops.push({ op: 'extraLandTurn' });
   if (/you gain protection from everything until your next turn/.test(t)) ops.push({ op: 'playerProt' });
   if ((m = t.match(/(each opponent|target opponent|target player|each player|each other player) sacrifices (a|an|one|two|three) (nontoken creature|creature token)/))) ops.push({ op: 'edict', who: m[1], n: numOf(m[2]), what: 'creature', nontoken: m[3] === 'nontoken creature' });
@@ -734,6 +734,7 @@ function tagAbilities(card) {
     if (/^(i|ii|iii|iv|v|vi)(, (i|ii|iii|iv|v|vi))* — /.test(raw)) continue; // saga chapters are handled by tagSaga
     l = raw.replace(/^[a-z' ]+ — (?=[{a-z])/, s => /^(landfall|addendum|renew|adamant|grand summon|max speed|raid|ronso rage|blitzball captain|medicus ministorum|mold earth|lieutenant|time lord's prerogative|dualcast|battalion|strive|treasure hunter|hero's sundering|enthralling performance|shooting star|cheer|steal|unlock ability|the will of the hive mind|flashback|escape|unearth|cycling|embalm|eternalize|scavenge|metalcraft|imprint) — $/.test(s) ? s : ''); // drop ability words like "Raid — "
     let m;
+    if (/^whenever you attack, target attacking vampire that isn't a demon becomes a demon in addition to its other types\. it gains "when this (?:creature|card) dies, draw a card and create a tapped 4\/3 white and black vampire demon creature token with flying\."?/.test(l)) { TR('attack', [{ op: 'b13_clavileno' }], { who: 'you' }); continue; } // b13: Clavileño, First of the Blessed (the generic attack rule was making the token immediately)
     // ==== fixes b1 (parse) ====
     if (/^choose any number of target opponents\. create x 1\/1 white human soldier creature tokens, where x is the number of creatures those opponents control/.test(l)) { card.spellOpsX = [{ op: 'b1_coppercoats' }]; continue; }
     if (/^\{t\}: draw a card\. activate only if you created a token this turn\.?$/.test(l)) { AB('', [{ op: 'draw', n: 1 }], { tap: true, reqAb: 'madeToken' }); continue; }
@@ -2423,7 +2424,7 @@ function tagCard(c) {
   const isPerm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
   if (isPerm && r.includes('removal') && !(card.statics && card.statics.auraNeutralize)) { // b13: a permanent is cast-time removal only when the destroy/exile/damage text is its own ETB (Shriekmaw, O-Ring) — not when it sits in a "whenever" trigger (Aura Shards, The Tarrasque) or an activated ability (Hopeful Initiate, Venat)
     const RM = /destroy (?:another |up to one )?target|exile target (creature|permanent|nonland|artifact|enchantment)|deals? \d+ damage to (any target|target creature)|fight|target creature gets -\d\/-\d|return target (creature|nonland permanent)( you don't control| an opponent controls)? to its owner|shuffles it into (its|their) library|on the bottom of (its|their) owner's library/;
-    const ok = o.split('\n').some(l => { const i = l.search(RM); if (i < 0) return false; if (/^(whenever|at the beginning)/.test(l)) return false; if (/:/.test(l.slice(0, i)) && !/^when /.test(l)) return false; return true; });
+    const ok = o.split('\n').some(l => { const i = l.search(RM); if (i < 0) return false; if (/^(whenever|at the beginning)/.test(l)) return false; if (/:/.test(l.slice(0, i)) && !/^when /.test(l)) return false; if (/you may (sacrifice|pay|discard)[^.]*\. (when|if) you do/.test(l)) return false; /* Ruthless Lawbringer: optional cost, handled by its ETB op */ return true; });
     if (!ok) r.splice(r.indexOf('removal'), 1);
   }
   if (isPerm && r.includes('removal') && card.etbOps && card.etbOps.some(x => x.op === 'damage' && /target/.test(x.to || ''))) r.splice(r.indexOf('removal'), 1); // b13: Annie Joins Up — ETB damage is the removal; the cast-time removal path was a second 5 damage
@@ -3334,7 +3335,10 @@ class Game {
     const src = zone === 'cmd' ? p.command : zone === 'gy' ? p.graveyard : p.hand; const i = src.indexOf(card); if (i < 0) return null;
     src.splice(i, 1);
     if (zone === 'gy') { const gc = this.gyGrant(p, card); obj_gc = gc;
-      if (gc.sacLand) { p.broodTurn = this.turn; const pool = p.battlefield.filter(b => b.card.isLand).sort((a, z) => (z.tapped - a.tapped)); if (pool[0]) { this.say(`— sacrifices ${pool[0].card.name} (Exploration Broodship)`, p); await this.sacrifice(p, pool[0]); } }
+      if (gc.sacLand) { const pool = p.battlefield.filter(b => b.card.isLand).sort((a, z) => (z.tapped - a.tapped)); const land = pool[0];
+        if (!land) { src.splice(Math.min(i, src.length), 0, card); return null; }
+        { const k = p.battlefield.indexOf(land); p.battlefield.splice(k, 1); const ok = mode === 'free' || this.canPayCost(p, this.costOf(p, card, 'gy')); p.battlefield.splice(k, 0, land); if (!ok) { src.splice(Math.min(i, src.length), 0, card); this.say(`— can't afford ${card.name} once a land is sacrificed; not cast`, p); return null; } } // b13: Hearthhull was sacrificing a land and then failing to pay (land gone, spell back in the yard)
+        p.broodTurn = this.turn; this.say(`— sacrifices ${land.card.name} (Exploration Broodship)`, p); await this.sacrifice(p, land); }
       if (gc.sacCreatures) { const pool = p.battlefield.filter(b => b.card.isCreature).sort((a, b) => (b.card.token - a.card.token) || (p.ai ? p.ai.permBase(a) - p.ai.permBase(b) : 0)).slice(0, gc.sacCreatures); for (const v of pool) await this.sacrifice(p, v); }
       if (gc.tapReduce) { const c = p.battlefield.filter(b => b.card.isCreature && !b.tapped).sort((a, b) => this.powerOf(p, b) - this.powerOf(p, a))[0]; if (c) c.tapped = true; }
       if (gc.exileOthers) { const others = p.graveyard.filter(c => c !== card).sort((a, b) => a.cmc - b.cmc).slice(0, gc.exileOthers); for (const c of others) { p.graveyard.splice(p.graveyard.indexOf(c), 1); p.exile.push(c); } }
@@ -4291,7 +4295,7 @@ class Game {
     if (card.roles.includes('wipe')) {
       if (card.b1_wipeSnap) spell.b1_snap = p.battlefield.filter(b => b.card.isCreature && !b.card.token);
       await this.emit({ type: 'wipe', p, card });
-      const hit = this.wipeHits(card, p); const exileOp = (card.spellOps || []).some(op => op.op === 'destroyAll' && op.how === 'exile' && /creature/.test(op.what || ''));
+      const hit = this.wipeHits(card, p); const exileOp = (card.spellOps || []).some(op => op.op === 'destroyAll' && op.how === 'exile' && /creature/.test(op.what || '')) || !!(card.modes && card.modes.length); // b13: a modal wipe (Farewell) resolves through its chosen modes — the generic path was ALSO destroying creatures, so 'exile all creatures' fired dies triggers
       if (!exileOp) for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn && hit(b, q))) await this.destroy(q, b, true);
       if (!exileOp) this.say(hit.all ? `— board wiped` : `— destroys ${hit.desc}`, p);
       for (const q of this.alive()) if (q.battlefield.some(x => x.card.isCreature && x.protTurn === this.turn)) this.say(`— ${q.name}'s creatures survive (protected)`, p);
@@ -4498,6 +4502,7 @@ class Game {
     if (dead.hofriCard) { const c = dead.hofriCard; const i = owner.exile.indexOf(c); if (i >= 0) { owner.exile.splice(i, 1); owner.graveyard.push(c); } }
     if (perm.blitzed) { this.say(`— ${dead.name} (blitz): draws a card`, owner); await this.draw(owner, 1); }
     if (perm.b7_heroic === this.turn) await this.b7_heroicDies(owner, perm);
+    if (perm.clavDemon && perm.card.isCreature) { this.say(`— ${perm.card.name} (Clavileño's Demon) dies: draw a card and a tapped 4/3 Vampire Demon`, owner); await this.draw(owner, 1); await this.runOps(owner, [{ op: 'tokens', n: 1, pt: [4, 3], kw: ['flying'], tapped: true, types: 'Vampire Demon', tcolors: ['W', 'B'] }], perm.clavDemon, {}); } // b13: Clavileño's granted dies ability
     if (perm.paragon) { const c = dead.orig || dead; const i = owner.graveyard.indexOf(c); if (i >= 0) { owner.graveyard.splice(i, 1); owner.exile.push(c); } await this.changeLife(owner, 2, dead); }
     // the creature's own "when this dies" trigger
     for (const tr of dead.triggers || []) if (tr.when === 'dies' && (tr.zone === 'self' || tr.self)) {
@@ -5365,6 +5370,9 @@ class Game {
         case 'skrelv': { const pool = p.battlefield.filter(b => b.card.isCreature && b !== ctx.perm); const t = p.ai ? [...pool].sort((a, z) => this.powerOf(p, z) - this.powerOf(p, a))[0] : await this.pickPerm(p, src, pool, {}); if (!t) break; const cnt = {}; for (const q of this.opponentsOf(p)) for (const b of q.battlefield.filter(b => b.card.isCreature)) for (const c of b.card.colors || []) cnt[c] = (cnt[c] || 0) + 1; const col = Object.entries(cnt).sort((a, z) => z[1] - a[1])[0]; const c = col ? col[0] : 'W'; t.toxicTurn = this.turn; t.toxicN = 1; t.protColor = { turn: this.turn, c }; this.refreshStatics(); this.say(`— ${t.card.name} gains toxic 1 and protection from ${c}`, p); break; }
         case 'teferisProtection': { p.lifeLockUntil = (p.turnCount || 0) + 1; p.protAllUntil = (p.turnCount || 0) + 1; await this.phaseOut(p, p.battlefield.slice()); this.say(`— ${p.name}'s life total can't change and they have protection from everything until their next turn`, p); break; }
         case 'komaChoice': { const me = ctx.perm; const threatened = me && this.stack.some(o => o.kind !== 'ability' && o.caster !== p && (o.target === me || o.card.roles.includes('wipe'))); let ind = threatened; if (p.human) ind = !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: src, question: 'Koma gains indestructible? (No = tap target permanent)' })); if (ind && me) { me.indestructibleTurn = this.turn; this.refreshStatics(); this.say(`— ${src.name} gains indestructible until end of turn`, p); } else { const pool = this.oppPerms(p, b => !b.tapped); const t = p.ai ? [...pool].sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0] : await this.pickPerm(p, src, pool, { harmful: true }); if (t) { t.tapped = true; t.noAbilitiesTurn = this.turn; this.say(`— taps ${t.card.name}; its activated abilities can't be activated this turn`, p); } } break; }
+        case 'b13_clavileno': { const pool = (this.curAttackers || []).filter(b => p.battlefield.includes(b) && matchesFilter(b.card, 'vampire') && !/\bDemon\b/.test(b.card.type) && !b.clavDemon); if (!pool.length) { this.say('— no attacking Vampire to bless', p); break; }
+          const t = p.ai ? [...pool].sort((a, z) => (this.toughOf(p, a) - this.toughOf(p, z)) || (this.powerOf(p, z) - this.powerOf(p, a)))[0] : await this.pickPerm(p, src, pool, { dest: 'target' }); if (!t) break;
+          t.card.type = t.card.type + ' Demon'; t.clavDemon = src; this.say(`— ${t.card.name} becomes a Demon; when it dies, draw a card and create a tapped 4/3 flying Vampire Demon`, p); break; }
         case 'b13_bridge': { const rest = []; let hit = null; while (p.library.length) { const c = p.library.pop(); if (c.isCreature || c.isPlaneswalker) { hit = c; break; } rest.push(c); }
           shuffle(rest, this.rng); p.library.unshift(...rest); if (rest.length) this.say(`— reveals ${rest.length} card${rest.length === 1 ? '' : 's'} (to the bottom)`, p);
           if (hit) { this.say(`— The Prismatic Bridge puts ${hit.name} onto the battlefield`, p); const pm = await this.enterPerm(p, hit); if (pm) { if (pm.card.etbOps) await this.trigger(p, pm, pm.card.etbOps, { perm: pm }, 'ETB'); if (pm.card.isCreature) await this.creatureEntered(p, pm); await this.permEntered(p, pm); if (pm.card.isPlaneswalker) pm.loyalty = this.counterAmt(p, pm.card.startLoyalty || 0); } } break; }
@@ -7718,6 +7726,7 @@ class AI {
       case 'scry': case 'surveil': v += 0.5 * (op.n || 1); break;
       case 'b13_handToTop': v -= 0.8 * (op.n || 1); break;
       case 'b13_bridge': v += 6; break;
+      case 'b13_clavileno': v += 3; break;
       case 'b13_pumpBite': { const best = Math.max(0, ...me.battlefield.filter(b => b.card.isCreature).map(b => game.powerOf(me, b))); v += best >= 2 ? 5 : 0; break; }
       case 'b13_tapAllOf': { const best = Math.max(0, ...game.opponentsOf(me).map(q => q.battlefield.filter(b => b.card.isCreature && !b.tapped).length)); v += (game.players[game.active] === me && (game.phase === 'main1' || game.phase === 'beginCombat') ? 1.5 : 0.4) * best; break; }
       case 'b13_anyGyToHand': v += me.graveyard.length ? 2 : 0.3; break;

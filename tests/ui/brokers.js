@@ -1,0 +1,16 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const pg=await b.newPage({viewport:{width:1500,height:1000}});const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
+await pg.goto('file://'+__dirname+'/rec.html');await pg.evaluate(()=>{Math.random=Goldfish.mulberry(5);boot()});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.click('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy&&!GoldfishUI.current.prompt,null,{timeout:60000});
+await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me;const {tagCard}=Goldfish;me.battlefield=me.battlefield.filter(b=>!b.card.isCreature);me.hand.push(tagCard({name:'Brokers Charm',mana:'{G}{W}{U}',type:'Instant',cmc:3,oracle:'Choose one —\n• Target creature you control gets +1/+0 until end of turn. It deals damage equal to its power to target creature or planeswalker an opponent controls.\n• Destroy target enchantment.\n• Draw two cards.'}));me.pool=['G','W','U'].map(c=>({c}));window.__h=me.hand.length;U.render()});
+const uid=await pg.evaluate(()=>GoldfishUI.current.me.hand.find(c=>c.name==='Brokers Charm').uid);
+await pg.click(`.hand [data-uid="${uid}"], [data-uid="${uid}"]`);
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;if(U.mode&&U.mode.kind==='target')return 'target';const P=U.prompt;return P&&P.kind==='modes'?'modes':false},null,{timeout:15000}).catch(()=>{});
+const st=await pg.evaluate(()=>({mode:GoldfishUI.current.mode&&GoldfishUI.current.mode.kind,prompt:GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind}));
+ok('clicking Brokers Charm with no creature opens the MODE prompt, not a target prompt',st.prompt==='modes'&&!st.mode,JSON.stringify(st));
+await pg.evaluate(()=>{const P=GoldfishUI.current.prompt;const m=P.modes.find(m=>/draw two/i.test(m.text));P.res([m.card])});
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;if(U.prompt&&U.prompt.kind==='priority'){U.prompt.res(null);return false}return !U.busy&&!U.prompt},null,{timeout:15000});
+ok('…and "Draw two cards" resolves (+2 cards, Charm gone)',await pg.evaluate(()=>GoldfishUI.current.me.hand.length===window.__h+1&&!GoldfishUI.current.me.hand.some(c=>c.name==='Brokers Charm')));
+console.log('errors',errs);await b.close()})();

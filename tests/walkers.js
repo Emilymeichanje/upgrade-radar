@@ -192,4 +192,10 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const nh={id:2,card:tagCard({name:'Noble Hierarch',type:'Creature — Human Druid',mana:'{G}',cmc:1,power:0,toughness:1,oracle:'Exalted\n{T}: Add {G}, {W}, or {U}.'}),tapped:false,summoning:false,counters:0};a.battlefield.push(nh);
    const fl=tagCard({name:'Flowering of the White Tree',type:'Legendary Enchantment',mana:'{W}{W}',cmc:2,oracle:'Legendary creatures you control get +2/+1 and have ward {1}.\nNonlegendary creatures you control get +1/+1.'});a.hand.push(fl);
    ok('Noble Hierarch counts as a W source: {W}{W} payable with Plains + Hierarch',nh.card.manaAb&&nh.card.manaAb.colors.join('')==='GWU'&&g.canPayCost(a,g.costOf(a,fl,'hand')),JSON.stringify(nh.card.manaAb)); }
+ // ---- Brokers Charm / modal targeting at resolution
+ { const g=fresh();const [a,b]=g.players;a.ai=null;a.human=true;const bear=await g.enterPerm(b,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,3,3)));const kn=await g.enterPerm(a,tagCard(mk('Knight','Creature — Knight','{1}{W}','',2,2,2)));
+   const BC={name:'Brokers Charm',mana:'{G}{W}{U}',type:'Instant',cmc:3,oracle:'Choose one —\n• Target creature you control gets +1/+0 until end of turn. It deals damage equal to its power to target creature or planeswalker an opponent controls.\n• Destroy target enchantment.\n• Draw two cards.'};
+   g.hooks.humanModes=async o=>[o.modes[0].card];g.hooks.humanSearch=async o=>o.pool.slice(0,1);a.hand.push(tagCard(BC));a.pool=['G','W','U'].map(c=>({c}));await g.cast(a,a.hand[a.hand.length-1],'hand',null);await tick(g);
+   ok('Brokers Charm mode 1: +1/+0 once, then bites for its power (3/3 Bear dies)',!b.battlefield.includes(bear)&&g.powerOf(a,kn)===3,'bear alive '+b.battlefield.includes(bear)+' power '+g.powerOf(a,kn));
+   g.hooks.humanModes=async o=>[o.modes[2].card];const h0=a.hand.length;a.hand.push(tagCard(BC));a.pool=['G','W','U'].map(c=>({c}));await g.cast(a,a.hand[a.hand.length-1],'hand',null);await tick(g);ok('…mode 3 draws two',a.hand.length===h0+2,'hand '+h0+'→'+a.hand.length); }
  console.log(fails+' failed');})();

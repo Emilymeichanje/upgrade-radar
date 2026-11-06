@@ -2415,6 +2415,11 @@ function tagCard(c) {
   if (card.isCreature && card.spellOps === null && card.etbOps && card.etbOps.some(o => o.op === 'gearhulk')) card.roles = card.roles.filter(r => r !== 'draw');
   // numbers applied when the card resolves: spells use their text minus triggered/activated lines; permanents use etbOps instead
   const isPerm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
+  if (isPerm && r.includes('removal') && !(card.statics && card.statics.auraNeutralize)) { // b13: a permanent is cast-time removal only when the destroy/exile/damage text is its own ETB (Shriekmaw, O-Ring) — not when it sits in a "whenever" trigger (Aura Shards, The Tarrasque) or an activated ability (Hopeful Initiate, Venat)
+    const RM = /destroy (?:another |up to one )?target|exile target (creature|permanent|nonland|artifact|enchantment)|deals? \d+ damage to (any target|target creature)|fight|target creature gets -\d\/-\d|return target (creature|nonland permanent)( you don't control| an opponent controls)? to its owner|shuffles it into (its|their) library|on the bottom of (its|their) owner's library/;
+    const ok = o.split('\n').some(l => { const i = l.search(RM); if (i < 0) return false; if (/^(whenever|at the beginning)/.test(l)) return false; if (/:/.test(l.slice(0, i)) && !/^when /.test(l)) return false; return true; });
+    if (!ok) r.splice(r.indexOf('removal'), 1);
+  }
   if (isPerm && r.includes('removal') && card.etbOps && card.etbOps.some(x => x.op === 'damage' && /target/.test(x.to || ''))) r.splice(r.indexOf('removal'), 1); // b13: Annie Joins Up — ETB damage is the removal; the cast-time removal path was a second 5 damage
   const res = isPerm ? '' : o.split('\n').filter(l => !/^(at the beginning(?! of your next upkeep)|whenever|when )/.test(l) && !/^[^:"]+: /.test(l) && !/^(flashback|cycling|escape|jump-start|addendum)/.test(l)).join('\n');
   card.freeCmd = /if you control a commander, you may cast this spell without paying its mana cost/.test(o);
@@ -7817,9 +7822,10 @@ class AI {
     if (this.expert && this.params().home === 'none') pool = sorted;
     if (this.expert && this.params().home === 'model' && !lethalOn.length) { const home = this.expertHome(game, me, attackers); pool = sorted.filter(a => !home.has(a)); }
     const going = pool.filter(a => {
-      if (this.level === 'casual' || lethalOn.length || lateGame) return true;
       const evasive = a.card.kw.some(k => EVASIVE.includes(k));
       const eats = primary.blockers.filter(b => game.canBlock(b, a) && game.powerOf(primary.q, b) >= game.toughOf(me, a) && game.toughOf(primary.q, b) > game.powerOf(me, a)).length;
+      if (this.level === 'casual' || lethalOn.length) return true;
+      if (lateGame) return !((a.card.orig || a.card).isCommander && eats > 0 && !evasive && !a.card.kw.includes('indestructible')); // b13: "ahead" still shouldn't walk the commander into a blocker that kills it for free
       return evasive || a.card.kw.includes('indestructible') || eats === 0 || n++ >= primary.blockers.length;
     });
     if (!going.length || !primary) return [];

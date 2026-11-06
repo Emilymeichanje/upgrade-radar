@@ -145,4 +145,13 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
  { const g=fresh();const [a,b]=g.players;const x=await g.enterPerm(b,tagCard(mk('Ox','Creature — Ox','{3}','',3,2,4)));const y=await g.enterPerm(b,tagCard(mk('Yak','Creature — Yak','{3}','',3,2,4)));
    await cast(g,a,tagCard({name:'Annie Joins Up',mana:'{1}{R}{G}{W}',type:'Legendary Enchantment',cmc:4,oracle:'When Annie Joins Up enters, it deals 5 damage to target creature or planeswalker an opponent controls.\nIf a triggered ability of a legendary creature you control triggers, that ability triggers an additional time.'}));
    ok('Annie Joins Up deals its 5 damage once (one creature dies, not two)',[x,y].filter(v=>b.battlefield.includes(v)).length===1,'alive '+[x,y].filter(v=>b.battlefield.includes(v)).length); }
+ // ---- b13: permanents with removal text only in triggers/activations are not cast-time removal; commander won't suicide when 'ahead'
+ { const g=fresh();const [a,b]=g.players;const clamp=await g.enterPerm(b,tagCard(mk('Skullclamp','Artifact — Equipment','{1}','Equipped creature gets +1/-1.',1)));
+   await cast(g,a,tagCard({name:'Aura Shards',type:'Enchantment',mana:'{1}{G}{W}',cmc:3,oracle:'Whenever a creature you control enters, you may destroy target artifact or enchantment.'}));
+   ok('Aura Shards does nothing on cast (Skullclamp survives)',b.battlefield.includes(clamp));
+   await cast(g,a,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,2,2)));await tick(g);ok('…but a creature entering lets it destroy the artifact',!b.battlefield.includes(clamp),'clamp alive '+b.battlefield.includes(clamp)); }
+ { const g=fresh();const [a,b]=g.players;const cm=a.battlefield.find(x=>x.card.isCommander)||await g.enterPerm(a,Object.assign(tagCard(mk('Cmdr2','Legendary Creature — X','{2}','',2,2,3)),{isCommander:true}));cm.card.isCommander=true;cm.summoning=false;
+   for(let i=0;i<3;i++){const t=await g.enterPerm(a,tagCard(mk('Brute '+i,'Creature — Ogre','{3}','',3,4,4)));t.summoning=false;}
+   const wall=await g.enterPerm(b,tagCard(mk('Wall','Creature — Wall','{2}','',2,3,5)));wall.summoning=false;g.round=4;
+   const as=a.ai.chooseAttacks(g,a);ok("'ahead' AI attacks with the team but keeps a commander that would die to the 3/5 home",as.length>=3&&!as.some(x=>x.attacker===cm),as.map(x=>x.attacker.card.name).join(',')); }
  console.log(fails+' failed');})();

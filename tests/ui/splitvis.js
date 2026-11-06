@@ -1,0 +1,23 @@
+// split attacks: colour-coded badges, per-seat incoming banner, summary
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const pg=await b.newPage({viewport:{width:1500,height:1000}});const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
+await pg.goto('file://'+__dirname+'/rec.html');await pg.evaluate(()=>{Math.random=Goldfish.mulberry(5);boot()});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.click('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy&&!GoldfishUI.current.prompt,null,{timeout:60000});
+await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me;const {tagCard}=Goldfish;for(let i=0;i<3;i++)me.battlefield.push({id:95000+i,card:tagCard({name:'Knight '+i,type:'Creature — Knight',mana:'{2}{W}',cmc:3,power:3+i,toughness:3,oracle:''}),tapped:false,summoning:false,counters:0});U.render()});
+await pg.click('[data-act=attack]');await pg.waitForSelector('[data-act=def]');
+const opp=await pg.evaluate(()=>GoldfishUI.current.game.opponentsOf(GoldfishUI.current.me).map(q=>q.i));
+await pg.click(`[data-act=def][data-p="${opp[0]}"]`);await pg.click('[data-uid] .gc[data-id="95000"], .gc[data-id="95000"]').catch(()=>{});
+await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me,g=U.game;const [o1,o2]=g.opponentsOf(me);const k=i=>me.battlefield.find(b=>b.id===95000+i);U.mode.map.set(k(0),o1);U.mode.map.set(k(1),o2);U.mode.map.set(k(2),o2);U.render()});
+const st=await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game;const [o1,o2]=g.opponentsOf(U.me);const seat=q=>document.querySelector(`.gs[data-seat="${q.i}"]`);const tiles=[0,1,2].map(i=>{const t=document.querySelector(`.gc[data-pid="${95000+i}"]`);return t?[...t.classList].filter(c=>/^ak\d$/.test(c)).join(','):null});
+  return {tiles,inc1:seat(o1).classList.contains('inc')&&(seat(o1).querySelector('.inc-b')||{}).textContent,inc2:(seat(o2).querySelector('.inc-b')||{}).textContent,seatCls:[seat(o1).className,seat(o2).className],sum:(document.querySelector('.atk-sum')||{}).textContent,chips:[...document.querySelectorAll('.chip.akc')].map(c=>c.className)}});
+ok('attackers carry their target’s colour class (ak0 vs ak1)',st.tiles[0]==='ak0'&&st.tiles[1]==='ak1'&&st.tiles[2]==='ak1',JSON.stringify(st.tiles));
+ok('each targeted seat shows an incoming banner with count and power',/1 attacker → .* · 3 power/.test(st.inc1||'')&&/2 attackers → .* · 9 power/.test(st.inc2||''),JSON.stringify([st.inc1,st.inc2]));
+ok('seats are coloured to match (ak0/ak1 + inc)',/ak0/.test(st.seatCls[0])&&/inc/.test(st.seatCls[0])&&/ak1/.test(st.seatCls[1]),JSON.stringify(st.seatCls));
+ok('summary line lists the split',/1→/.test(st.sum||'')&&/2→/.test(st.sum||''),st.sum);
+ok('defender chips carry colours',st.chips.length>=2&&st.chips.every(c=>/akc ak\d/.test(c)),JSON.stringify(st.chips));
+await pg.click('[data-act=atk-go]');await pg.waitForFunction(()=>{const U=GoldfishUI.current;if(U.prompt&&U.prompt.kind==='priority'){U.prompt.res(null);return false}if(U.prompt&&U.prompt.res){U.prompt.res(U.prompt.kind==='choice'?U.prompt.options[0]:null);return false}return !U.busy&&!U.mode},null,{timeout:30000}).catch(()=>{});
+const log=await pg.evaluate(()=>GoldfishUI.current.game.log.map(l=>l.m).filter(m=>/attacks:/.test(m)).pop());
+ok('declared attack goes to two different players',/Knight 0 → (\S+ ?)+.*Knight 1 → /.test(log||'')&&new Set((log.match(/→ ([^,]+)/g)||[])).size>=2,log);
+console.log('errors',errs);await b.close()})();

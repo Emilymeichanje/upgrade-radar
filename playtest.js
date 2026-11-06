@@ -444,6 +444,7 @@ function tagStatic(card, lines) {
     if ((m = l.match(/^each creature you control gets \+1\/\+0 for each time it has attacked this turn/))) S.moraug = true;
     if ((m = l.match(/^as long as this card has seven or more quest counters on it, creatures you control get \+5\/\+5/))) S.beastmaster = true;
     if ((m = l.match(/^as long as your devotion to (white|blue|black|red|green) is less than five, this card isn't a creature/))) S.devotionCreature = COLORW[m[1]];
+    if (/^\{t\}: add one mana of any color\. when that mana is spent to cast a creature spell that shares a creature type with your commander, scry 1/.test(l)) S.ancestryScry = true; // Path of Ancestry
     if ((m = l.match(/^skip your draw step/))) S.skipDraw = true;
     if ((m = l.match(/^whenever you discard a card, exile that card from your graveyard/))) S.discardExile = true;
     if ((m = l.match(/^each opponent can't draw more than one card each turn/))) S.narset = true;
@@ -3018,6 +3019,7 @@ class Game {
     const plan = plan0 || [];
     this.lastSpend = { total: cost.total || 0, c: plan.reduce((s, x) => s + ((x.colors && x.colors.length === 1 && x.colors[0] === 'C') ? (x.amount || 1) : 0), 0) };
     this.lastSpend.colors = this.b3_colorsSpent(plan, cost);
+    this.lastSpend.ancestry = plan.some(x => (x.kind === 'perm' && x.b && x.b.card.statics && x.b.card.statics.ancestryScry) || (x.kind === 'pool' && p.pool && p.pool[x.idx] && p.pool[x.idx].ancestry)); // b13
     if (cost.card && (cost.card.orig || cost.card).isCommander && plan.some(s => s.b1_opal && s.pip)) (cost.card.orig || cost.card)._opalTurn = this.turn;
     const poolIdx = [];
     for (const s of plan) {
@@ -3048,7 +3050,7 @@ class Game {
     const s = this.manualSrcs(p).find(x => x.b === perm); if (!s) return false;
     const col = s.colors.includes(color) ? color : s.colors.length === 1 ? s.colors[0] : null; if (!col) return false;
     if (!this.payCost(p, { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0 }, [{ ...s, pip: true }])) return false;
-    this.say(`taps ${perm.card.name}`, p); this.addMana(p, Array(s.amount).fill(col));
+    this.say(`taps ${perm.card.name}`, p); this.addMana(p, Array(s.amount).fill(col)); if (perm.card.statics && perm.card.statics.ancestryScry) for (let k = 1; k <= s.amount; k++) p.pool[p.pool.length - k].ancestry = true; // b13: Path of Ancestry mana remembers where it came from
     await this.emit({ type: 'activate', p, card: perm.card }); await this.flushPending(); return true;
   }
   /** floating mana (rituals, Lotus Cobra, Birgi...). eot: survives step changes */
@@ -3411,6 +3413,9 @@ class Game {
     const obj = { id: UID++, kind: 'spell', fromExile: fromExileZ, spent: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.total : card.cmc), spentC: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.c : 0), owner, noMana: mode === 'free' || (extra.alt && extra.alt.cost.total === 0), uncounterable: p.uncounterNext === this.turn, card, caster: p, target, zone, x: extra.x, kicks: extra.kicks, kicked: extra.kicks > 0 || !!extra.kicked, gift: extra.gift, bargained: extra.bargain, alt: extra.alt && extra.alt.kind };
     if (extra.modes) obj.modes = extra.modes;
     obj.b3Colors = mode === 'free' ? [] : (this.lastSpend && this.lastSpend.colors) || null;
+    if (mode !== 'free' && this.lastSpend && this.lastSpend.ancestry && card.isCreature) { // b13: Path of Ancestry — scry 1 when its mana cast a creature sharing a type with your commander
+      const sub = c => ((c.type || '').split('—')[1] || '').toLowerCase().split(/\s+/).filter(Boolean); const cmdrs = [...p.command, ...p.battlefield.map(b => b.card)].filter(c => (c.orig || c).isCommander); const mine = new Set(sub(card));
+      if (card.changeling || cmdrs.some(c => c.changeling || sub(c).some(t => mine.has(t)))) { this.say(`— Path of Ancestry: scry 1`, p); await this.runOps(p, [{ op: 'scry', n: 1 }], { name: 'Path of Ancestry' }, {}); } }
     if (obj_gc) { obj.gyKind = obj_gc.kind; obj.gyExile = !!obj_gc.exileAfter; if (obj_gc.kind === 'chainer') p.chainerUsed = true; if (obj_gc.kind === 'muldrotha') { if (p.muldTurn !== this.turn) { p.muldTurn = this.turn; p.muldUsed = []; } p.muldUsed.push(this.muldType(p, card)); } }
     else if (card.modes && (card.isInstant || card.isSorcery) && card.entwine && mode !== 'free' && this.canPayCost(p, card.entwine) && (p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card, question: 'pay entwine to choose every mode?' })) : true)) { this.payCost(p, card.entwine); obj.modes = card.modes.map(m => m.card); this.say(`— entwined: every mode`, p); }
     else if (card.modes && (card.isInstant || card.isSorcery)) obj.modes = await this.chooseModes(p, card);
@@ -4084,7 +4089,10 @@ class Game {
       if (ty) { pm.chosenType = ty.toLowerCase(); this.say(`— ${card.name}: chooses ${ty}`, p); } }
     if (card.choosesNumber) { const mvs = {}; for (const q of this.opponentsOf(p)) for (const c of [...q.graveyard, ...q.battlefield.map(b => b.card)]) if (!c.isCreature && !c.isLand) mvs[c.cmc] = (mvs[c.cmc] || 0) + 1; pm.chosenNumber = +(Object.entries(mvs).sort((a, z) => z[1] - a[1])[0] || [2])[0]; this.say(`— ${card.name}: chooses ${pm.chosenNumber}`, p); }
     if (card.siege) { const mode = await this.chooseSiege(p, card); pm.card = this.siegeCard(card, mode); this.say(`— ${card.name}: chooses ${mode}`, p); }
-    if (/choose a creature type/i.test(card.oracle) && !card.isLand) { const ty = this.chooseCreatureType(p); pm.card = this.chosenTypeCard(card, ty); pm.chosenType = ty; this.say(`— ${card.name}: chooses ${ty}`, p);
+    if (/choose a creature type/i.test(card.oracle) && !card.isLand) { let ty = this.chooseCreatureType(p);
+      if (p.human && !this.shortcutting && this.hooks.humanChoice) { const cnt = new Map(); const skip = new Set(['legendary', 'creature', 'artifact', 'enchantment', 'kindred', 'tribal', 'snow', 'basic', 'token']); for (const c of [...p.library, ...p.hand, ...p.graveyard, ...p.command, ...p.battlefield.map(b => b.card)]) { if (!c.isCreature || c.changeling) continue; for (const w of ((c.type.split('—')[1] || '').trim().toLowerCase()).split(/\s+/).filter(Boolean)) if (!skip.has(w)) cnt.set(w, (cnt.get(w) || 0) + 1); }
+        const opts = [...cnt].sort((a, z) => z[1] - a[1]).slice(0, 10).map(([k, n]) => `${k.charAt(0).toUpperCase() + k.slice(1)} (${n} in deck)`); const ch = await this.hooks.humanChoice({ p, card, question: `${card.name}: choose a creature type`, options: opts, free: true }); if (ch) ty = String(ch).replace(/ \(\d+ in deck\)$/, '').trim().toLowerCase() || ty; } // b13: you pick (Door of Destinies, Herald's Horn, Metallic Mimic…); the AI keeps the auto-pick
+      pm.card = this.chosenTypeCard(card, ty); pm.chosenType = ty; this.say(`— ${card.name}: chooses ${ty}`, p);
       if (/each other creature you control of the chosen type enters with an additional \+1\/\+1 counter/i.test(card.oracle)) pm.mimicType = ty;
       if (/is the chosen type in addition to its other types/i.test(card.oracle)) pm.card.type += ' ' + ty.charAt(0).toUpperCase() + ty.slice(1);
       if (/enters with a fellowship counter on it for each creature you control of the chosen type/i.test(card.oracle)) { const n = p.battlefield.filter(b => b.card.isCreature && matchesFilter(b.card, ty)).length; pm.fellowship = n; pm.card.anthems = [{ other: false, filter: ty, pump: [n, n], kws: [] }]; this.say(`— ${n} fellowship counters`, p); } }
@@ -6567,6 +6575,8 @@ class Game {
     for (const c of q.hand) if (this.canFlash(q, c) && (!c.roles.includes('counter') || (c.modes && c.modes.some(m => m.card && !(m.card.roles || []).includes('counter')))) && /* b13: Dawn Charm-style modal cards with a counter mode still offer their other modes */ !(c.redirect && !this.redirectable(q)) && this.castMode(q, c, 'hand', { instant: true })) out.push({ kind: 'cast', card: c });
     for (const b of q.battlefield) if (b.card.fetch && this.canActivate(q, b)) out.push({ kind: 'fetch', perm: b, card: b.card });
     out.push(...this.gyCastOptions(q, { instant: true }), ...this.abilityOptions(q, { instant: true }));
+    { const top = q.library[q.library.length - 1]; // b13: Bolas's Citadel / Mystic Forge: an instant (or flash card) on top of the library is castable at instant speed
+      if (top && !top.isLand && this.canFlash(q, top) && !top.roles.includes('counter') && this.topPerm(q, top) && this.castMode(q, top, 'top', { instant: true })) out.push({ kind: 'cast', card: top, zone: 'top' }); }
     return out;
   }
   /** one priority pass for a step: active player first, then turn order; ends when everyone passes in a row */

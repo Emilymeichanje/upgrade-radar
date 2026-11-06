@@ -226,4 +226,30 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    a.battlefield=a.battlefield.filter(b=>!b.card.isLand);for(let i=0;i<2;i++)a.battlefield.push({id:9900+i,card:tagCard({name:'Forest',type:'Basic Land — Forest',mana:'',cmc:0,oracle:''}),tapped:false,counters:0});a.pool=[];
    const big=tagCard(mk('Frog','Creature — Frog','{3}{B}{G}','',5,6,6));a.graveyard.push(big);g.active=0;g.phase='main1';const r=await g.cast(a,big,'gy',null);
    ok('Broodship: a land is NOT sacrificed when the spell could not be paid afterwards',!r&&a.battlefield.filter(b=>b.card.isLand).length===2&&a.graveyard.includes(big),'lands '+a.battlefield.filter(b=>b.card.isLand).length); }
+ // ---- Path of Ancestry scry; Door of Destinies asks the human for a type
+ { const g=fresh();const [a]=g.players;a.ai=null;a.human=true;const cm=a.battlefield.find(b=>b.card.isCommander)||null;const edgar=tagCard(mk('Edgar Markov','Legendary Creature — Vampire Knight','{3}{R}{W}{B}','',6,4,4));edgar.isCommander=true;a.command.push(edgar);
+   a.battlefield=a.battlefield.filter(b=>!b.card.isLand);const poa={id:7001,card:tagCard({name:'Path of Ancestry',type:'Land',mana:'',cmc:0,oracle:'Path of Ancestry enters tapped.\n{T}: Add one mana of any color. When that mana is spent to cast a creature spell that shares a creature type with your commander, scry 1.'}),tapped:false,counters:0};a.battlefield.push(poa);
+   let scried=0;g.hooks.humanSearch=async o=>{if(o.dest==='scry')scried++;return []};const vamp=tagCard(mk('Vampire Cutthroat','Creature — Vampire Rogue','{B}','',1,1,1));a.hand.push(vamp);await g.cast(a,vamp,'hand',null);await tick(g);
+   ok('Path of Ancestry mana on a Vampire (shares a type with Edgar) → scry 1',scried===1,'scried '+scried);
+   poa.tapped=false;a.pool=[];const bear=tagCard(mk('Bear','Creature — Bear','{G}','',1,2,2));a.hand.push(bear);await g.cast(a,bear,'hand',null);await tick(g);ok('…but not on a Bear',scried===1,'scried '+scried); }
+ { const g=fresh();const [a]=g.players;a.ai=null;a.human=true;let q=null;g.hooks.humanChoice=async o=>{q=o;return 'Zombie'};a.library.push(tagCard(mk('Vampire Nighthawk','Creature — Vampire Shaman','{1}{B}{B}','',3,2,3)));
+   const door=tagCard({name:'Door of Destinies',type:'Artifact',mana:'{4}',cmc:4,oracle:'As Door of Destinies enters, choose a creature type.\nWhenever you cast a spell of the chosen type, put a charge counter on Door of Destinies.\nCreatures you control of the chosen type get +1/+1 for each charge counter on Door of Destinies.'});const pm=await g.enterPerm(a,door);
+   ok('Door of Destinies asks you for the creature type (deck counts offered, free text allowed)',q&&/creature type/.test(q.question)&&q.free&&q.options.some(o=>/^Vampire/.test(o))&&pm.chosenType==='zombie','q '+(q&&q.options)+' chosen '+pm.chosenType); }
+
+ // ==== v85: Bolas's Citadel — pay life for a creature in main phase, and cast an instant from the top on an opponent's turn ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; me.life=29;
+   const cit=tagCard(mk("Bolas's Citadel",'Legendary Artifact','{3}{B}{B}{B}',"You may look at the top card of your library any time.\nYou may play lands and cast spells from the top of your library. If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost.\n{T}, Sacrifice ten nonland permanents: Each opponent loses 10 life.",6));
+   const cp=await g.enterPerm(me,cit); cp.summoning=false;
+   const ga=tagCard(mk('Gifted Aetherborn','Creature — Aetherborn Vampire','{B}{B}','Deathtouch, lifelink',2,2,3)); me.library.push(ga); me.pool=[];
+   ok('Citadel: creature on top is castable for life in main phase',g.castMode(me,ga,'top')==='free',String(g.castMode(me,ga,'top')));
+   await g.cast(me,ga,'top'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Citadel: paid 2 life, Gifted Aetherborn on the battlefield',me.life===27&&me.battlefield.some(b=>b.card===ga),'life '+me.life);
+   const mort=tagCard(mk('Mortify','Instant','{1}{W}{B}','Destroy target creature or enchantment.',3)); me.library.push(mort);
+   g.active=1; g.phase='main1'; me.pool=[];
+   const la=g.legalActions(me); const o=la.find(x=>x.kind==='cast'&&x.card===mort);
+   ok("Citadel: instant on top is offered at instant speed on an opponent's turn",!!o&&o.zone==='top',JSON.stringify(la.map(x=>x.kind+':'+(x.card&&x.card.name))));
+   const bear=await g.enterPerm(g.players[1],tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,2,2)));
+   await g.doAction(me,{...o,target:bear}); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Citadel: Mortify from the top paid 3 life and destroyed the Bear',me.life===24&&!g.players[1].battlefield.includes(bear),'life '+me.life+' bear '+g.players[1].battlefield.includes(bear));
+ }
  console.log(fails+' failed');})();

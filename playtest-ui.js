@@ -687,6 +687,7 @@ class Table {
   costStr(c) { if (!c) return ''; let s = c.generic ? `{${c.generic}}` : ''; for (const k of 'WUBRG') s += `{${k}}`.repeat(c.pips[k] || 0); return s || '{0}'; }
   optLabel(o) {
     if (o.kind === 'fetch') return 'crack';
+    if (o.kind === 'cast' && o.zone === 'top') return (this.game && this.me && this.game.topPerm(this.me, o.card)) === 'citadel' ? `cast from top · ${o.card.cmc} life` : 'cast from top of library';
     if (o.kind === 'cast') return o.zone === 'gy' ? (gr => gr ? (gr.kind || 'cast') + ' ' + this.costStr(gr.cost || o.card.mana) : 'cast from graveyard')(o.card.gyCast || (this.game && this.me ? this.game.gyGrant(this.me, o.card) : null)) : 'cast';
     if (o.kind === 'ability') { const ab = o.ab; const what = ab.label || ({ gyToHand: 'return a card to hand', draw: 'draw', landToHand: 'find a land', selfToBf: 'return to battlefield', selfToHand: 'return to hand', tokens: 'make tokens', gain: 'gain life', drain: 'drain', damage: 'deal damage', counters: '+1/+1 counters', destroy: 'destroy', gyToBf: 'reanimate', mill: 'mill', scry: 'scry', surveil: 'surveil', tokenCopy: 'token copy', attach: 'equip', edict: 'edict', bounceAllOpp: 'overload' }[ab.ops[0].op] || 'activate'); return `${what} ${this.costStr(ab.cost)}${ab.tap ? ' {T}' : ''}`; }
     return '';

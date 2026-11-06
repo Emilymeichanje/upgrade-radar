@@ -775,6 +775,7 @@ class Table {
     return obj.caster !== this.me && G.counterHits(m.card, obj.card) && !this.game.isUncounterable(obj);
   }
   startCast(card, zone) {
+    if (this.mode && this.mode.kind === 'mana') this.mode = null; // b13: a half-finished 'tap X for' colour pick must not sit under the payment prompt
     if (this.needsTarget(card)) { this.mode = { kind: 'target', card, zone, players: !!card.dmg && !card.roles.includes('removal'), spells: this.targetsSpells(card) }; this.render(); return; }
     this.act(() => this.exec('cast', this.me, card, zone, null));
   }

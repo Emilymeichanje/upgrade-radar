@@ -305,4 +305,27 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
  { const g=fresh(); const ai=g.players[1]; ai.life=2; const tomb=await g.enterPerm(ai,tagCard(mk('Ancient Tomb','Land','',"{T}: Add {C}{C}. Ancient Tomb deals 2 damage to you.",0)));
    ok("AI at 2 life doesn't count Ancient Tomb as a mana source",!g.manaSrcs(ai).some(x=>x.b===tomb),'');
    ai.life=10; ok('…but does at 10 life',g.manaSrcs(ai).some(x=>x.b===tomb),''); }
+
+ // ==== v86b: Ashling g0129 — Fury evoke pitch + divided damage are your choices; token copies / myriad fire ETBs ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; const picks=[]; const choices=[];
+   const fury=tagCard(mk('Fury','Creature — Elemental Incarnation','{3}{R}{R}',"When this creature enters, it deals 4 damage divided as you choose among any number of target creatures and/or planeswalkers.\nEvoke—Exile a red card from your hand.",5,'3','3'));
+   const red1=tagCard(mk('Red One','Creature — Elemental','{R}','',1,'1','1')), red2=tagCard(mk('Red Two','Instant','{1}{R}','Red Two deals 2 damage to any target.',2));
+   me.hand.push(fury,red1,red2);
+   const b1=await g.enterPerm(g.players[1],tagCard(mk('Bear A','Creature — Bear','{1}{G}','',2,'2','2'))), b2=await g.enterPerm(g.players[2],tagCard(mk('Bear B','Creature — Bear','{1}{G}','',2,'2','2')));
+   g.hooks.humanSearch=async c=>{picks.push(c.dest+':'+c.pool.map(x=>x.name).join('|')); if(c.dest==='exile')return [red2]; if(c.dest==='damage')return [c.pool.find(x=>x.name===(picks.filter(x=>x.startsWith('damage')).length===1?'Bear B':'Bear A'))]; return [c.pool[0]]};
+   g.hooks.humanChoice=async c=>{choices.push(c.question); return '2'};
+   g.hooks.humanAlt=async c=>c.blues&&c.blues[0]; g.hooks.humanPay=async c=>c.opts&&c.opts.find(o=>o.kind==='alt'||o.pitch)||null;
+   const alts=g.altOptions(me,fury,'hand'); const evoke=alts.find(a=>a.pitch||/evoke/i.test(a.label||a.kind||''));
+   ok('Fury: evoke is offered as an alt cost',!!evoke,JSON.stringify(alts).slice(0,200));
+   if(evoke){ me.pool=[]; await g.cast(me,fury,'hand',null,{alt:evoke}); while(g.stack.length)await g.resolve(); await tick(g);
+     ok('Fury evoke: you choose which red card to exile (Red Two, not the cheapest)',me.exile.includes(red2)&&me.hand.includes(red1),'exile '+me.exile.map(c=>c.name)+' hand '+me.hand.map(c=>c.name));
+     ok('Fury: you split the 4 damage (2 to Bear B, 2 to Bear A) — both die',!g.players[1].battlefield.includes(b1)&&!g.players[2].battlefield.includes(b2),JSON.stringify({picks,choices,b1:g.players[1].battlefield.includes(b1),b2:g.players[2].battlefield.includes(b2)}).slice(0,300)); }
+ }
+ { const g=fresh(); const me=g.players[0]; me.ai=null; me.human=true; g.hooks.humanSearch=async c=>[c.pool[0]];
+   const fb=tagCard(mk('Foundation Breaker','Creature — Elemental','{3}{G}',"When this creature enters, you may destroy target artifact or enchantment.\nEvoke {1}{G}",4,'2','2'));
+   const art=await g.enterPerm(g.players[1],tagCard(mk('Shiny Rock','Artifact','{2}','',2)));
+   const pm=await g.enterPerm(me,fb);
+   await g.runOps(me,[{op:'copyDeadToken'}],{name:'Ashling, the Limitless',uid:999},{sacrificed:pm});
+   ok('Ashling token copy of Foundation Breaker gets its ETB (destroys the artifact)',!g.players[1].battlefield.includes(art)&&me.battlefield.some(b=>b.card.token&&b.card.name==='Foundation Breaker'),'art '+g.players[1].battlefield.includes(art));
+ }
  console.log(fails+' failed');})();

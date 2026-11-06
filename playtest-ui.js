@@ -202,6 +202,8 @@ body.fx-shake{animation:fxshake .45s linear}
 .gc .pt{position:absolute;right:-3px;bottom:-3px;font:700 .68rem var(--mono);background:var(--fg);color:var(--bg);padding:1px 4px;border-radius:4px}
 .gc .pt.up{background:var(--good)}
 .gc .bd{position:absolute;left:-3px;top:-3px;font:700 .64rem var(--mono);background:var(--bad);color:#fff;padding:1px 4px;border-radius:4px}
+.crown{font-size:.95em;filter:drop-shadow(0 0 2px rgba(0,0,0,.5))}
+.sopt{position:relative}.sopt .ord{position:absolute;left:4px;top:4px;font:700 .68rem var(--mono);background:var(--acc,#2f7fd6);color:#fff;padding:1px 5px;border-radius:4px;font-style:normal}.sopt .ordbtns{position:absolute;left:0;right:0;bottom:4px;display:flex;justify-content:space-between;padding:0 4px}.obtn{font:700 .8rem var(--mono);background:rgba(0,0,0,.65);color:#fff;border:0;border-radius:4px;padding:2px 6px;cursor:pointer}
 .ak0{--ak:#d6452f}.ak1{--ak:#2f7fd6}.ak2{--ak:#2fa35b}.ak3{--ak:#b453d6}
 .gc.atk{outline:3px solid var(--ak,var(--bad))}.gc .bd.ak{background:var(--ak)}
 .gs.inc{box-shadow:inset 0 0 0 3px var(--ak)}.gs .inc-b{display:flex;gap:6px;align-items:center;margin:4px 0;padding:3px 8px;border-radius:6px;background:var(--ak);color:#fff;font:700 .78rem var(--mono)}
@@ -601,6 +603,7 @@ class Table {
     const me = this.me, g = this.game;
     if (ctx.step === 'stack') {
       const top0 = ctx.stack[ctx.stack.length - 1];
+      if (this.passOwnTrigTurn === g.turn && ctx.stack.every(o => o.caster === me && o.trig)) return false; // b13: "Pass my triggers this turn" applies even with Stops: all / nothing to respond with
       // a triggered ability on top (yours or theirs): stop if you can do something real in response — crack a fetch, copy it, counter it, kill the source
       if (top0 && top0.trig && this.s.stops !== 'minimal' && !(this.passUntilTurn && ctx.active !== me) && ctx.options.some(o => !(o.ab && o.ab.mana))) {
         if (top0.caster !== me || this.s.stops === 'all') return true;
@@ -734,7 +737,8 @@ class Table {
   rpBar() { if (!this.replay) return ''; const rp = this.rp, n = this.replay.moves.length; return `<div class="gt-ctl rpbar"><span class="msg"><b>Replay</b> · turn ${this.game ? this.game.turn : 0}${n ? ` · your decision ${Math.min(this.rpPos, n)} / ${n}` : ' · AI-only game'}${this.rpDone ? ` · ${esc(this.rpDone)}` : ''}</span><button class="chip pri" data-act="rp-play">${rp.mode === 'play' ? 'Pause' : 'Play'}</button><button class="chip" data-act="rp-step">Step</button>${[['Slow', 1500], ['Normal', 700], ['Fast', 150]].map(([l, ms]) => `<button class="chip" data-act="rp-speed" data-ms="${ms}" aria-pressed="${rp.delay === ms}">${l}</button>`).join('')}<button class="chip" data-act="leave">Exit replay</button></div>`; }
   recordingJson() { if (!this.rec) return null; const g = this.game; return JSON.stringify({ ...this.rec, result: g.winner ? short(g.winner.name) + ' wins' : 'in progress', turns: g.turn, log: g.log.map(l => l.m) }); }
   async storeRecording(status) { if (!this.rec || this.replay || this.recStored) return; const g = this.game; if (!g || g.turn < 2) return; this.recStored = true; const id = Date.now(); const entry = { id, at: this.rec.at, engine: this.rec.engine, name: g.players.map(p => short(p.deckName || p.name).split(',')[0]).join(' · '), seats: g.players.map(p => ({ name: p.name, deckName: p.deckName })), result: g.winner ? short(g.winner.name) + ' wins' : status || 'unfinished', turns: g.turn, moves: this.rec.moves.length, rec: this.rec }; try { await Replays.put(entry); } catch (e) { this.diagPush('store recording: ' + e.message); } }
-  exportRecording() { const txt = this.recordingJson(); if (!txt) return; const g = this.game; this.downloadText(txt, `playtest-rec-${(g.players[0].deckName || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.json`); }
+  exportRecording() { const txt = this.recordingJson(); if (!txt) return; const g = this.game; this.downloadText(txt, `playtest-rec-${(g.players[0].deckName || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${this.stamp()}.json`); }
+  stamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); const game = (this.rec && this.rec.seed != null ? 'g' + String(this.rec.seed).slice(-4) : 't' + this.game.turn); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}-${z(d.getMinutes())}-${z(d.getSeconds())}_${game}`; } // b13: local time with seconds + a game tag, so two exports never collide
   comboBar() { const g = this.game, me = this.me; if (!g || !me || this.replay || this.s.combos === 'off') return ''; const cs = g.availableCombos(me); if (!cs.length) return '';
     return `<div class="gt-ctl combo-row">${cs.map(c => `<span class="msg"><b>∞ ${esc(c.pieces.join(' + '))}</b> — ${esc(c.label)}${c.source ? ` <small>(${esc(c.source)})</small>` : ''}</span>${c.ready ? `<button class="chip pri" data-act="combo-go" data-id="${esc(c.id)}">${c.kind === 'win' ? 'Win with combo' : c.kind === 'mana' ? 'Go infinite' : 'Declare'}</button>` : '<span class="msg"><i>not ready yet</i></span>'}`).join('')}</div>`; }
   /** every direct UI→engine call goes through here so a recording can replay it */
@@ -780,8 +784,10 @@ class Table {
   }
   // ---------- input ----------
   wire() {
-    this.el.addEventListener('mouseover', e => { const t = e.target.closest('[data-uid]'); if (t) this.preview(+t.dataset.uid, !!t.closest('.lgx')); });
-    this.el.addEventListener('click', e => this.onClick(e));
+    this._onOver = e => { if (window.GoldfishUI.current !== this) return; const t = e.target.closest('[data-uid]'); if (t) this.preview(+t.dataset.uid, !!t.closest('.lgx')); };
+    this._onClick = e => { if (window.GoldfishUI.current !== this) return; this.onClick(e); }; // b13: a previous game's table on the same element used to keep handling clicks (double downloads after a rematch)
+    this.el.addEventListener('mouseover', this._onOver);
+    this.el.addEventListener('click', this._onClick);
     // phones: compact layout; touch: long-press any card to read it
     const mq = window.matchMedia('(max-width:700px), (max-height:540px) and (orientation:landscape)'); this.mobile = mq.matches;
     (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(e => { this.mobile = e.matches; this.render(); });
@@ -911,7 +917,7 @@ class Table {
   downloadText(txt, name) { try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); } catch (e) {} }
   exportLog() {
     const txt = this.logText(); if (!txt) return; const g = this.game;
-    const name = `playtest-${(g.players[0].deckName || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.txt`;
+    const name = `playtest-${(g.players[0].deckName || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${this.stamp()}.txt`;
     const file = (() => { try { return new File([txt], name, { type: 'text/plain' }); } catch (e) { return null; } })();
     // phones ignore the download name on blob links; the share sheet keeps it (Save to Files / send it on)
     if (file && (this.mobile || this.touch) && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: name }).catch(() => this.downloadText(txt, name)); return; }
@@ -985,7 +991,8 @@ class Table {
     if (P && P.kind === 'modes' && a === 'modes-go') { if (P.sel.length >= P.min) P.res(P.sel.slice()); return; }
     if (a === 'xcast' && this.myTurn && !this.busy && !P) { const z = btn.dataset.zone, c = this.findCard(+btn.dataset.uid) || (z === 'top' ? me.library[me.library.length - 1] : null); if (!c) return; if (c.isLand) return this.act(() => g.playLand(me, c)); if (g.castMode(me, c, z)) this.startCast(c, z); return; }
     if (a === 'abil' && this.myTurn && !this.busy && !P) { const o = (this.mainOpts || [])[+btn.dataset.i]; if (!o) return; if (o.kind === 'cast' && this.needsTarget(o.card)) return this.startCast(o.card, o.zone); return this.act(() => this.exec('doAction', me, { ...o, instant: false })); }
-    if (P && P.kind === 'search' && a === 'search-go') { P.res(P.sel.slice()); return; }
+    if (P && P.kind === 'search' && a === 'search-go') { const out = P.sel.slice(); if (P.order) out.keepOrder = P.order.filter(c => !P.sel.includes(c)); P.res(out); return; }
+    if (P && P.kind === 'search' && (a === 'ord-up' || a === 'ord-down')) { const uid = +btn.dataset.uid; P.order = P.order || P.pool.slice(); const kept = P.order.filter(c => !P.sel.includes(c)); const i = kept.findIndex(c => c.uid === uid); const j = a === 'ord-up' ? i - 1 : i + 1; if (i >= 0 && j >= 0 && j < kept.length) { [kept[i], kept[j]] = [kept[j], kept[i]]; P.order = kept.concat(P.order.filter(c => P.sel.includes(c))); this.render(); } return; } // b13: reorder the cards that stay on top
     if (P && P.kind === 'search' && a === 'search-none') { P.res([]); return; }
     if (P && P.kind === 'player' && a === 'pick-player') { P.res(g.players[+btn.dataset.p]); return; }
     if (P && P.kind === 'choice' && a === 'pick-choice') { P.res(P.options[+btn.dataset.i]); return; }
@@ -1053,7 +1060,7 @@ class Table {
     const akI = !isMe && this.mode && this.mode.kind === 'attack' ? g.opponentsOf(me).indexOf(p) : -1;
     return `<section class="gs ${isMe ? 'me' : ''} ${g.players[g.active] === p && !g.winner ? 'act' : ''} ${p.dead ? 'dead' : ''} ${akI >= 0 ? 'ak' + akI : ''} ${inc.length ? 'inc' : ''}" data-seat="${p.i}">
       ${inc.map(([k, e]) => `<div class="inc-b">⚔ ${e.n} attacker${e.n === 1 ? '' : 's'} → ${esc(short(k))} · ${e.pw} power</div>`).join('')}
-      <div class="gs-h"><div class="av" style="background-image:url('${esc(p.art || '')}')"></div><div class="nm"><b>${esc(short(p.name))}</b><small>${esc(p.deckName)}${p.level ? ' · ' + esc(p.level) : ''}</small></div><div class="lf ${p.life <= 10 ? 'low' : ''} ${tgtLife ? 'tgt' : ''}" data-life="${p.i}">${p.life}</div></div>
+      <div class="gs-h"><div class="av" style="background-image:url('${esc(p.art || '')}')"></div><div class="nm"><b>${esc(short(p.name))}${g.monarch === p ? ' <span class="crown" title="The monarch: draws a card at end step; combat damage steals the crown">👑</span>' : ''}${g.initiative === p ? ` <span class="crown" title="Has the initiative: ventures into Undercity each upkeep${p.undercityRoom ? ' — room: ' + esc(p.undercityRoom) : ''}; combat damage takes it">🏰</span>` : ''}</b><small>${esc(p.deckName)}${p.level ? ' · ' + esc(p.level) : ''}</small></div><div class="lf ${p.life <= 10 ? 'low' : ''} ${tgtLife ? 'tgt' : ''}" data-life="${p.i}">${p.life}</div></div>
       <div class="gs-meta"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><button class="zbtn" data-act="zone" data-p="${p.i}" data-z="graveyard" title="Show graveyard">gy ${p.graveyard.length}</button><button class="zbtn" data-act="zone" data-p="${p.i}" data-z="exile" title="Show exiled cards">exile ${p.exile.length}</button>${p.command.length ? `<span>cmd zone: ${esc(p.command.map(c => c.name.split(',')[0]).join(', '))}${p.cmdTax ? ' +' + p.cmdTax : ''}</span>` : ''}${cmdDmgOnMe}${cmdDmg}</div>
       ${threat !== null ? `<div class="thr" title="Threat to you: ${threat.toFixed(0)}"><i style="width:${Math.min(100, threat / maxT * 100)}%"></i></div>` : ''}
       ${isMe ? '<div class="gs-body"><div class="gs-main">' : ''}<div class="gs-bf">${nonl.map(b => this.tile(b, p)).join('') || (this.mobile && lands.length ? '' : '<span class="gs-meta">no permanents</span>')}</div>
@@ -1152,8 +1159,10 @@ class Table {
         const dest = { hand: 'put into your hand', graveyard: 'put into your graveyard', top: 'put on top of your library', battlefield: 'put onto the battlefield', reanimate: 'return to the battlefield', gyhand: 'return from your graveyard to your hand', land: 'put into your hand', scry: 'put on the bottom (the rest stay on top)', surveil: 'put into your graveyard (the rest stay on top)', damage: 'deal damage to', destroy: 'destroy', counters: 'get the counters', dig: 'put into your hand (the rest go to your graveyard)', handtop: 'put on top of your library', handbottom: 'put on the bottom of your library', proliferate: 'give another counter of each kind (any number — yours or opponents’)', sacrifice: 'sacrifice', equip: 'equip', copy: 'copy', freecast: 'cast for free', imprint: 'exile (imprint)', keep: 'keep', tap: 'tap', bottom: 'put on the bottom', unblockable: "make unblockable", bounce: 'return to hand', exile: 'exile', target: 'target', modes: 'choose', enchant: 'enchant', flicker: 'exile and return', bounceLand: 'return to your hand', top: 'put on top of your library' }[P.dest] || P.dest;
         const fromLib = ['hand', 'graveyard', 'top', 'battlefield', 'land'].includes(P.dest), peek = P.dest === 'scry' || P.dest === 'surveil';
         const list = [...P.pool].sort((a, b) => a.name.localeCompare(b.name));
-        const seen = new Set(); const uniq = (peek ? [...P.pool] : list).filter(c => P.n > 1 || !fromLib || (!seen.has(c.name) && seen.add(c.name)));
-        const grid = uniq.map(c => `<div class="sopt ${P.sel.includes(c) ? 'sel' : ''}" data-opt="${c.uid}" data-uid="${c.uid}" data-name="${esc(c.name.toLowerCase())}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}${P.owner && P.owner.get(c) ? `<i class="own">${esc(short(P.owner.get(c).name).split(',')[0].slice(0, 10))}</i>` : ''}</div>`).join('');
+        if (peek && !P.order) P.order = P.pool.slice();
+        const keptOrd = peek ? P.order.filter(c => !P.sel.includes(c)) : [];
+        const seen = new Set(); const uniq = (peek ? keptOrd.concat(P.order.filter(c => P.sel.includes(c))) : list).filter(c => P.n > 1 || !fromLib || (!seen.has(c.name) && seen.add(c.name)));
+        const grid = uniq.map(c => { const ki = peek ? keptOrd.indexOf(c) : -1; return `<div class="sopt ${P.sel.includes(c) ? 'sel' : ''}" data-opt="${c.uid}" data-uid="${c.uid}" data-name="${esc(c.name.toLowerCase())}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy">` : `<span>${esc(c.name)}</span>`}${P.owner && P.owner.get(c) ? `<i class="own">${esc(short(P.owner.get(c).name).split(',')[0].slice(0, 10))}</i>` : ''}${ki >= 0 ? `<i class="ord" title="Position from the top after this resolves">${ki === 0 ? 'TOP' : (ki + 1) + (['st', 'nd', 'rd'][ki] || 'th')}</i>${keptOrd.length > 1 ? `<span class="ordbtns">${ki > 0 ? `<button class="obtn" data-act="ord-up" data-uid="${c.uid}" title="Move up (closer to the top)">◀</button>` : ''}${ki < keptOrd.length - 1 ? `<button class="obtn" data-act="ord-down" data-uid="${c.uid}" title="Move down">▶</button>` : ''}</span>` : ''}` : ''}</div>`; }).join(''); // b13: scry/surveil — kept cards show their order from the top and can be rearranged
         prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.n > 1 ? 'up to ' + P.n + ' cards' : 'a card'} to ${dest}${fromLib ? ` (${P.pool.length} match${P.pool.length === 1 ? '' : 'es'} in your library)` : ''}</h4>
           <input class="sfind" placeholder="Filter by name…" oninput="GoldfishUI.current.filterSearch(this.value)" autocomplete="off">
           <div class="sgrid">${grid}</div>
@@ -1250,7 +1259,8 @@ class Table {
   }
 }
 
-window.GoldfishUI = { start(el, seats, opts) { const t = new Table(el, seats, opts); window.GoldfishUI.current = t; t.start(); return t; },
+window.GoldfishUI = { start(el, seats, opts) { window.GoldfishUI.retire(); const t = new Table(el, seats, opts); window.GoldfishUI.current = t; t.start(); return t; },
+  retire() { const c = window.GoldfishUI.current; if (c && c.el) { try { c.el.removeEventListener('click', c._onClick); c.el.removeEventListener('mouseover', c._onOver); } catch (e) {} } window.GoldfishUI.current = null; },
   /** play back a recording made by this table (rec = parsed .json) */
-  replay(el, rec, opts = {}) { const G = window.Goldfish; if (!rec || !rec.moves || !rec.seats) throw new Error('not a recording'); G.uid.set(rec.uidBase); if (G.setPopularity) G.setPopularity(rec.pop || {}); if (G.setCombos) G.setCombos(rec.combos || []); const seats = rec.seats.map(s => ({ name: s.name, deckName: s.deckName, human: s.human, level: s.level, art: s.art, deck: G.buildDeck(s.cards, s.cmd) })); const t = new Table(el, seats, { ...opts, replay: rec }); window.GoldfishUI.current = t; t.start(); return t; }, replays: Replays, recEnc, recDec, resume(el, saved, opts) { const t = new Table(el, [], { ...opts, saved }); window.GoldfishUI.current = t; t.start(); return t; }, savedGame() { try { const s = JSON.parse(localStorage.getItem('pt-save') || 'null'); return s && s.state ? s : null; } catch (e) { return null; } }, clearSaved() { try { localStorage.removeItem('pt-save'); } catch (e) {} }, loadSettings, saveSettings };
+  replay(el, rec, opts = {}) { const G = window.Goldfish; if (!rec || !rec.moves || !rec.seats) throw new Error('not a recording'); G.uid.set(rec.uidBase); if (G.setPopularity) G.setPopularity(rec.pop || {}); if (G.setCombos) G.setCombos(rec.combos || []); const seats = rec.seats.map(s => ({ name: s.name, deckName: s.deckName, human: s.human, level: s.level, art: s.art, deck: G.buildDeck(s.cards, s.cmd) })); window.GoldfishUI.retire(); const t = new Table(el, seats, { ...opts, replay: rec }); window.GoldfishUI.current = t; t.start(); return t; }, replays: Replays, recEnc, recDec, resume(el, saved, opts) { window.GoldfishUI.retire(); const t = new Table(el, [], { ...opts, saved }); window.GoldfishUI.current = t; t.start(); return t; }, savedGame() { try { const s = JSON.parse(localStorage.getItem('pt-save') || 'null'); return s && s.state ? s : null; } catch (e) { return null; } }, clearSaved() { try { localStorage.removeItem('pt-save'); } catch (e) {} }, loadSettings, saveSettings };
 })();

@@ -160,6 +160,7 @@ function parseOps(t) {
   if ((m = t.match(/search your library for up to two (basic )?land cards, reveal those cards, put one onto the battlefield( tapped)? and the other into your hand/))) ops.push({ op: 'landToBf', n: 1, basic: !!m[1], types: [], tapped: !!m[2] }, { op: 'landToHand', n: 1, basic: !!m[1], types: [] }); // b13: Cultivate / Kodama's Reach — the "other into your hand" half was dropped
   else if ((m = t.match(/search your library for (a|an|up to two|up to three|two) (basic )?([a-z ]*?)\b(?:land )?cards?(?: and (?:a|an) [a-z ]+ card)?(?:[^.]*?)put (?:it|them|that card|those cards|one) onto the battlefield( tapped)?/)) && /land|plains|island|swamp|mountain|forest/.test(m[0])) ops.push({ op: 'landToBf', n: /two/.test(m[1]) ? 2 : /three/.test(m[1]) ? 3 : 1, basic: !!m[2], types: ['plains', 'island', 'swamp', 'mountain', 'forest'].filter(x => m[3].includes(x)), tapped: !!m[4] });
   if (/\bproliferate\b/.test(t)) ops.push({ op: 'proliferate' });
+  if ((m = t.match(/you may put a land card from your hand onto the battlefield( tapped)?/))) ops.push({ op: 'landFromHand', tapped: !!m[1], may: true }); // b13: Chulane et al. — the clause was silently dropped
   if (/^transform this card/.test(t.trim())) ops.push({ op: 'transform' });
   if ((m = t.match(/you get ((?:\{e\})+)/))) ops.push({ op: 'energy', n: m[1].length / 3 });
   if (/takes? an extra turn after this one/.test(t)) ops.push({ op: 'extraTurn' });
@@ -2477,6 +2478,7 @@ function tagCard(c) {
 function counterHits(counterCard, spell) {
   const h = counterCard.counter && counterCard.counter.hits;
   if (!h) return false;
+  if (/^(triggered )?ability$/i.test(spell.type || '')) return false; // b13: Counterspell can't target a triggered/activated ability (Sonic countered an Aragorn trigger)
   if (counterCard.counter.color && !((spell.colors || []).includes(counterCard.counter.color))) return false; // b13: "if it's blue" does nothing to other spells
   if (h === 'any') return true;
   if (h === 'creature') return spell.isCreature;
@@ -3793,7 +3795,14 @@ class Game {
     if (!combat && this.b5_stag(q)) n *= 2;
     if (q.b7_redirect && await this.b7_redirectPlayer(q, n, src)) return 0;
     if (q.battlefield.some(b => b.card.statics && b.card.statics.chasm && !b.neutral)) { this.say(`— damage to ${q.name} is prevented`, q); return 0; }
+    const lifeBefore = q.life;
     await this.changeLife(q, -n, src);
+    { // b13: every damage line names the source and shows the life change — annotate the line that announced it, or add one
+      const short = q.name.replace(/^(You|AI) · /, ''); const tag = ` [${short} ${lifeBefore} → ${q.life}]`; const last = this.log[this.log.length - 1];
+      const mentions = last && !/\[[^\]]* \d+ → -?\d+\]$/.test(last.m) && (last.m.includes(`hits ${q.name} for`) || (/damage to /.test(last.m) && last.m.includes(q.name)) || (/loses? \d+/.test(last.m) && last.m.includes(q.name)));
+      if (mentions) { last.m += tag; if (this.hooks.logPatch) this.hooks.logPatch(this.log.length - 1, last.m); }
+      else if (!combat) this.say(`— ${src && src.name ? src.name : 'damage'}: ${n} to ${q.name}${tag}`, by || (src && this.cardController(src)) || q);
+    }
     const p = by || (src ? this.cardController(src) : null);
     if (!combat && p && p !== q) { if (p.ncDmgTurn !== this.turn) { p.ncDmgTurn = this.turn; p.ncDmg = 0; } p.ncDmg += n;
       for (const b of p.battlefield.filter(x => x.card.statics && x.card.statics.incinerator && !x.neutral)) { const pool = q.battlefield.filter(x => x.card.isCreature || x.card.isPlaneswalker); const t = p.ai ? [...pool].sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a)).find(x => x.card.isPlaneswalker || this.toughOf(q, x) - this.markedOf(x) <= n) || pool[0] : await this.pickPerm(p, b.card, pool, { harmful: true }); if (!t) continue; this.say(`— ${b.card.name} deals ${n} damage to ${t.card.name}`, p); if (t.card.isPlaneswalker) await this.pwDamage(q, t, n); else await this.dealtDamage(q, t, n, b.card); } await this.sba(); }
@@ -4527,7 +4536,11 @@ class Game {
     return pick;
   }
   ownerOfVal(p, b) { const o = this.ownerOf(b); return o && p.ai ? p.ai.permValue(b, o, this, p) : 0; }
-  oppPerms(p, f) { return this.opponentsOf(p).flatMap(q => q.battlefield.filter(f)); }
+  oppPerms(p, f) { return this.opponentsOf(p).flatMap(q => q.battlefield.filter(b => f(b) && this.canTarget(p, b))); } // b13: every caller targets, so shroud / hexproof / protected-this-turn permanents are never offered (Aragorn King was picking a Greaves-equipped Aurelia)
+  canTarget(p, b, src) { const c = b.card, o = this.ownerOf(b); if (!c || !o) return false; if ((c.kw || []).includes('shroud')) return false;
+    if (o !== p) { if ((c.kw || []).includes('hexproof')) return false; if (b.hexUntil && (b.hexUntil.by.turnCount || 0) < b.hexUntil.n) return false; if (b.protTurn === this.turn && !(o.stripTurn && o.stripTurn.turn === this.turn)) return false;
+      if (c.isPlaneswalker && o.battlefield.some(x => x.card.statics && x.card.statics.pwHexproof && !x.neutral && (!x.chosenType || matchesFilter(c, x.chosenType)))) return false; }
+    if (src && b.protColors && (src.colors || []).some(x => b.protColors.includes(x))) return false; return true; }
   allPerms(f) { return this.alive().flatMap(q => q.battlefield.filter(f)); }
   /** re-read a permanent's card with different text (sagas gaining abilities, classes levelling up) */
   retag(card, oracle) {
@@ -4591,7 +4604,7 @@ class Game {
   // ---------- running effects ----------
   async chooseFromList(p, src, pool, n, dest) {
     if (!pool.length) return [];
-    if (p.human) return [].concat((this.hooks.humanSearch ? await this.hooks.humanSearch({ p, card: src, pool, n, dest, upTo: true }) : null) || []);
+    if (p.human) { const r = this.hooks.humanSearch ? await this.hooks.humanSearch({ p, card: src, pool, n, dest, upTo: true }) : null; const out = [].concat(r || []); if (r && r.keepOrder) out.keepOrder = r.keepOrder; return out; } // b13: scry/surveil may also return the order of the kept cards
     return p.ai ? [].concat(p.ai.chooseCards(this, p, pool, n, dest) || []) : pool.slice(0, n);
   }
   async choosePlayer(p, src, players, why) {
@@ -5028,7 +5041,10 @@ class Game {
         case 'd20Treasure': { const n = 1 + Math.floor(this.rng() * 20); this.say(`— rolls ${n}`, p); await this.makeArtifactTokens(p, 'treasure', n); break; }
         case 'stealArtifacts': { const d = ctx.defender; if (!d) break; const as = d.battlefield.filter(b => b.card.isArtifact); for (const b of as) { d.battlefield.splice(d.battlefield.indexOf(b), 1); b.summoning = true; p.battlefield.push(b); } this.say(`— gains control of ${as.length} artifact${as.length === 1 ? '' : 's'}`, p); break; }
         case 'poisonDamage': { const d = ctx.defender; if (!d) break; d.poison = (d.poison || 0) + (ctx.dmg || 0); if (d.poison >= 10) await this.kill(d, '10 poison counters'); break; }
-        case 'landFromHand': { const land = p.hand.find(c => c.isLand); if (land) { p.hand.splice(p.hand.indexOf(land), 1); const [pm] = await this.landEnters(p, land, !!op.tapped); this.say(`— puts ${land.name} onto the battlefield`, p); await this.landfall(p); } break; }
+        case 'landFromHand': { const lands = p.hand.filter(c => c.isLand); if (!lands.length) break; let land;
+          if (p.human && !this.shortcutting) land = (await this.chooseFromList(p, src, lands, 1, 'battlefield'))[0]; // b13: you choose, and "you may" means you can decline (Skip)
+          else land = [...lands].sort((a, z) => ((z.produces || []).length + (/enters tapped|enters the battlefield tapped/.test((z.oracle || '').toLowerCase()) ? -0.5 : 0)) - ((a.produces || []).length + (/enters tapped|enters the battlefield tapped/.test((a.oracle || '').toLowerCase()) ? -0.5 : 0)))[0];
+          if (land) { p.hand.splice(p.hand.indexOf(land), 1); const [pm] = await this.landEnters(p, land, !!op.tapped); this.say(`— puts ${land.name} onto the battlefield${pm && pm.tapped ? ' tapped' : ''}`, p); await this.landfall(p, pm); } break; }
         case 'doublePT': for (const b of p.battlefield.filter(b => b.card.isCreature)) b.dblTurn = this.turn; this.say('— creatures double their power and toughness this turn', p); break;
         case 'activeSacrifices': { const q = ctx.active; if (!q || q === p) break; const pool = q.battlefield.filter(b => b.card.isCreature); if (!pool.length) break; const v = q.ai ? [...pool].sort((a, b) => q.ai.permBase(a) - q.ai.permBase(b))[0] : (await this.pickPerm(q, src, pool, { dest: 'sacrifice' })) || pool[0]; this.say(`— ${q.name} sacrifices ${v.card.name}`, p); await this.sacrifice(q, v); break; }
         case 'descent': { const pm = ctx.perm; if (!pm) break; pm.descent = (pm.descent || 0) + 2; const x = pm.descent; for (const q of this.alive()) { await this.makeArtifactTokens(q, 'treasure', x); await this.changeLife(q, -x, src); } break; }
@@ -5923,6 +5939,8 @@ class Game {
           const top = p.library.slice(-op.n).reverse(); if (!top.length) break;
           const away = p.human ? await this.chooseFromList(p, src, top, top.length, op.op) : p.ai.chooseScry(this, p, top);
           for (const c of away) { p.library.splice(p.library.indexOf(c), 1); if (op.op === 'scry') p.library.unshift(c); else p.graveyard.push(c); }
+          { const kept = top.filter(c => !away.includes(c)); const order = (away.keepOrder || []).filter(c => kept.includes(c)); // b13: you choose the order of the cards that stay on top (first = top)
+            if (kept.length > 1 && order.length === kept.length && order.some((c, i) => c !== kept[i])) { for (const c of kept) p.library.splice(p.library.indexOf(c), 1); for (const c of [...order].reverse()) p.library.push(c); this.say(`— keeps on top, in order: ${order.map(c => c.name).join(', ')}`, p); } }
           if (op.op === 'surveil' && away.length) this.milledHook(p, away);
           this.say(`— ${op.op} ${op.n}${away.length ? `: ${away.length} to the ${op.op === 'scry' ? 'bottom' : 'graveyard'}` : ''}`, p); break;
         }
@@ -7803,7 +7821,7 @@ class AI {
     const myPower = attackers.reduce((s, a) => s + game.powerOf(me, a), 0);
     const oppsPower = game.opponentsOf(me).map(q => this.boardPower(game, q));
     const ahead = myPower >= Math.max(1, ...oppsPower) * 1.5;
-    const lateGame = game.round > (this.expert ? this.params().lateRound : 10) || (ahead && this.level !== 'casual');
+    const lateGame = game.round > (this.expert ? this.params().lateRound : 10); // b13: being 'ahead' no longer switches off the blocker check — it only stops holding creatures home (below)
     const opps = game.opponentsOf(me).map(q => ({ q, threat: this.threatOf(game, me, q), blockers: q.battlefield.filter(b => b.card.isCreature && !b.tapped) }));
     if (!opps.length) return [];
     const lethalOn = opps.filter(o => myPower >= o.q.life && o.blockers.length === 0);
@@ -7815,18 +7833,25 @@ class AI {
     else primary = opps.sort((a, b) => b.threat - a.threat)[0];
     const biggestOppPower = Math.max(0, ...opps.map(o => (this.expert ? o.q.battlefield.filter(b => b.card.isCreature) : o.blockers).reduce((s, b) => s + game.powerOf(o.q, b), 0)));
     let keepHome = 0;
-    if (this.level !== 'casual' && !lethalOn.length) while (biggestOppPower - keepHome * 3 >= me.life * (this.level === 'cutthroat' ? 0.9 : 0.75) && keepHome < Math.floor(attackers.length / 2)) keepHome++;
+    if (this.level !== 'casual' && !lethalOn.length && !ahead) while (biggestOppPower - keepHome * 3 >= me.life * (this.level === 'cutthroat' ? 0.9 : 0.75) && keepHome < Math.floor(attackers.length / 2)) keepHome++;
     const sorted = [...attackers].sort((a, b) => { const ea = a.card.kw.some(k => EVASIVE.includes(k)) ? 1 : 0, eb = b.card.kw.some(k => EVASIVE.includes(k)) ? 1 : 0; if (eb !== ea) return eb - ea; return game.powerOf(me, b) - game.powerOf(me, a); });
-    let n = 0;
     let pool = sorted.slice(0, sorted.length - keepHome);
     if (this.expert && this.params().home === 'none') pool = sorted;
     if (this.expert && this.params().home === 'model' && !lethalOn.length) { const home = this.expertHome(game, me, attackers); pool = sorted.filter(a => !home.has(a)); }
+    // b13: attackers a blocker would kill for free ("bad") only go when enough of them swamp the blockers (surplus ≥ 2), when the defender is near lethal, in the true late game, or for cheap tokens — never the commander for free
+    const safeKw = a => a.card.kw.some(k => EVASIVE.includes(k)) || a.card.kw.includes('indestructible');
+    const eatsN = a => primary.blockers.filter(b => game.canBlock(b, a) && game.powerOf(primary.q, b) >= game.toughOf(me, a) && game.toughOf(primary.q, b) > game.powerOf(me, a)).length;
+    const bad = pool.filter(a => !safeKw(a) && eatsN(a) > 0);
+    const pressing = primary.q.life <= pool.reduce((s, a) => s + game.powerOf(me, a), 0) * 1.5;
+    const isCmdr = a => (a.card.orig || a.card).isCommander;
+    let allowBad = this.level === 'casual' || lethalOn.length ? Infinity : lateGame || pressing ? Infinity : Math.max(0, bad.length - primary.blockers.length) >= 2 ? bad.length - primary.blockers.length : 0;
+    const cheap = a => game.powerOf(me, a) <= 2 && (a.card.token || (a.card.cmc || 0) <= 2);
     const going = pool.filter(a => {
-      const evasive = a.card.kw.some(k => EVASIVE.includes(k));
-      const eats = primary.blockers.filter(b => game.canBlock(b, a) && game.powerOf(primary.q, b) >= game.toughOf(me, a) && game.toughOf(primary.q, b) > game.powerOf(me, a)).length;
       if (this.level === 'casual' || lethalOn.length) return true;
-      if (lateGame) return !((a.card.orig || a.card).isCommander && eats > 0 && !evasive && !a.card.kw.includes('indestructible')); // b13: "ahead" still shouldn't walk the commander into a blocker that kills it for free
-      return evasive || a.card.kw.includes('indestructible') || eats === 0 || n++ >= primary.blockers.length;
+      if (!bad.includes(a)) return true;
+      if (isCmdr(a)) return false;
+      if (allowBad > 0 || (cheap(a) && (ahead || lateGame))) { allowBad--; return true; }
+      return false;
     });
     if (!going.length || !primary) return [];
     let assignments = going.map(a => ({ attacker: a, defender: primary.q }));

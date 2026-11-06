@@ -343,4 +343,13 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    await g.creatureEntered(g.players[1],morc); while(g.stack.length)await g.resolve(); await tick(g);
    ok('Blight: the blighted player chooses the creature (Big took the -1/-1 counter, Small untouched)',!!asked&&a.counters===-1&&!b.counters,'asked '+!!asked+' a '+a.counters+' b '+b.counters);
  }
+
+ // ==== v89: March of Swirling Mist phases out anyone's creatures ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; const opp=g.players[1];
+   const a1=await g.enterPerm(opp,tagCard(mk('Dragon','Creature — Dragon','{4}{R}','Flying',5,'5','5'))); const a2=await g.enterPerm(opp,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2'))); const mine=await g.enterPerm(me,tagCard(mk('Elf1','Creature — Elf','{G}','',1,'1','1')));
+   g.hooks.humanSearch=async c=>[c.pool.find(x=>x.name==='Dragon'),c.pool.find(x=>x.name==='Bear')].filter(Boolean).slice(0,c.n||c.max||2);
+   const m=tagCard(mk('March of Swirling Mist','Instant','{X}{U}','Choose up to X target creatures. Each of them phases out.',1)); me.hand.push(m); me.pool=[{c:'U'},{c:'U'},{c:'U'}];
+   await g.cast(me,m,'hand',null,{x:2}); while(g.stack.length)await g.resolve(); await tick(g);
+   ok("March of Swirling Mist: you can phase out two of the opponent's creatures",!opp.battlefield.includes(a1)&&!opp.battlefield.includes(a2)&&me.battlefield.includes(mine),'opp bf '+opp.battlefield.map(b=>b.card.name)+' phased '+(opp.phased||[]).length);
+ }
  console.log(fails+' failed');})();

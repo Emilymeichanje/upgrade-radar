@@ -619,4 +619,10 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    ok("Cathars' Crusade put counters on them (3 triggers → 3 counters each)",toks.every(b=>(b.counters||0)===3),toks.map(b=>b.counters).join());
    ok('Patchwork Banner (Human) buffs them: toughness 1+3+1',toks.every(b=>g.toughOf(me,b)===5),toks.map(b=>g.powerOf(me,b)+'/'+g.toughOf(me,b)).join());
  }
+
+ { // v104: Intangible Virtue is one anthem (+1/+1 vigilance), not two
+   const iv=tagCard(mk('Intangible Virtue','Enchantment','{1}{W}','Creature tokens you control get +1/+1 and have vigilance.',2));
+   const an=(iv.anthems||[]).filter(a=>a.filter==='token'); ok('Intangible Virtue: single token anthem with vigilance',an.length===1&&an[0].pump[0]===1&&an[0].kws.includes('vigilance'),JSON.stringify(iv.anthems));
+   const iv2=tagCard(mk('Plain Virtue','Enchantment','{1}{W}','Creature tokens you control get +2/+2.',2)); ok('plain token anthem still parses',(iv2.anthems||[]).length===1&&iv2.anthems[0].pump[0]===2,JSON.stringify(iv2.anthems));
+ }
  console.log(fails+' failed');})();

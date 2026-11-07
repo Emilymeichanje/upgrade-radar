@@ -3473,7 +3473,7 @@ class Game {
       const hand = p.hand.filter(x => x !== card && matchesFilter(x, card.behold)); const perms = p.battlefield.filter(b => matchesFilter(b.card, card.behold) && !b.card.token);
       let c = [...hand].sort((a, z) => (a.cmc || 0) - (z.cmc || 0))[0] || null, pm = null;
       if (p.human && !this.shortcutting && hand.length + perms.length > 1) { const pool = [...hand, ...perms.map(b => b.card)]; const pick = (await this.chooseFromList(p, card, pool, 1, 'exile'))[0]; if (pick) { if (hand.includes(pick)) c = pick; else { pm = perms.find(b => b.card === pick) || null; c = pm ? pm.card : c; } } }
-      else if (!c && perms.length) pm = [...perms].sort((a, z) => (a.card.cmc || 0) - (z.card.cmc || 0))[0], c = pm.card;
+      else if (!c && perms.length) { const cheap = perms.filter(b => !b.card.isCommander && !b.card.isLegendary && (b.card.cmc || 0) <= 3); if (cheap.length) { pm = [...cheap].sort((a, z) => (a.card.cmc || 0) - (z.card.cmc || 0))[0]; c = pm.card; } } // AI never beholds its commander or a legend off the battlefield (Omnath exiled itself in g…56)
       if (pm) { await this.exilePerm(p, pm); card._beheld = pm.card.orig || pm.card; this.say(`beholds and exiles ${pm.card.name} from the battlefield`, p); }
       else if (c) { p.hand.splice(p.hand.indexOf(c), 1); p.exile.push(c); card._beheld = c; this.say(`beholds and exiles ${c.name}`, p); } }
     if (card.statics && card.statics.viperSac && p._viperN) { const vs = p.battlefield.filter(b => !b.card.isLand && b.card.token).slice(0, p._viperN); for (const v of vs) await this.sacrifice(p, v); this.say(`sacrifices ${vs.length} permanents to reduce the cost`, p); p._viperN = 0; }

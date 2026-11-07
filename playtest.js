@@ -2882,7 +2882,14 @@ class Game {
     if (delta > 0) for (const b of p.battlefield) if (b.card.statics && b.card.statics.gainMult && !b.neutral) delta *= 2;
     if (delta < 0) { const act = this.players[this.active]; if (act !== p && !act.dead && act.battlefield.some(b => b.card.statics && b.card.statics.lossMult && !b.neutral)) delta *= 2; }
     if (p.angelTurn === this.turn && p.life + delta < 1) delta = 1 - p.life;
-    p.life += delta; await this.emit({ type: 'life', p, delta, source, combat: !!this._dmgCombat }); this._dmgCombat = false;
+    p.life += delta;
+    if (!this._lifeFromDmg) { /* b13: every non-damage life change is visible in the log (damage annotates itself in dealDamage) */
+      const shortN = p.name.replace(/^(You|AI) · /, ''); const tag = ` [${shortN} ${p.life - delta} → ${p.life}]`; const last = this.log[this.log.length - 1];
+      const mentions = last && !last.m.includes(`[${shortN} `) && (last.m.includes(p.name) || last.m.includes(shortN) || /each (opponent|player)/.test(last.m) || /^pays \d+ life/.test(last.m)) && /gain|lose|loses|life/.test(last.m) && !/draws? \d+ cards?/.test(last.m);
+      if (mentions) { last.m += tag; if (this.hooks.logPatch) this.hooks.logPatch(this.log.length - 1, last.m); }
+      else this.say(`— ${source && source.name ? source.name + ': ' : ''}${shortN} ${delta > 0 ? 'gains' : 'loses'} ${Math.abs(delta)} life${tag}`, p);
+    }
+    await this.emit({ type: 'life', p, delta, source, combat: !!this._dmgCombat }); this._dmgCombat = false;
     if (p.life <= 0) await this.kill(p, 'ran out of life');
     await this.lifeTriggers(p, delta);
   }
@@ -3554,7 +3561,7 @@ class Game {
       let v; if (p.human) { const pick = (await this.chooseFromList(p, card, pool.map(b => b.card), 1, 'sacrifice'))[0]; v = pool.find(b => b.card === pick) || pool[0]; } else v = p.ai ? p.ai.chooseSacVictim(this, p, pool) : pool[0];
       this.say(`sacrifices ${v.card.name} to cast ${card.name}`, p); p._lastSac = v; await this.sacrifice(p, v);
     } else if (a.discard) { for (let k = 0; k < a.discard; k++) { const d = p.ai ? p.ai.chooseDiscard(this, p) : (this.hooks.humanDiscard ? await this.hooks.humanDiscard(p) : p.hand[0]); if (d) { p.hand.splice(p.hand.indexOf(d), 1); p.graveyard.push(d); this.say(`discards ${d.name} to cast ${card.name}`, p); } } }
-    else if (a.life) { let n = a.life; if (n === 'x') { const max = Math.max(0, p.life - 1); if (p.human && !this.shortcutting && this.hooks.humanNumber) n = Math.min(max, Math.max(0, +(await this.hooks.humanNumber({ p, card, min: 0, max: Math.min(max, 20), question: 'pay how much life? (X)' })) || 0)); else { const opp = this.opponentsOf(p).flatMap(q => q.battlefield.filter(b => b.card.isCreature).map(b => this.toughOf(q, b))); n = Math.min(max, Math.max(1, opp.length ? Math.max(...opp) : 1)); } card._lifeX = n; } /* b13: Toxic Deluge — you choose X; it was fixed at 3 */ await this.changeLife(p, -n, card); this.say(`pays ${n} life to cast ${card.name}${a.life === 'x' ? ` (X = ${n})` : ''}`, p); }
+    else if (a.life) { let n = a.life; if (n === 'x') { const max = Math.max(0, p.life - 1); if (p.human && !this.shortcutting && this.hooks.humanNumber) n = Math.min(max, Math.max(0, +(await this.hooks.humanNumber({ p, card, min: 0, max: Math.min(max, 20), question: 'pay how much life? (X)' })) || 0)); else { const opp = this.opponentsOf(p).flatMap(q => q.battlefield.filter(b => b.card.isCreature).map(b => this.toughOf(q, b))); n = Math.min(max, Math.max(1, opp.length ? Math.max(...opp) : 1)); } card._lifeX = n; } /* b13: Toxic Deluge — you choose X; it was fixed at 3 */ this.say(`pays ${n} life to cast ${card.name}${a.life === 'x' ? ` (X = ${n})` : ''}`, p); await this.changeLife(p, -n, card); }
   }
   /** modal spells: which modes (sub-cards) to use */
   async chooseModes(p, card, base = null) {
@@ -3921,7 +3928,7 @@ class Game {
     if (q.b7_redirect && await this.b7_redirectPlayer(q, n, src)) return 0;
     if (q.battlefield.some(b => b.card.statics && b.card.statics.chasm && !b.neutral)) { this.say(`— damage to ${q.name} is prevented`, q); return 0; }
     const lifeBefore = q.life;
-    await this.changeLife(q, -n, src);
+    this._lifeFromDmg = true; try { await this.changeLife(q, -n, src); } finally { this._lifeFromDmg = false; }
     { // b13: every damage line names the source and shows the life change — annotate the line that announced it, or add one
       const short = q.name.replace(/^(You|AI) · /, ''); const tag = ` [${short} ${lifeBefore} → ${q.life}]`; const last = this.log[this.log.length - 1];
       const mentions = last && !/\[[^\]]* \d+ → -?\d+\]$/.test(last.m) && (last.m.includes(`hits ${q.name} for`) || (/damage to /.test(last.m) && last.m.includes(q.name)) || (/loses? \d+/.test(last.m) && last.m.includes(q.name)));
@@ -4873,7 +4880,7 @@ class Game {
         case 'draw': await this.draw(p, op.n); break;
         case 'gain': await this.changeLife(p, op.n, src); break;
         case 'lose': await this.changeLife(p, -op.n, src); break;
-        case 'drain': { const vs = op.each ? this.opponentsOf(p) : [await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: which player loses ${op.n} life?`)]; let lost = 0; this.say(`— ${src.name}: ${op.each ? 'each opponent loses' : (vs[0] ? vs[0].name + ' loses' : 'loses')} ${op.n}${op.gainLost ? ' (you gain that much)' : ''}`, p); const parts = []; for (const q of vs.filter(Boolean)) { const l0 = q.life; await this.changeLife(q, -op.n, src); lost += Math.max(0, l0 - q.life); parts.push(`${q.name} ${l0} → ${q.life}`); } if (parts.length) this.say(`— [${parts.join(', ')}]`, p); if (op.gainLost && lost) { const g0 = p.life; await this.changeLife(p, lost, src); this.say(`— gains ${lost} [${p.name} ${g0} → ${p.life}]`, p); } break; } /* b13: life totals were invisible here (Kokusho looked like it drained one player) */
+        case 'drain': { const vs = op.each ? this.opponentsOf(p) : [await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: which player loses ${op.n} life?`)]; let lost = 0; this.say(`— ${src.name}: ${op.each ? 'each opponent loses' : (vs[0] ? vs[0].name + ' loses' : 'loses')} ${op.n}${op.gainLost ? ' (you gain that much)' : ''}`, p); for (const q of vs.filter(Boolean)) { const l0 = q.life; await this.changeLife(q, -op.n, src); lost += Math.max(0, l0 - q.life); } if (op.gainLost && lost) await this.changeLife(p, lost, src); break; }
         case 'damage': {
           if (op.to === 'each opponent') { for (const q of this.opponentsOf(p)) { if (this.protFromPlayer(q, p)) continue; this.say(`— ${src.name} deals ${this.dmgAmt(p, op.n, { red: (src.colors || []).includes('R') })} damage to ${q.name}`, p); await this.damagePlayer(q, this.dmgAmt(p, op.n, { red: (src.colors || []).includes('R') }), src, { by: p }); } await this.pirateDamage(p, src, this.opponentsOf(p)); break; }
           if (op.to === 'each creature') { for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && this.toughOf(q, b) <= op.n * (this.b5_stag(q) ? 2 : 1) && b.protTurn !== this.turn && !this.noncombatPrevented(q, b))) await this.destroy(q, b); break; }

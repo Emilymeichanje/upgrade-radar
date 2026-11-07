@@ -558,4 +558,36 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const sb=put(m3,m3.hand.find(c=>c.name==='Stalwart Shield-Bearers')); const wo=put(m3,tagCard(mk('Wall of Omens','Creature — Wall','{1}{W}','Defender',2,'0','4'))); g3.refreshStatics();
    ok('Stalwart gives other defenders +0/+2 and Felothar makes a 0-power wall hit for its toughness',g3.toughOf(m3,wo)===6&&g3.toughOf(m3,sb)===3&&g3.combatPow(m3,wo)===6,'wo '+g3.toughOf(m3,wo)+' sb '+g3.toughOf(m3,sb)+' pow '+g3.combatPow(m3,wo));
  }
+
+ { // v101: Duelist's Heritage fires on anyone's attack and the controller picks; Ardenn asks target + pieces; Mother of Runes asks colour
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const g=fresh(); const me=g.players[0], op=g.players[1]; me.human=true; me.ai=null;
+   const dh=tagCard(mk("Duelist's Heritage",'Enchantment','{2}{W}','Whenever one or more creatures attack, you may have target attacking creature gain double strike until end of turn.',3));
+   ok('Duelist parses as any-attack trigger',dh.triggers&&dh.triggers[0].anyAttack&&dh.triggers[0].ops[0].any,JSON.stringify(dh.triggers));
+   put(me,dh); const a1=put(me,tagCard(mk('Knight','Creature — Knight','{1}{W}','',2,'2','2'))), a2=put(me,tagCard(mk('Giant','Creature — Giant','{3}{R}','',4,'4','4')));
+   let pool=null; g.hooks.humanSearch=async c=>{pool=c.pool.map(x=>x.name);return [c.pool.find(x=>x.name==='Knight')]};
+   await g.attackTriggers(me,[{attacker:a1,defender:op},{attacker:a2,defender:op}]);
+   ok('Duelist: human picks the attacker (not auto-biggest)',pool&&pool.length===2&&(a1.kwT||[]).includes('double strike')&&!(a2.kwT||[]).includes('double strike'),JSON.stringify(pool)+' '+JSON.stringify([a1.kwT,a2.kwT]));
+   // opponent attacks: my Duelist still triggers, offering their attackers
+   const g2=fresh(); const m2=g2.players[0], o2=g2.players[1]; m2.human=true; m2.ai=null; put(m2,tagCard(mk("Duelist's Heritage",'Enchantment','{2}{W}','Whenever one or more creatures attack, you may have target attacking creature gain double strike until end of turn.',3)));
+   const ob=put(o2,tagCard(mk('Orc','Creature — Orc','{2}{R}','',3,'3','3'))); let pool2=null; g2.hooks.humanSearch=async c=>{pool2=c.pool.map(x=>x.name);return []};
+   await g2.attackTriggers(o2,[{attacker:ob,defender:g2.players[2]}]);
+   ok("Duelist fires on an opponent's attack and I may decline",pool2&&pool2.includes('Orc')&&!(ob.kwT||[]).includes('double strike'),JSON.stringify(pool2));
+   // Ardenn
+   const g3=fresh(); const m3=g3.players[0]; m3.human=true; m3.ai=null;
+   const ard=put(m3,tagCard(mk('Ardenn, Intrepid Archaeologist','Legendary Creature — Kor Scout','{2}{W}','At the beginning of combat on your turn, you may attach any number of Auras and Equipment you control to target permanent or player.',3,'2','2')));
+   const big=put(m3,tagCard(mk('Big','Creature — Giant','{4}{G}','',5,'5','5'))), small=put(m3,tagCard(mk('Small','Creature — Elf','{G}','',1,'1','1')));
+   const e1=put(m3,tagCard(mk('Hammer','Artifact — Equipment','{1}','Equipped creature gets +10/+10.\nEquip {8}',1))), e2=put(m3,tagCard(mk('Boots','Artifact — Equipment','{1}','Equipped creature has haste.\nEquip {1}',1)));
+   const asked=[]; g3.hooks.humanSearch=async c=>{asked.push(c.pool.map(x=>x.name)); if(c.dest==='attach') return [c.pool.find(x=>x.name==='Hammer')]; return [c.pool.find(x=>x.name==='Small')]};
+   await g3.runOps(m3,ard.card.triggers[0].ops,ard.card,{perm:ard});
+   ok('Ardenn: I pick the creature and which pieces move',asked.length===2&&e1.attachedTo===small.id&&e2.attachedTo==null,JSON.stringify(asked)+' '+(e1.attachedTo===small.id));
+   // Mother of Runes
+   const g4=fresh(); const m4=g4.players[0]; m4.human=true; m4.ai=null;
+   const mom=tagCard(mk('Mother of Runes','Creature — Human Cleric','{W}','{T}: Target creature you control gains protection from the color of your choice until end of turn.',1,'1','1'));
+   ok('Mother of Runes parses protColor',mom.abilities&&mom.abilities.some(a=>a.ops.some(o=>o.op==='protColor')),JSON.stringify(mom.abilities));
+   const mm=put(m4,mom), kn=put(m4,tagCard(mk('Knight','Creature — Knight','{1}{W}','',2,'2','2')));
+   let q=null; g4.hooks.humanSearch=async c=>[c.pool.find(x=>x.name==='Knight')]; g4.hooks.humanChoice=async c=>{q=c;return 'green'};
+   await g4.runOps(m4,mom.abilities.find(a=>a.ops.some(o=>o.op==='protColor')).ops,mom,{perm:mm});
+   ok('Mother of Runes: colour is my choice',q&&q.options.length===5&&kn.protColor&&kn.protColor.c==='G','q '+JSON.stringify(q&&q.options)+' prot '+JSON.stringify(kn.protColor));
+ }
  console.log(fails+' failed');})();

@@ -75,7 +75,8 @@ function tokenLook(s) {
   return types || tcolors.length ? { types: types || undefined, tcolors } : {};
 }
 function parseOps(t) {
-  const ops = []; let m;
+  const ops = []; let m; let caveGain = 0;
+  t = t.replace(/\s*if you put a cave onto the battlefield this way, you gain (\d+) life\.?/, (_, n) => { caveGain = +n; return ''; }); /* b13: Spelunking — the 4 life is conditional on a Cave; it was parsed as a flat gain 4 */
   if (t.includes('__modal__')) { if (PENDING_MODAL) ops.push(PENDING_MODAL); PENDING_MODAL = null; return ops; }
   // ==== fixes b12 (parse) ====  Saga chapters and walker abilities from the Terra / Tam decks; exact texts, checked first
   { const T = t.replace(/\.$/, ''); const B12 = [
@@ -163,7 +164,7 @@ function parseOps(t) {
   if ((m = t.match(/search your library for up to two (basic )?land cards, reveal those cards, put one onto the battlefield( tapped)? and the other into your hand/))) ops.push({ op: 'landToBf', n: 1, basic: !!m[1], types: [], tapped: !!m[2] }, { op: 'landToHand', n: 1, basic: !!m[1], types: [] }); // b13: Cultivate / Kodama's Reach — the "other into your hand" half was dropped
   else if ((m = t.match(/search your library for (a|an|up to two|up to three|two) (basic )?([a-z ]*?)\b(?:land )?cards?(?: and (?:a|an) [a-z ]+ card)?(?:[^.]*?)put (?:it|them|that card|those cards|one) onto the battlefield( tapped)?/)) && /land|plains|island|swamp|mountain|forest/.test(m[0])) ops.push({ op: 'landToBf', n: /two/.test(m[1]) ? 2 : /three/.test(m[1]) ? 3 : 1, basic: !!m[2], types: ['plains', 'island', 'swamp', 'mountain', 'forest'].filter(x => m[3].includes(x)), tapped: !!m[4] });
   if (/\bproliferate\b/.test(t)) ops.push({ op: 'proliferate' });
-  if ((m = t.match(/you may put a land card from your hand onto the battlefield( tapped)?/))) ops.push({ op: 'landFromHand', tapped: !!m[1], may: true }); // b13: Chulane et al. — the clause was silently dropped
+  if ((m = t.match(/you may put a land card from your hand onto the battlefield( tapped)?/))) ops.push({ op: 'landFromHand', tapped: !!m[1], may: true, caveGain: caveGain || undefined }); // b13: Chulane et al. — the clause was silently dropped
   if (/^transform this card/.test(t.trim())) ops.push({ op: 'transform' });
   if ((m = t.match(/you get ((?:\{e\})+)/))) ops.push({ op: 'energy', n: m[1].length / 3 });
   if (/takes? an extra turn after this one/.test(t)) ops.push({ op: 'extraTurn' });
@@ -2387,6 +2388,7 @@ function tagCard(c) {
     }
     for (const col of 'WUBRG') if (new RegExp('add \\{' + col + '\\}|\\{t\\}: add \\{[^}]*' + col, 'i').test(o) || new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front)) card.produces.push(col);
     for (const mm of o.matchAll(/\{t\}(?:, pay \d+ life)?: add ([^.\n]+)/gi)) for (const s of mm[1].matchAll(/\{([wubrg])\}/gi)) { const col = s[1].toUpperCase(); if (!card.produces.includes(col)) card.produces.push(col); }
+    if (/any color in your commander's color identity/i.test(o)) card.cmdIdentity = true;
     if (/add one mana of any color|mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|path of ancestry/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
     if (/^\{t\}: add one mana of any color that a land an opponent controls could produce/m.test(o)) card.landDyn = 'oppLands';
     else if (/^\{t\}: add one mana of any type that a land you control could produce/m.test(o)) card.landDyn = 'myLands';
@@ -2975,6 +2977,7 @@ class Game {
       else if (c.isCreature && (f.creature || (f.tokenCreature && c.token) || (f.creatureForCreatures && card && card.isCreature) || (f.esika && c.isLegendary && b !== f.esika)) && !sick) info = { amount: 1, colors: ALLC.slice() };
       if (!info && S.thranduil && !sick && !c.manaAb) { const g = p.graveyard.find(x => matchesFilter(x, 'elf') && x.manaAb && !x.manaAb.dyn && !x.manaAb.sac && x.manaAb.amount > 0); if (g) info = { amount: g.manaAb.amount, colors: g.manaAb.colors.slice(), thranduilVia: g.name }; } // b13: Thranduil has the mana abilities of Elf cards in your graveyard (Devoted Druid, Llanowar Elves…)
       if (!info && c.isCreature && !sick && ((f.elfB && matchesFilter(c, 'elf')) || (f.rishkar && this.hasCounters(b)) || (f.allyMana && matchesFilter(c, 'ally')))) info = { amount: 1, colors: f.allyMana && matchesFilter(c, 'ally') ? ALLC.slice() : f.elfB && matchesFilter(c, 'elf') ? ['B'] : ['G'] };
+      if (info && c.cmdIdentity && !info.b1_opal) { const id = this.b1_opalColors(p, card); if (id.length) { const cs = info.colors.filter(x => id.includes(x) || x === 'C'); info = { ...info, colors: cs.length ? cs : (info.amount ? ['C'] : []) }; } } /* b13: Command Tower / Commander's Sphere / Path of Ancestry — only colours in your commander's identity (Dina's Tower offered all five) */
       if (info && f.ouphe && c.isArtifact && !c.isLand) info = null;
       if (info && f.linvalaK && c.isCreature && !c.isLand) info = null;
       if (info && c.manaAb && c.manaAb.b6only && !this.b6_manaOk(p, c.manaAb, card, cost)) info = null;
@@ -4870,7 +4873,7 @@ class Game {
         case 'draw': await this.draw(p, op.n); break;
         case 'gain': await this.changeLife(p, op.n, src); break;
         case 'lose': await this.changeLife(p, -op.n, src); break;
-        case 'drain': { const vs = op.each ? this.opponentsOf(p) : [await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: which player loses ${op.n} life?`)]; let lost = 0; this.say(`— ${src.name}: ${op.each ? 'each opponent loses' : (vs[0] ? vs[0].name + ' loses' : 'loses')} ${op.n}${op.gainLost ? ' (you gain that much)' : ''}`, p); for (const q of vs.filter(Boolean)) { const l0 = q.life; await this.changeLife(q, -op.n, src); lost += Math.max(0, l0 - q.life); } if (op.gainLost && lost) await this.changeLife(p, lost, src); break; }
+        case 'drain': { const vs = op.each ? this.opponentsOf(p) : [await this.choosePlayer(p, src, this.opponentsOf(p), `${src.name}: which player loses ${op.n} life?`)]; let lost = 0; this.say(`— ${src.name}: ${op.each ? 'each opponent loses' : (vs[0] ? vs[0].name + ' loses' : 'loses')} ${op.n}${op.gainLost ? ' (you gain that much)' : ''}`, p); const parts = []; for (const q of vs.filter(Boolean)) { const l0 = q.life; await this.changeLife(q, -op.n, src); lost += Math.max(0, l0 - q.life); parts.push(`${q.name} ${l0} → ${q.life}`); } if (parts.length) this.say(`— [${parts.join(', ')}]`, p); if (op.gainLost && lost) { const g0 = p.life; await this.changeLife(p, lost, src); this.say(`— gains ${lost} [${p.name} ${g0} → ${p.life}]`, p); } break; } /* b13: life totals were invisible here (Kokusho looked like it drained one player) */
         case 'damage': {
           if (op.to === 'each opponent') { for (const q of this.opponentsOf(p)) { if (this.protFromPlayer(q, p)) continue; this.say(`— ${src.name} deals ${this.dmgAmt(p, op.n, { red: (src.colors || []).includes('R') })} damage to ${q.name}`, p); await this.damagePlayer(q, this.dmgAmt(p, op.n, { red: (src.colors || []).includes('R') }), src, { by: p }); } await this.pirateDamage(p, src, this.opponentsOf(p)); break; }
           if (op.to === 'each creature') { for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && this.toughOf(q, b) <= op.n * (this.b5_stag(q) ? 2 : 1) && b.protTurn !== this.turn && !this.noncombatPrevented(q, b))) await this.destroy(q, b); break; }
@@ -5248,7 +5251,7 @@ class Game {
         case 'landFromHand': { const lands = p.hand.filter(c => c.isLand); if (!lands.length) break; let land;
           if (p.human && !this.shortcutting) land = (await this.chooseFromList(p, src, lands, 1, 'battlefield'))[0]; // b13: you choose, and "you may" means you can decline (Skip)
           else land = [...lands].sort((a, z) => ((z.produces || []).length + (/enters tapped|enters the battlefield tapped/.test((z.oracle || '').toLowerCase()) ? -0.5 : 0)) - ((a.produces || []).length + (/enters tapped|enters the battlefield tapped/.test((a.oracle || '').toLowerCase()) ? -0.5 : 0)))[0];
-          if (land) { p.hand.splice(p.hand.indexOf(land), 1); const [pm] = await this.landEnters(p, land, !!op.tapped); this.say(`— puts ${land.name} onto the battlefield${pm && pm.tapped ? ' tapped' : ''}`, p); await this.landfall(p, pm); } break; }
+          if (land) { p.hand.splice(p.hand.indexOf(land), 1); const [pm] = await this.landEnters(p, land, !!op.tapped); this.say(`— puts ${land.name} onto the battlefield${pm && pm.tapped ? ' tapped' : ''}`, p); if (op.caveGain && /\bCave\b/.test(land.type || '')) { await this.changeLife(p, op.caveGain, src); this.say(`— ${src.name}: it's a Cave, gains ${op.caveGain} life`, p); } await this.landfall(p, pm); } break; }
         case 'doublePT': for (const b of p.battlefield.filter(b => b.card.isCreature)) b.dblTurn = this.turn; this.say('— creatures double their power and toughness this turn', p); break;
         case 'activeSacrifices': { const q = ctx.active; if (!q || q === p) break; const pool = q.battlefield.filter(b => b.card.isCreature); if (!pool.length) break; const v = q.ai ? [...pool].sort((a, b) => q.ai.permBase(a) - q.ai.permBase(b))[0] : (await this.pickPerm(q, src, pool, { dest: 'sacrifice' })) || pool[0]; this.say(`— ${q.name} sacrifices ${v.card.name}`, p); await this.sacrifice(q, v); break; }
         case 'descent': { const pm = ctx.perm; if (!pm) break; pm.descent = (pm.descent || 0) + 2; const x = pm.descent; for (const q of this.alive()) { await this.makeArtifactTokens(q, 'treasure', x); await this.changeLife(q, -x, src); } break; }

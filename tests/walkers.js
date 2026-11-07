@@ -590,4 +590,18 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    await g4.runOps(m4,mom.abilities.find(a=>a.ops.some(o=>o.op==='protColor')).ops,mom,{perm:mm});
    ok('Mother of Runes: colour is my choice',q&&q.options.length===5&&kn.protColor&&kn.protColor.c==='G','q '+JSON.stringify(q&&q.options)+' prot '+JSON.stringify(kn.protColor));
  }
+
+ { // v102: Command Tower only offers identity colours; Spelunking's 4 life needs a Cave; drain logs life totals
+   const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const ct=tagCard(mk('Command Tower','Land','',"{T}: Add one mana of any color in your commander's color identity.",0)); const [pm]=await g.landEnters(me,ct);
+   const src=g.manualSrcs(me).find(x=>x.b===pm); const id=g.b1_opalColors(me);
+   ok('Command Tower offers only commander-identity colours',src&&id.length&&src.colors.every(c=>id.includes(c))&&src.colors.length===id.length,JSON.stringify([src&&src.colors,id]));
+   const sp=tagCard(mk('Spelunking','Enchantment','{2}{G}',"When this enchantment enters, draw a card, then you may put a land card from your hand onto the battlefield. If you put a Cave onto the battlefield this way, you gain 4 life.\nLands you control enter untapped.",3));
+   ok('Spelunking: no flat gain 4',!(sp.etbOps||[]).some(o=>o.op==='gain')&&(sp.etbOps||[]).some(o=>o.op==='landFromHand'&&o.caveGain===4),JSON.stringify(sp.etbOps));
+   me.life=20; me.hand=[tagCard(mk('Swamp','Basic Land — Swamp','','',0))]; g.hooks.humanSearch=async c=>[c.pool[0]];
+   await g.runOps(me,sp.etbOps.filter(o=>o.op==='landFromHand'),sp,{}); ok('Spelunking: a Swamp gives no life',me.life===20,'life '+me.life);
+   me.hand=[tagCard(mk('Hidden Cataract','Land — Cave','','{T}: Add {U}.',0))]; await g.runOps(me,sp.etbOps.filter(o=>o.op==='landFromHand'),sp,{}); ok('Spelunking: a Cave gives 4',me.life===24,'life '+me.life);
+   const n0=g.log.length; g.players[1].life=3; await g.runOps(me,[{op:'drain',n:5,each:true,gainLost:true}],{name:'Kokusho'},{});
+   const lines=g.log.slice(n0).map(x=>x.m).join('\n'); ok('drain logs every opponent and the gain',/P1 3 → -2/.test(lines)&&/gains 15/.test(lines),lines);
+ }
  console.log(fails+' failed');})();

@@ -459,4 +459,51 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    ok('…plotted card is exiled and not castable this turn',me.exile.includes(fb)&&!g.castMode(me,fb,'exile'),''); g.turn+=4;
    ok('…and is castable free on a later turn',g.castMode(me,fb,'exile')==='free',String(g.castMode(me,fb,'exile')));
  }
+
+ // ==== v98: Farseek tapped, Banneret, Assassin's Trophy rider, Cavalier cycle ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let mayAsked=0; g.hooks.humanMay=async()=>{mayAsked++;return true}; g.hooks.humanSearch=async c=>[c.pool.find(x=>x.name==='Breeding Pool')||c.pool[0]];
+   me.library.push(tagCard(mk('Breeding Pool','Land — Forest Island','',"({T}: Add {G} or {U}.)\nAs Breeding Pool enters, you may pay 2 life. If you don't, it enters tapped.",0)));
+   const fs=tagCard(mk('Farseek','Sorcery','{1}{G}','Search your library for a Plains, Island, Swamp, or Mountain card, put it onto the battlefield tapped, then shuffle.',2)); me.hand.push(fs); me.pool=[{c:'G'},{c:'G'}];
+   await g.cast(me,fs,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   const bp=me.battlefield.find(b=>b.card.name==='Breeding Pool'); ok('Farseek: the shockland enters tapped with no pay-2-life question',!!bp&&bp.tapped&&mayAsked===0&&me.life===40,'bp '+!!bp+' tapped '+(bp&&bp.tapped)+' asked '+mayAsked);
+ }
+ { const g=fresh(); const me=g.players[0];
+   await g.enterPerm(me,tagCard(mk('Brighthearth Banneret','Creature — Elemental Warrior','{1}{R}',"Elemental spells and Warrior spells you cast cost {1} less to cast.\nReinforce 1—{1}{R} ({1}{R}, Discard this card: Put a +1/+1 counter on target creature.)",2,'1','1')));
+   const rr=tagCard(mk('Risen Reef','Creature — Elemental','{1}{G}{U}','',3,'1','1')); const c=g.costOf(me,rr,'hand');
+   ok('Brighthearth Banneret: Risen Reef costs {G}{U}',c.total===2&&c.generic===0,JSON.stringify(c).slice(0,80));
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; const ai=g.players[1]; let searched=null; g.hooks.humanSearch=async c=>{searched=c;return [c.pool[0]]};
+   me.library.push(tagCard(mk('Forest','Basic Land — Forest','','',0))); const bear=await g.enterPerm(me,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')));
+   const tro=tagCard(mk("Assassin's Trophy",'Instant','{B}{G}',"Destroy target permanent an opponent controls. Its controller may search their library for a basic land card, put it onto the battlefield, then shuffle.",2)); ai.hand.push(tro); ai.pool=[{c:'B'},{c:'G'}];
+   const n0=me.battlefield.length; await g.cast(ai,tro,'hand',bear); while(g.stack.length)await g.resolve(); await tick(g);
+   ok("Assassin's Trophy: the victim searches for a basic land (untapped)",!me.battlefield.includes(bear)&&!!searched&&me.battlefield.length===n0&&me.battlefield.some(b=>b.card.isLand&&!b.tapped&&b.enteredTurn===g.turn),'bear '+me.battlefield.includes(bear)+' searched '+!!searched);
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let asked=null; g.hooks.humanSearch=async c=>{asked=c;return [c.pool.find(x=>x.name==='Island')||c.pool[0]]}; g.hooks.humanMay=async()=>true;
+   me.library.push(tagCard(mk('Elf','Creature — Elf','{G}','',1,'1','1')),tagCard(mk('Island','Basic Land — Island','','',0)),tagCard(mk('Elf','Creature — Elf','{G}','',1,'1','1')),tagCard(mk('Forest','Basic Land — Forest','','',0)),tagCard(mk('Elf','Creature — Elf','{G}','',1,'1','1')));
+   const cav=tagCard(mk('Cavalier of Thorns','Creature — Elemental Knight','{2}{G}{G}{G}',"Reach\nWhen this creature enters, reveal the top five cards of your library. Put a land card from among them onto the battlefield and the rest into your graveyard.\nWhen this creature dies, you may exile it. If you do, put another target card from your graveyard on top of your library.",5,'5','6'));
+   const pm=await g.enterPerm(me,cav); await g.runOps(me,cav.etbOps,cav,{perm:pm}); await tick(g);
+   ok('Cavalier of Thorns: you choose which revealed land enters (Island over Forest)',!!asked&&asked.pool.length===2&&me.battlefield.some(b=>b.card.name==='Island')&&!me.battlefield.some(b=>b.card.name==='Forest'),'asked '+(asked&&asked.pool.map(c=>c.name)));
+   asked=null; g.hooks.humanSearch=async c=>{asked=c;return [c.pool.find(x=>x.name==='Forest')]}; await g.destroy(me,pm,false); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('…and on death you choose the graveyard card to put on top (Forest)',!!asked&&me.exile.includes(cav)&&me.library[me.library.length-1].name==='Forest','asked '+!!asked+' top '+me.library[me.library.length-1].name);
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; g.hooks.humanSearch=async c=>c.pool.slice(0,2); me.graveyard.push(tagCard(mk('Forest','Basic Land — Forest','','',0)),tagCard(mk('Forest','Basic Land — Forest','','',0)),tagCard(mk('Forest','Basic Land — Forest','','',0)));
+   const cf=tagCard(mk('Cavalier of Flame','Creature — Elemental Knight','{2}{R}{R}{R}',"{1}{R}: Creatures you control get +1/+0 and gain haste until end of turn.\nWhen Cavalier of Flame enters, discard any number of cards, then draw that many cards.\nWhen Cavalier of Flame dies, it deals X damage to each opponent and each planeswalker they control, where X is the number of land cards in your graveyard.",5,'6','5'));
+   me.hand=[tagCard(mk('A','Sorcery','{5}','',5)),tagCard(mk('B','Sorcery','{6}','',6)),tagCard(mk('C','Sorcery','{7}','',7))]; const pm=await g.enterPerm(me,cf); await g.runOps(me,cf.etbOps,cf,{perm:pm}); await tick(g);
+   ok('Cavalier of Flame: discards the cards you choose and draws that many',me.hand.length===3&&!me.hand.some(c=>c.name==='A'),'hand '+me.hand.map(c=>c.name));
+   const l0=g.players[1].life; await g.destroy(me,pm,false); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('…and on death deals X = land cards in your graveyard (3) to each opponent',g.players[1].life===l0-3&&g.players[2].life===l0-3,'life '+g.players[1].life);
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; g.hooks.humanSearch=async c=>[c.pool[0]]; g.hooks.humanMay=async()=>true;
+   const cn=tagCard(mk('Cavalier of Night','Creature — Elemental Knight','{2}{B}{B}{B}',"Lifelink\nWhen Cavalier of Night enters, you may sacrifice another creature. When you do, destroy target creature an opponent controls.\nWhen Cavalier of Night dies, return target creature card with mana value 3 or less from your graveyard to the battlefield.",5,'4','5'));
+   const fod=await g.enterPerm(me,tagCard(mk('Elf','Creature — Elf','{G}','',1,'1','1'))); const bear=await g.enterPerm(g.players[1],tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')));
+   const pm=await g.enterPerm(me,cn); await g.runOps(me,cn.etbOps,cn,{perm:pm}); await tick(g);
+   ok('Cavalier of Night: sacrifice another creature → destroy an opponent\'s creature',!me.battlefield.includes(fod)&&!g.players[1].battlefield.includes(bear),'fod '+me.battlefield.includes(fod)+' bear '+g.players[1].battlefield.includes(bear));
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; g.hooks.humanSearch=async c=>[c.pool[0]];
+   const cg=tagCard(mk('Cavalier of Gales','Creature — Elemental Knight','{2}{U}{U}{U}',"Flying\nWhen Cavalier of Gales enters, draw three cards, then put two cards from your hand on top of your library in any order.\nWhen Cavalier of Gales dies, shuffle it into its owner's library, then scry 2.",5,'5','5'));
+   const h0=me.hand.length, l0=me.library.length; const pm=await g.enterPerm(me,cg); await g.runOps(me,cg.etbOps,cg,{perm:pm}); await tick(g);
+   ok('Cavalier of Gales: draw three, put two back (net +1 card, library −1)',me.hand.length===h0+1&&me.library.length===l0-1,'hand '+me.hand.length+' lib '+me.library.length);
+   await g.destroy(me,pm,false); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('…and on death it is shuffled into the library (not in the graveyard)',me.library.includes(cg)&&!me.graveyard.includes(cg),'');
+ }
  console.log(fails+' failed');})();

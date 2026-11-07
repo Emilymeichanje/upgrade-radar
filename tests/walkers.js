@@ -637,4 +637,19 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    await g.cast(me,s3,'hand'); while(g.stack.length)await g.resolve(); await tick(g); const h3=me.hand.length;
    ok('Jori En: no draw on 1st, draw on 2nd, none on 3rd',h1===h0&&h2===h1+1&&h3===h2,[h0,h1,h2,h3].join());
  }
+
+ { // v107: Gandalf the Grey never offers a mode already chosen; Mizzix's Mastery overload is the graveyard flashback, not a Rift
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; for(let i=0;i<8;i++)await g.landEnters(me,tagCard(mk('Island','Basic Land — Island','','',0)));
+   const gg=put(me,tagCard(mk('Gandalf the Grey','Legendary Creature — Avatar Wizard','{3}{U}{R}',"Whenever you cast an instant or sorcery spell, choose one that hasn't been chosen —\n• You may tap or untap target permanent.\n• Gandalf deals 3 damage to each opponent.\n• Copy target instant or sorcery spell you control. You may choose new targets for the copy.\n• Put Gandalf on top of its owner's library.",5,'3','4')));
+   const offered=[]; g.hooks.humanModes=async c=>{offered.push(c.modes.map(m=>m.text)); const dmg=c.modes.find(m=>/3 damage/.test(m.text)); return [ (dmg||c.modes[0]).card ];}; g.hooks.humanSearch=async c=>[]; g.hooks.humanMay=async()=>false;
+   const mkOpt=()=>{const c=tagCard(mk('Opt','Instant','{U}','Scry 1. Draw a card.',1)); c.spellOps=[]; return c};
+   for(let k=0;k<3;k++){const c=mkOpt(); me.hand.push(c); await g.cast(me,c,'hand'); while(g.stack.length)await g.resolve(); await tick(g);}
+   ok('Gandalf the Grey: 4 modes, then 3, then 2 (chosen ones drop out)',offered.length===3&&offered[0].length===4&&offered[1].length===3&&!offered[1].some(t=>/3 damage/.test(t))&&offered[2].length===2,JSON.stringify(offered.map(o=>o.length)));
+   // Mizzix overload
+   const g2=fresh(); const m2=g2.players[0]; m2.human=true; m2.ai=null;
+   const mm=tagCard(mk("Mizzix's Mastery",'Sorcery','{3}{R}',"Exile target card that's an instant or sorcery from your graveyard. For each card exiled this way, copy it and you may cast the copy without paying its mana cost. Exile Mizzix's Mastery.\nOverload {5}{U}{R}{R}",4));
+   const ov=(mm.abilities||[]).find(a=>a.label==='overload');
+   ok("Mizzix's Mastery overload = cast every instant/sorcery in the graveyard free",ov&&ov.ops[0].op==='mizzix'&&ov.ops[0].overload===true,JSON.stringify(ov&&ov.ops));
+ }
  console.log(fails+' failed');})();

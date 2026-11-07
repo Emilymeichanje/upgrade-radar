@@ -1229,19 +1229,19 @@ function tagAbilities(card) {
     // ---- triggers
     // ---- keywords added for report 6
     if ((m = l.match(/^(commander )?ninjutsu ((?:\{[^}]+\})+)\.?$/))) { card.ninjutsu = { cost: manaInfo(m[2].toUpperCase()), cmd: !!m[1] }; continue; }
-    if ((m = l.match(/^madness ((?:\{[^}]+\})+)\.?$/))) { card.madness = manaInfo(m[1].toUpperCase()); continue; }
-    if ((m = l.match(/^foretell ((?:\{[^}]+\})+)\.?$/))) { card.foretell = manaInfo(m[1].toUpperCase()); card.abilities.push({ zone: 'hand', label: 'foretell', cost: manaInfo('{2}'), speed: 'sorcery', ops: [{ op: 'foretell' }] }); continue; }
+    if ((m = l.match(/^madness ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.madness = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^foretell ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { /* b13: reminder text after the cost no longer hides foretell */ card.foretell = manaInfo(m[1].toUpperCase()); card.abilities.push({ zone: 'hand', label: 'foretell', cost: manaInfo('{2}'), speed: 'sorcery', ops: [{ op: 'foretell' }] }); continue; }
     if ((m = l.match(/^suspend (\d+)—((?:\{[^}]+\})+)\.?$/))) { card.abilities.push({ zone: 'hand', label: 'suspend', cost: manaInfo(m[2].toUpperCase()), speed: 'sorcery', ops: [{ op: 'suspend', n: +m[1] }] }); continue; }
-    if ((m = l.match(/^buyback ((?:\{[^}]+\})+)\.?$/))) { card.buyback = manaInfo(m[1].toUpperCase()); continue; }
-    if ((m = l.match(/^miracle ((?:\{[^}]+\})+)\.?$/))) { card.miracle = manaInfo(m[1].toUpperCase()); continue; }
-    if ((m = l.match(/^encore ((?:\{[^}]+\})+)\.?$/))) { card.abilities.push({ zone: 'graveyard', label: 'encore', cost: manaInfo(m[1].toUpperCase()), exileSelf: true, speed: 'sorcery', ops: [{ op: 'encore' }] }); continue; }
-    if ((m = l.match(/^blitz ((?:\{[^}]+\})+)\.?$/))) { card.blitz = manaInfo(m[1].toUpperCase()); continue; }
-    if ((m = l.match(/^freerunning ((?:\{[^}]+\})+)\.?$/))) { card.freerun = manaInfo(m[1].toUpperCase()); continue; }
-    if ((m = l.match(/^more than meets the eye ((?:\{[^}]+\})+)\.?$/))) { card.mtmte = manaInfo(m[1].toUpperCase()); continue; }
-    if ((m = l.match(/^mutate ((?:\{[^}]+\})+)\.?$/))) { card.mutate = manaInfo(m[1].toUpperCase().replace(/\{G\/W\}/g, '{G}')); continue; }
+    if ((m = l.match(/^buyback ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.buyback = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^miracle ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.miracle = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^encore ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.abilities.push({ zone: 'graveyard', label: 'encore', cost: manaInfo(m[1].toUpperCase()), exileSelf: true, speed: 'sorcery', ops: [{ op: 'encore' }] }); continue; }
+    if ((m = l.match(/^blitz ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.blitz = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^freerunning ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.freerun = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^more than meets the eye ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.mtmte = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^mutate ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.mutate = manaInfo(m[1].toUpperCase().replace(/\{G\/W\}/g, '{G}')); continue; }
     if ((m = l.match(/^awaken (\d+)—((?:\{[^}]+\})+)\.?$/))) { card.awaken = { n: +m[1], cost: manaInfo(m[2].toUpperCase()) }; continue; }
     if ((m = l.match(/^reinforce (\d+)—((?:\{[^}]+\})+)\.?$/))) { card.abilities.push({ zone: 'hand', label: 'reinforce', cost: manaInfo(m[2].toUpperCase()), discardSelf: true, speed: 'instant', ops: [{ op: 'counters', n: +m[1], to: 'target creature' }] }); continue; }
-    if ((m = l.match(/^entwine ((?:\{[^}]+\})+)\.?$/))) { card.entwine = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^entwine ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.entwine = manaInfo(m[1].toUpperCase()); continue; }
     if ((m = l.match(/^entwine (\{[^}]+\})\.?$/))) { card.entwine = manaInfo(m[1].toUpperCase()); continue; }
     if (/^undaunted\.?$/.test(l)) { ST('selfReduce', { what: 'opponents', per: 1 }); continue; }
     if (/^ravenous\.?$/.test(l)) { card.ravenous = true; continue; }
@@ -1318,7 +1318,7 @@ function tagAbilities(card) {
     if (/^at the beginning of combat on your turn, if you control two or more other legendary creatures, you may transform this card/.test(l)) { TR('combatStart', [{ op: 'transform' }], { req: 'legend2' }); continue; }
     if (/^whenever you play a legendary land or cast a legendary spell, you draw a card and you lose 1 life/.test(l)) { TR('cast', [{ op: 'draw', n: 1 }, { op: 'lose', n: 1 }], { filter: 'legendary' }); ST('shanidLand', true); continue; }
     if ((m = l.match(/^each legendary spell you cast that's one or more colors has web-slinging ((?:\{[^}]+\})+)/))) { ST('webSlingLegend', manaInfo(m[1].toUpperCase())); continue; }
-    if ((m = l.match(/^web-slinging ((?:\{[^}]+\})+)\.?$/))) { card.webSling = manaInfo(m[1].toUpperCase()); continue; }
+    if ((m = l.match(/^web-slinging ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) { card.webSling = manaInfo(m[1].toUpperCase()); continue; }
     if (/^living metal\.?$/.test(l)) { card.livingMetal = true; continue; }
     if (/^whenever you cast a spell from anywhere other than your hand, draw a card\.?$/.test(l)) { TR('cast', [{ op: 'draw', n: 1 }], { filter: '', req: 'notFromHand' }); continue; }
     if (/^whenever a legendary creature you control deals combat damage to a player, draw a card\.?$/.test(l)) { card.triggers.push({ when: 'combatDamage', zone: 'battlefield', who: 'a creature you control', attackerFilter: 'legendary', ops: [{ op: 'draw', n: 1 }] }); continue; }

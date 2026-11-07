@@ -411,4 +411,17 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    me.pool=[{c:'G'},{c:'G'}]; me.hand.push(ss);
    ok('…and with 2 mana it is not castable (base {1}{G} + cheapest mode {1} = 3)',!g.castMode(me,ss,'hand'),String(g.castMode(me,ss,'hand')));
  }
+
+ // ==== v96: foretell with reminder text ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const fs=tagCard(mk('The Foretold Soldier','Creature — Alien Zombie Soldier','{2}{G}{G}',"This creature must be blocked if able.\nThis creature can't be blocked by more than one creature.\nWhenever this creature deals damage, exile it face down. It becomes foretold.\nForetell {1}{G} (During your turn, you may pay {2} and exile this card from your hand face down. Cast it on a later turn for its foretell cost.)",4,'6','6'));
+   me.hand.push(fs); me.pool=[{c:'G'},{c:'G'}];
+   const o=g.abilityOptions(me,{}).find(x=>x.card===fs&&x.ab&&x.ab.label==='foretell');
+   ok('The Foretold Soldier offers foretell from hand (reminder text no longer breaks the parse)',!!o,'');
+   if(o){await g.activate(me,o);while(g.stack.length)await g.resolve();}
+   ok('…foretelling exiles it for {2}',!me.hand.includes(fs)&&me.exile.includes(fs)&&me.pool.length===0,'hand '+me.hand.includes(fs)+' exile '+me.exile.includes(fs)+' pool '+me.pool.length);
+   ok('…and it cannot be cast the same turn',!g.castMode(me,fs,'exile'),String(g.castMode(me,fs,'exile')));
+   g.turn+=4; me.pool=[{c:'G'},{c:'G'}];
+   const e=(me.exileCast||[]).find(x=>x.card===fs); ok('…but on a later turn it casts for its foretell cost {1}{G}',!!g.castMode(me,fs,'exile')&&e&&e.cost.total===2&&e.cost.pips.G===1,'mode '+g.castMode(me,fs,'exile')+' cost '+JSON.stringify(e&&e.cost).slice(0,60));
+ }
  console.log(fails+' failed');})();

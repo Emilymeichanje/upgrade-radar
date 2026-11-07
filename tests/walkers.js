@@ -528,4 +528,34 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const bear=tagCard(mk('Bear','Creature — Bear','{1}{R}','',2,'2','2')); me.hand.push(bear); await g.cast(me,bear,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
    ok('…a Bear is paid with Mountains and is counterable',!cp.tapped&&!g.lastSpend.cavern&&!g.log.slice(n1).some(x=>/can't be countered/.test(x.m)),'tapped '+cp.tapped+' cavern '+g.lastSpend.cavern);
  }
+
+ { // v100: Toxic Deluge X is chosen and gives -X/-X; Aura Shards offers enchantments; Sapling logs life; atk-all uses combatPow
+   const g=fresh(); const me=g.players[0], op=g.players[1]; me.human=true; me.life=20;
+   for(let i=0;i<3;i++)await g.landEnters(me,tagCard(mk('Swamp','Basic Land — Swamp','','',0))); me.pool=[];
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const wall=put(me,tagCard(mk('Wall of Tanglecord','Creature — Wall','{2}','Defender',2,'0','6'))); const bear=put(op,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2'))); const ogre=put(op,tagCard(mk('Ogre','Creature — Ogre','{3}{R}','',4,'4','4')));
+   const td=tagCard(mk('Toxic Deluge','Sorcery','{2}{B}',"As an additional cost to cast this spell, pay X life.\nAll creatures get -X/-X until end of turn.",3)); me.hand.push(td);
+   ok('Toxic Deluge parses -X/-X',td.spellOps&&td.spellOps.some(o=>o.op==='shrinkAll'&&o.n==='X'),JSON.stringify(td.spellOps));
+   let asked=null; g.hooks.humanNumber=async c=>{asked=c;return 2};
+   await g.cast(me,td,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Toxic Deluge asks for X and takes that much life',asked&&asked.max>=2&&me.life===18,'life '+me.life+' asked '+JSON.stringify(asked&&{min:asked.min,max:asked.max}));
+   ok('X=2 kills the 2/2, not the 4/4 or the 0/6 wall',!op.battlefield.includes(bear)&&op.battlefield.includes(ogre)&&me.battlefield.includes(wall),op.battlefield.map(b=>b.card.name).join()+' | '+me.battlefield.filter(b=>b.card.isCreature).map(b=>b.card.name).join());
+   // Aura Shards
+   const g2=fresh(); const m2=g2.players[0], o2=g2.players[1]; m2.human=true; m2.ai=null;
+   put(m2,tagCard(mk('Aura Shards','Enchantment','{1}{G}{W}','Whenever a creature you control enters, you may destroy target artifact or enchantment.',3)));
+   put(o2,tagCard(mk('Propaganda','Enchantment','{2}{U}',"Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you.",3))); put(o2,tagCard(mk('Talisman','Artifact','{2}','{T}: Add {C}.',2)));
+   let pool=null; g2.hooks.humanMay=async()=>true; g2.hooks.humanSearch=async c=>{pool=(c.pool||[]).map(x=>x.name);return [c.pool.find(x=>x.name==='Propaganda')]};
+   { const pm=await g2.enterPerm(m2,tagCard(mk('Elf','Creature — Elf','{1}{G}','',2,'2','2'))); await g2.creatureEntered(m2,pm); await tick(g2); }
+   ok('Aura Shards offers artifacts AND enchantments, destroys the chosen enchantment',pool&&pool.includes('Propaganda')&&pool.includes('Talisman')&&!o2.battlefield.some(b=>b.card.name==='Propaganda'),JSON.stringify(pool));
+   // Sapling
+   const g3=fresh(); const m3=g3.players[0]; m3.human=true; m3.life=20; let shown=null; g3.hooks.humanMay=async c=>{if(c.cards)shown=c;return true};
+   const sap=put(m3,tagCard(mk('Sapling of Colfenor','Legendary Creature — Treefolk Shaman','{3}{G}{G}',"Indestructible\nWhenever Sapling of Colfenor attacks, reveal the top card of your library. If it's a creature card, you gain life equal to that card's toughness, lose life equal to its power, then put it into your hand.",5,'2','5')));
+   m3.library.push(tagCard(mk('Stalwart Shield-Bearers','Creature — Human Soldier','{1}{W}','Defender\nOther creatures you control with defender get +0/+2.',2,'0','3')));
+   const n3=g3.log.length; await g3.runOps(m3,sap.card.triggers[0].ops,sap.card,{perm:sap});
+   ok('Sapling shows the revealed card and logs the life',shown&&shown.ok&&shown.cards[0].name==='Stalwart Shield-Bearers'&&m3.life===23&&m3.hand.some(c=>c.name==='Stalwart Shield-Bearers')&&g3.log.slice(n3).some(x=>/gains 3 life/.test(x.m)),'life '+m3.life+' shown '+!!shown);
+   // Stalwart lord + combatPow
+   const fel=put(m3,tagCard(mk('Felothar the Steadfast','Legendary Creature — Human Warrior','{1}{W}{B}{G}',"Each creature you control assigns combat damage equal to its toughness rather than its power.\nCreatures you control can attack as though they didn't have defender.",4,'0','5')));
+   const sb=put(m3,m3.hand.find(c=>c.name==='Stalwart Shield-Bearers')); const wo=put(m3,tagCard(mk('Wall of Omens','Creature — Wall','{1}{W}','Defender',2,'0','4'))); g3.refreshStatics();
+   ok('Stalwart gives other defenders +0/+2 and Felothar makes a 0-power wall hit for its toughness',g3.toughOf(m3,wo)===6&&g3.toughOf(m3,sb)===3&&g3.combatPow(m3,wo)===6,'wo '+g3.toughOf(m3,wo)+' sb '+g3.toughOf(m3,sb)+' pow '+g3.combatPow(m3,wo));
+ }
  console.log(fails+' failed');})();

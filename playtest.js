@@ -156,7 +156,7 @@ function parseOps(t) {
   else if ((m = t.match(/^search your library for an? basic (plains|island|swamp|mountain|forest) card, reveal it, (?:and )?put it into your hand/))) ops.push({ op: 'landToHand', basic: true, types: [m[1]] }); // b10
   if ((m = t.match(/^you may discard a card\. (?:when|if) you do, (.+)$/))) { const inner = parseOps(m[1]); if (inner.length) { ops.push({ op: 'b3_discardThen', ops: inner }); return ops; } } // b10 (Restoration of Eiganjo II)
   if (/^exile this card, then return it to the battlefield transformed under (?:your|its owner's) control\.?$/.test(t)) { ops.push({ op: 'exileReturnTransformed' }); return ops; } // b10
-  if ((m = t.match(/destroy target (creature|artifact|enchantment|nonland permanent|permanent|artifact or enchantment)/))) ops.push({ op: 'destroy', what: m[1] });
+  if ((m = t.match(/destroy target (artifact or enchantment|creature|artifact|enchantment|nonland permanent|permanent)/))) ops.push({ op: 'destroy', what: m[1] });
   if ((m = t.match(/(each opponent|target opponent|target player|each player|each other player) sacrifices (a|an|one|two|three|thirteen) (creature or planeswalker|creatures?|nonland permanent|permanent)(?:s)?(?: of their choice)?/))) ops.push({ op: 'edict', who: m[1], n: numOf(m[2]), what: m[3] });
   if (/return all nonland permanents you don't control to their owners' hands/.test(t)) ops.push({ op: 'bounceAllOpp' });
   // lands from the library straight onto the battlefield (Solemn, Sakura-Tribe Elder, Wood Elves, Burnished Hart, Sword of the Animist)
@@ -209,7 +209,7 @@ function parseOps(t) {
   if (/target creature you control gains protection from the color of your choice until end of turn/.test(t)) ops.push({ op: 'protColor' });
   if (/target nonland permanent becomes an artifact in addition to its other types until end of turn/.test(t)) ops.push({ op: 'makeArtifact' });
   if (/put any number of cards from your hand on the bottom of your library, then draw that many cards plus one/.test(t)) ops.push({ op: 'valakut' });
-  if ((m = t.match(/each creature gets -x\/-x until end of turn/))) ops.push({ op: 'shrinkAll', n: 'X' });
+  if ((m = t.match(/(?:each creature|all creatures) gets? -x\/-x until end of turn/))) ops.push({ op: 'shrinkAll', n: 'X' });
   if (/exile the top card of your library face down\. put that card into your hand at the beginning of your next end step/.test(t)) ops.push({ op: 'necro' });
   if (/look at target player's hand/.test(t)) ops.push({ op: 'peekHand' });
   if ((m = t.match(/destroy target (nonbasic )?land(?: an opponent controls)?\.(?: its controller may search their library for a basic land card)?/))) ops.push({ op: 'destroyLand', nonbasic: !!m[1], ghost: /its controller may search/.test(t), ruin: /each player searches their library for a basic land card/.test(t) });
@@ -3177,7 +3177,7 @@ class Game {
     const a = card.statics && card.statics.addCost; if (!a) return true;
     if (a.sac) return p.battlefield.some(b => a.sac.split(' or ').some(w => w === 'creature' ? b.card.isCreature : w === 'artifact' ? b.card.isArtifact : w === 'land' ? b.card.isLand : false));
     if (a.discard) return p.hand.filter(c => c !== card).length >= a.discard;
-    if (a.life) return p.life > (a.life === 'x' ? 3 : a.life);
+    if (a.life) return a.life === 'x' ? p.life > 1 : p.life > a.life;
     return true;
   }
   /** extra mana for a set of modes (spree / tiered / split / escalate) */
@@ -3492,8 +3492,9 @@ class Game {
     if (extra.alt && extra.alt.kind === 'adventure') { const orig = card; card = { ...orig.adventure.spell, uid: UID++, img: orig.img, advOf: orig, advKind: orig.adventure.kind }; this.say(`casts ${card.name} (${orig.adventure.kind === 'omen' ? 'omen' : 'adventure'} of ${orig.name})`, p); }
     if (obj_gc && obj_gc.castAs) { const orig = card; card = { ...obj_gc.castAs, uid: UID++, img: orig.img, aftermathOf: orig }; }
     delete card._noAdv;
-    const obj = { id: UID++, kind: 'spell', fromExile: fromExileZ, spent: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.total : card.cmc), spentC: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.c : 0), owner, noMana: mode === 'free' || (extra.alt && extra.alt.cost.total === 0), uncounterable: p.uncounterNext === this.turn, card, caster: p, target, zone, x: extra.x, kicks: extra.kicks, kicked: extra.kicks > 0 || !!extra.kicked, gift: extra.gift, bargained: extra.bargain, alt: extra.alt && extra.alt.kind };
+    const obj = { id: UID++, kind: 'spell', fromExile: fromExileZ, spent: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.total : card.cmc), spentC: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.c : 0), owner, noMana: mode === 'free' || (extra.alt && extra.alt.cost.total === 0), uncounterable: p.uncounterNext === this.turn, card, caster: p, target, zone, x: card._lifeX != null ? card._lifeX : extra.x, kicks: extra.kicks, kicked: extra.kicks > 0 || !!extra.kicked, gift: extra.gift, bargained: extra.bargain, alt: extra.alt && extra.alt.kind };
     if (extra.modes) obj.modes = extra.modes;
+    delete card._lifeX;
     obj.b3Colors = mode === 'free' ? [] : (this.lastSpend && this.lastSpend.colors) || null;
     if (mode !== 'free' && this.lastSpend && this.lastSpend.cavern && card.isCreature) { obj.uncounterable = true; this.say(`— ${card.name} can't be countered (Cavern of Souls mana)`, p); } // b13
     if (mode !== 'free' && this.lastSpend && this.lastSpend.ancestry && card.isCreature) { // b13: Path of Ancestry — scry 1 when its mana cast a creature sharing a type with your commander
@@ -3550,7 +3551,7 @@ class Game {
       let v; if (p.human) { const pick = (await this.chooseFromList(p, card, pool.map(b => b.card), 1, 'sacrifice'))[0]; v = pool.find(b => b.card === pick) || pool[0]; } else v = p.ai ? p.ai.chooseSacVictim(this, p, pool) : pool[0];
       this.say(`sacrifices ${v.card.name} to cast ${card.name}`, p); p._lastSac = v; await this.sacrifice(p, v);
     } else if (a.discard) { for (let k = 0; k < a.discard; k++) { const d = p.ai ? p.ai.chooseDiscard(this, p) : (this.hooks.humanDiscard ? await this.hooks.humanDiscard(p) : p.hand[0]); if (d) { p.hand.splice(p.hand.indexOf(d), 1); p.graveyard.push(d); this.say(`discards ${d.name} to cast ${card.name}`, p); } } }
-    else if (a.life) { const n = a.life === 'x' ? 3 : a.life; await this.changeLife(p, -n, card); this.say(`pays ${n} life to cast ${card.name}`, p); }
+    else if (a.life) { let n = a.life; if (n === 'x') { const max = Math.max(0, p.life - 1); if (p.human && !this.shortcutting && this.hooks.humanNumber) n = Math.min(max, Math.max(0, +(await this.hooks.humanNumber({ p, card, min: 0, max: Math.min(max, 20), question: 'pay how much life? (X)' })) || 0)); else { const opp = this.opponentsOf(p).flatMap(q => q.battlefield.filter(b => b.card.isCreature).map(b => this.toughOf(q, b))); n = Math.min(max, Math.max(1, opp.length ? Math.max(...opp) : 1)); } card._lifeX = n; } /* b13: Toxic Deluge — you choose X; it was fixed at 3 */ await this.changeLife(p, -n, card); this.say(`pays ${n} life to cast ${card.name}${a.life === 'x' ? ` (X = ${n})` : ''}`, p); }
   }
   /** modal spells: which modes (sub-cards) to use */
   async chooseModes(p, card, base = null) {
@@ -4421,7 +4422,7 @@ class Game {
     if (card.roles.includes('wipe')) {
       if (card.b1_wipeSnap) spell.b1_snap = p.battlefield.filter(b => b.card.isCreature && !b.card.token);
       await this.emit({ type: 'wipe', p, card });
-      const hit = this.wipeHits(card, p); const exileOp = (card.spellOps || []).some(op => op.op === 'destroyAll' && op.how === 'exile' && /creature/.test(op.what || '')) || !!(card.modes && card.modes.length); // b13: a modal wipe (Farewell) resolves through its chosen modes — the generic path was ALSO destroying creatures, so 'exile all creatures' fired dies triggers
+      const hit = this.wipeHits(card, p); const exileOp = (card.spellOps || []).some(op => op.op === 'destroyAll' && op.how === 'exile' && /creature/.test(op.what || '')) || !!(card.modes && card.modes.length) || (card.spellOps || []).some(op => op.op === 'shrinkAll'); /* b13: Toxic Deluge gives -X/-X; the generic path destroyed every creature regardless of X */ // b13: a modal wipe (Farewell) resolves through its chosen modes — the generic path was ALSO destroying creatures, so 'exile all creatures' fired dies triggers
       if (!exileOp) for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn && hit(b, q))) await this.destroy(q, b, true);
       if (!exileOp) this.say(hit.all ? `— board wiped` : `— destroys ${hit.desc}`, p);
       for (const q of this.alive()) if (q.battlefield.some(x => x.card.isCreature && x.protTurn === this.turn)) this.say(`— ${q.name}'s creatures survive (protected)`, p);
@@ -4791,6 +4792,8 @@ class Game {
   }
   /** pick X for an "X" on a permanent / ability from what's available */
   xFor(ctx) { return ctx && ctx.x != null ? ctx.x : 0; }
+  /** b13: show the human a card (or cards) with an OK button — reveals that used to live only in the log */
+  async showCards(p, src, cards, text) { if (!p.human || this.shortcutting || !this.hooks.humanMay || !cards.length) return; await this.hooks.humanMay({ p, card: src, question: text, cards, ok: true }); }
   // ---------- running effects ----------
   async chooseFromList(p, src, pool, n, dest) {
     if (!pool.length) return [];
@@ -5697,7 +5700,7 @@ class Game {
           if (op.op === 'b2_abdel' && n) await this.runOps(p, [{ op: 'tokens', n, pt: [1, 1], kw: [], types: 'Soldier', tcolors: ['W'] }], src, ctx);
           break; }
         case 'b2_eshki': { const c = ctx.castCard; if (!c) break; const pw = +c.power || 0; if (pw >= 4) await this.draw(p, 1); if (pw >= 6) { const me = ctx.perm && ctx.perm.card ? ctx.perm : p.battlefield.find(b => b.card === src); const n = me ? Math.max(0, this.powerOf(p, me)) : 0; if (n) await this.runOpsCore(p, [{ op: 'damage', n, to: 'each opponent' }], src, ctx); } break; }
-        case 'b2_sapling': { const c = p.library[p.library.length - 1]; if (!c) break; this.say(`— reveals ${c.name}`, p); if (!c.isCreature) break; p.library.pop(); const t = +c.toughness || 0, pw = +c.power || 0; if (t) await this.changeLife(p, t, src); if (pw) await this.changeLife(p, -pw, src); p.hand.push(c); break; }
+        case 'b2_sapling': { const c = p.library[p.library.length - 1]; if (!c) break; const t = +c.toughness || 0, pw = +c.power || 0; if (!c.isCreature) { this.say(`— reveals ${c.name}: not a creature, it stays on top`, p); await this.showCards(p, src, [c], `${src.name} reveals ${c.name} — not a creature, it stays on top`); break; } this.say(`— reveals ${c.name}: gains ${t} life, loses ${pw}, puts it into hand`, p); await this.showCards(p, src, [c], `${src.name} reveals ${c.name}: you gain ${t} life${pw ? ` and lose ${pw}` : ''}, and it goes to your hand`); p.library.pop(); if (t) await this.changeLife(p, t, src); if (pw) await this.changeLife(p, -pw, src); p.hand.push(c); break; }
         case 'b2_proliferatePwTypes': { const types = new Set(); for (const b of p.battlefield) if (b.card.isPlaneswalker && !b.neutral) { const sub = (b.card.type.split('—')[1] || '').trim(); for (const w of sub.split(/\s+/).filter(Boolean)) types.add(w.toLowerCase()); } this.say(`— proliferates ${types.size} time${types.size === 1 ? '' : 's'}`, p); for (let k = 0; k < Math.min(types.size, 10); k++) await this.runOpsCore(p, [{ op: 'proliferate' }], src, ctx); break; }
         case 'b2_scouring': { const me = p.battlefield.find(b => b.card === src) || { card: src, counters: 0 }; if (p.graveyard.filter(c => c.isLand).length >= 7) await this.runOpsCore(p, [{ op: 'copyPerm', useSelf: true, tapped: true }], src, { ...ctx, perm: me }); else await this.runOpsCore(p, [{ op: 'tokens', n: 1, pt: [1, 1], kw: ['flying'], tapped: true, types: 'Insect', tcolors: ['B'] }], src, ctx); break; }
         case 'b2_pod': { const v = ctx.sacrificed; if (!v || !v.card) break; await this.runOps(p, [{ op: 'tutorTo', filter: 'creature', dest: 'battlefield', n: 1, mvEq: (v.card.cmc || 0) + 1 }], src, ctx); break; }

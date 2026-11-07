@@ -604,4 +604,19 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const n0=g.log.length; g.players[1].life=3; await g.runOps(me,[{op:'drain',n:5,each:true,gainLost:true}],{name:'Kokusho'},{});
    const lines=g.log.slice(n0).map(x=>x.m).join('\n'); ok('drain logs every opponent and the gain',/P1 3 → -2/.test(lines)&&/gains 15/.test(lines),lines);
  }
+
+ { // v103: Adeline's attacking tokens are Human, white, and enter properly (lords apply, Cathars' Crusade fires)
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const g=fresh(); const me=g.players[0], op=g.players[1]; me.human=true; me.ai=null;
+   const ad=tagCard(mk('Adeline, Resplendent Cathar','Legendary Creature — Human Knight','{1}{W}{W}',"Vigilance\nAdeline, Resplendent Cathar's power is equal to the number of creatures you control.\nWhenever you attack, for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a planeswalker they control.",3,'*','4'));
+   const tr=(ad.triggers||[]).find(t=>t.when==='attack'); ok('Adeline parses attacking Human tokens',tr&&tr.ops[0].op==='attackingTokens'&&tr.ops[0].types==='Human'&&JSON.stringify(tr.ops[0].tcolors)==='["W"]',JSON.stringify(ad.triggers));
+   const pa=put(me,ad); const banner=tagCard(mk('Patchwork Banner','Artifact','{3}','As this artifact enters, choose a creature type.\nCreatures you control of the chosen type get +1/+1.\n{T}: Add one mana of any color.',3)); const pb=put(me,g.chosenTypeCard(banner,'human')); pb.chosenType='human';
+   put(me,tagCard(mk("Cathars' Crusade",'Enchantment','{3}{W}{W}','Whenever a creature you control enters, put a +1/+1 counter on each creature you control.',5)));
+   g.refreshStatics(); const before=me.battlefield.length;
+   await g.attackTriggers(me,[{attacker:pa,defender:op}]); await tick(g);
+   const toks=me.battlefield.filter(b=>b.card.token); g.refreshStatics();
+   ok('three Human tokens, typed and white',toks.length===3&&toks.every(b=>/Human/.test(b.card.type)&&b.card.colors.includes('W')),toks.map(b=>b.card.type+'/'+b.card.colors).join());
+   ok("Cathars' Crusade put counters on them (3 triggers → 3 counters each)",toks.every(b=>(b.counters||0)===3),toks.map(b=>b.counters).join());
+   ok('Patchwork Banner (Human) buffs them: toughness 1+3+1',toks.every(b=>g.toughOf(me,b)===5),toks.map(b=>g.powerOf(me,b)+'/'+g.toughOf(me,b)).join());
+ }
  console.log(fails+' failed');})();

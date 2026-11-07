@@ -506,4 +506,26 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    await g.destroy(me,pm,false); while(g.stack.length)await g.resolve(); await tick(g);
    ok('…and on death it is shuffled into the library (not in the graveyard)',me.library.includes(cg)&&!me.graveyard.includes(cg),'');
  }
+
+ // ==== v99: auto-pay prefers Path of Ancestry / Cavern of Souls for qualifying creatures ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let scried=false; g.hooks.humanSearch=async c=>{if(c.dest==='scry')scried=true;return c.pool||[]};
+   me.command=[tagCard(mk('Ashling, the Limitless','Legendary Creature — Elemental Incarnation','{R}','',1,'2','3'))]; me.command[0].isCommander=true;
+   const [poa]=await g.landEnters(me,tagCard(mk('Path of Ancestry','Land','',"Path of Ancestry enters tapped.\n{T}: Add one mana of any color. When that mana is spent to cast a creature spell that shares a creature type with your commander, scry 1.",0))); poa.tapped=false;
+   for(let i=0;i<3;i++)await g.landEnters(me,tagCard(mk('Mountain','Basic Land — Mountain','','',0))); me.pool=[];
+   const fb=tagCard(mk('Flamebraider','Creature — Elemental Shaman','{2}{R}','',3,'2','2')); me.hand.push(fb);
+   await g.cast(me,fb,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Auto-pay uses Path of Ancestry for an Elemental (commander Elemental) and scries',poa.tapped&&scried,'poa tapped '+poa.tapped+' scried '+scried);
+   const [poa2]=[poa]; poa.tapped=false; me.battlefield.filter(b=>b.card.isLand).forEach(b=>b.tapped=false); me.pool=[]; scried=false;
+   const bear=tagCard(mk('Bear','Creature — Bear','{1}{R}','',2,'2','2')); me.hand.push(bear); await g.cast(me,bear,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('…but a non-matching creature is paid with the basics first (Path untapped, no scry)',!poa.tapped&&!scried,'poa tapped '+poa.tapped+' scried '+scried);
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; g.hooks.humanChoice=async()=>'Elemental';
+   const cav=tagCard(mk('Cavern of Souls','Land','',"As Cavern of Souls enters, choose a creature type.\n{T}: Add {C}.\n{T}: Add one mana of any color. Spend this mana only to cast a creature spell of the chosen type, and that spell can't be countered.",0)); me.hand.push(cav); await g.playLand(me,cav); const cp=me.battlefield.find(b=>b.card===cav);
+   for(let i=0;i<3;i++)await g.landEnters(me,tagCard(mk('Mountain','Basic Land — Mountain','','',0))); me.pool=[];
+   const fb=tagCard(mk('Flamebraider','Creature — Elemental Shaman','{2}{R}','',3,'2','2')); me.hand.push(fb); const n0=g.log.length; await g.cast(me,fb,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Cavern of Souls (Elemental) pays for an Elemental and makes it uncounterable',cp.tapped&&g.lastSpend.cavern===true&&g.log.slice(n0).some(x=>/can't be countered \(Cavern of Souls mana\)/.test(x.m)),'tapped '+cp.tapped+' cavern '+g.lastSpend.cavern);
+   me.battlefield.filter(b=>b.card.isLand).forEach(b=>b.tapped=false); me.pool=[]; const n1=g.log.length;
+   const bear=tagCard(mk('Bear','Creature — Bear','{1}{R}','',2,'2','2')); me.hand.push(bear); await g.cast(me,bear,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('…a Bear is paid with Mountains and is counterable',!cp.tapped&&!g.lastSpend.cavern&&!g.log.slice(n1).some(x=>/can't be countered/.test(x.m)),'tapped '+cp.tapped+' cavern '+g.lastSpend.cavern);
+ }
  console.log(fails+' failed');})();

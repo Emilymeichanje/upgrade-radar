@@ -2990,7 +2990,10 @@ class Game {
       if (c.manaAb && c.manaAb.needCreature && !p.battlefield.some(x => x.card.isCreature && !x.tapped && x !== b)) continue;
       if (info && info.amount && p.battlefield.some(x => x.card.statics && x.card.statics.manaTriple && !x.neutral)) info = { ...info, amount: info.amount * 3 };
       if (S.manaLife && p.ai && p.life <= S.manaLife) continue; // b13: the AI never taps Ancient Tomb / pain lands for lethal damage to itself
-      out.push({ kind: 'perm', b, ...info, sac: !!(c.manaAb && c.manaAb.sac), pain: S.manaLife ? 1 : 0, pen: (c.manaAb && c.manaAb.sac ? 5 : 0) + (S.manaLife ? (p.ai && p.life <= 3 * S.manaLife ? 8 : 1) : 0) + (c.isCreature && !c.isLand ? 0.5 : 0) });
+      let bonus = 0; const cc = cost && cost.card; const restricted = /spend this mana only to cast a creature spell of the chosen type/i.test(c.oracle || '');
+      if (cc && cc.isCreature) { if (S.ancestryScry && this.sharesTypeWithCommander(p, cc)) bonus -= 3; if (this.cavernFor(b, cc)) bonus -= 3; } // b13: auto-pay reaches for Path of Ancestry / Cavern of Souls when the spell qualifies
+      if (restricted && !(cc && this.cavernFor(b, cc))) bonus += 4; // …and keeps Cavern's coloured mana for the creatures it was meant for
+      out.push({ kind: 'perm', b, ...info, sac: !!(c.manaAb && c.manaAb.sac), pain: S.manaLife ? 1 : 0, pen: bonus + (c.manaAb && c.manaAb.sac ? 5 : 0) + (S.manaLife ? (p.ai && p.life <= 3 * S.manaLife ? 8 : 1) : 0) + (c.isCreature && !c.isLand ? 0.5 : 0) });
       used.add(b);
     }
     if (f.legendTap) for (const b of p.battlefield) if (b.card.isCreature && b.card.isLegendary && !b.tapped && !used.has(b)) { out.push({ kind: 'perm', b, amount: 1, colors: ALLC.slice(), pen: 3 }); used.add(b); }
@@ -3021,6 +3024,10 @@ class Game {
     const out = srcs.filter(s => s.used); out.pip = new Set(srcs.filter(s => s.pip && s.b).map(s => s.b));
     return out;
   }
+  /** b13: does this creature card share a creature type with one of your commanders (Path of Ancestry)? */
+  sharesTypeWithCommander(p, card) { const sub = c => ((c.type || '').split('—')[1] || '').toLowerCase().split(/\s+/).filter(Boolean); const cmdrs = [...p.command, ...p.battlefield.map(b => b.card)].filter(c => (c.orig || c).isCommander); const mine = new Set(sub(card)); return !!(card.changeling || cmdrs.some(c => c.changeling || sub(c).some(t => mine.has(t)))); }
+  /** b13: is this battlefield land a Cavern of Souls-style source whose chosen type matches the card? */
+  cavernFor(b, card) { return !!(b.chosenType && card && card.isCreature && /spend this mana only to cast a creature spell of the chosen type/i.test(b.card.oracle) && matchesFilter(card, b.chosenType)); }
   /** b13: total generic cost reduction from your reducers (Animar, Herald's Horn, Urza's Incubator, chosen-type lands…) — shared by costOf and alternative costs (evoke, dash, blitz…) */
   genericReduction(p, card, zone) {
     return p.battlefield.reduce((s, b) => s + (b.card.reducers || []).filter(r => matchesFilter(card, r.filter) && (!r.minPower || (card.power || 0) >= r.minPower) && (!r.minMV || card.cmc >= r.minMV) && (!r.firstCreature || !(p.creatureSpellTurn === this.turn)) && (!r.secondSpell || (p.spellsThisTurn || 0) === 1) && (!r.fromGy || zone === 'gy') && (!r.notYourTurn || this.players[this.active] !== p) && this.redOk(p, card, zone, r, b)).reduce((x, r) => x + this.redAmt(p, card, zone, r, b), 0), 0) + p.battlefield.filter(b => b.chosenCardType && matchesFilter(card, b.chosenCardType)).length;
@@ -3091,6 +3098,7 @@ class Game {
     this.lastSpend = { total: cost.total || 0, c: plan.reduce((s, x) => s + ((x.colors && x.colors.length === 1 && x.colors[0] === 'C') ? (x.amount || 1) : 0), 0) };
     this.lastSpend.colors = this.b3_colorsSpent(plan, cost);
     this.lastSpend.ancestry = plan.some(x => (x.kind === 'perm' && x.b && x.b.card.statics && x.b.card.statics.ancestryScry) || (x.kind === 'pool' && p.pool && p.pool[x.idx] && p.pool[x.idx].ancestry)); // b13
+    this.lastSpend.cavern = plan.some(x => (x.kind === 'perm' && x.b && cost.card && this.cavernFor(x.b, cost.card)) || (x.kind === 'pool' && p.pool && p.pool[x.idx] && p.pool[x.idx].cavern && cost.card && cost.card.isCreature && matchesFilter(cost.card, p.pool[x.idx].cavern))); // b13: Cavern of Souls mana actually spent on a matching creature
     if (cost.card && (cost.card.orig || cost.card).isCommander && plan.some(s => s.b1_opal && s.pip)) (cost.card.orig || cost.card)._opalTurn = this.turn;
     const poolIdx = [];
     for (const s of plan) {
@@ -3124,6 +3132,7 @@ class Game {
     if (!this.payCost(p, { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0 }, [{ ...s, pip: true }])) return false;
     await this.flushTapped(p);
     this.say(`taps ${perm.card.name}`, p); this.addMana(p, Array(s.amount).fill(col)); if (perm.card.statics && perm.card.statics.ancestryScry) for (let k = 1; k <= s.amount; k++) p.pool[p.pool.length - k].ancestry = true; // b13: Path of Ancestry mana remembers where it came from
+    if (perm.chosenType && /spend this mana only to cast a creature spell of the chosen type/i.test(perm.card.oracle)) for (let k = 1; k <= s.amount; k++) p.pool[p.pool.length - k].cavern = perm.chosenType; // b13: Cavern of Souls mana remembers its type
     await this.emit({ type: 'activate', p, card: perm.card }); await this.flushPending(); return true;
   }
   /** floating mana (rituals, Lotus Cobra, Birgi...). eot: survives step changes */
@@ -3486,6 +3495,7 @@ class Game {
     const obj = { id: UID++, kind: 'spell', fromExile: fromExileZ, spent: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.total : card.cmc), spentC: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.c : 0), owner, noMana: mode === 'free' || (extra.alt && extra.alt.cost.total === 0), uncounterable: p.uncounterNext === this.turn, card, caster: p, target, zone, x: extra.x, kicks: extra.kicks, kicked: extra.kicks > 0 || !!extra.kicked, gift: extra.gift, bargained: extra.bargain, alt: extra.alt && extra.alt.kind };
     if (extra.modes) obj.modes = extra.modes;
     obj.b3Colors = mode === 'free' ? [] : (this.lastSpend && this.lastSpend.colors) || null;
+    if (mode !== 'free' && this.lastSpend && this.lastSpend.cavern && card.isCreature) { obj.uncounterable = true; this.say(`— ${card.name} can't be countered (Cavern of Souls mana)`, p); } // b13
     if (mode !== 'free' && this.lastSpend && this.lastSpend.ancestry && card.isCreature) { // b13: Path of Ancestry — scry 1 when its mana cast a creature sharing a type with your commander
       const sub = c => ((c.type || '').split('—')[1] || '').toLowerCase().split(/\s+/).filter(Boolean); const cmdrs = [...p.command, ...p.battlefield.map(b => b.card)].filter(c => (c.orig || c).isCommander); const mine = new Set(sub(card));
       if (card.changeling || cmdrs.some(c => c.changeling || sub(c).some(t => mine.has(t)))) { this.say(`— Path of Ancestry: scry 1`, p); await this.runOps(p, [{ op: 'scry', n: 1 }], { name: 'Path of Ancestry' }, {}); } }
@@ -4274,7 +4284,7 @@ class Game {
   }
   targetName(t) { return !t ? '' : t.spell ? t.spell.card.name + ' (on the stack)' : t.card ? t.card.name : t.name; }
   ownerOf(perm) { return this.players.find(q => q.battlefield.includes(perm)) || null; }
-  isUncounterable(obj) { return !!obj.card.uncounterable || !!obj.uncounterable || !!(obj.caster && obj.caster.b1_uncTurn === this.turn) || (obj.card.isCreature && obj.caster.battlefield.some(b => b.chosenType && /can't be countered/i.test(b.card.oracle) && matchesFilter(obj.card, b.chosenType))) || obj.caster.battlefield.some(b => (b.card.noCounter || []).some(f => matchesFilter(obj.card, f))); }
+  isUncounterable(obj) { return !!obj.card.uncounterable || !!obj.uncounterable || !!(obj.caster && obj.caster.b1_uncTurn === this.turn) || obj.caster.battlefield.some(b => (b.card.noCounter || []).some(f => matchesFilter(obj.card, f))); }
   /** protection from a colour stops targeting by spells of that colour */
   protectedFrom(t, card) { return !!(t && t.protColors && (card.colors || []).some(c => t.protColors.includes(c))); }
   /** is the object's target still legal as it tries to resolve? */

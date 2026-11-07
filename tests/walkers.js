@@ -424,4 +424,39 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    g.turn+=4; me.pool=[{c:'G'},{c:'G'}];
    const e=(me.exileCast||[]).find(x=>x.card===fs); ok('…but on a later turn it casts for its foretell cost {1}{G}',!!g.castMode(me,fs,'exile')&&e&&e.cost.total===2&&e.cost.pips.G===1,'mode '+g.castMode(me,fs,'exile')+' cost '+JSON.stringify(e&&e.cost).slice(0,60));
  }
+
+ // ==== v97: dungeons, manifest, face-down keywords with reminder text, plot ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; const asked=[]; g.hooks.humanChoice=async c=>{asked.push(c.question);return c.options.find(o=>/Tomb of Annihilation/.test(o))||c.options.find(o=>/Oubliette/.test(o))||c.options[0]}; g.hooks.humanSearch=async c=>[c.pool[0]]; g.hooks.humanDiscard=async q=>q.hand[0];
+   const nad=tagCard(mk('Nadaar, Selfless Paladin','Legendary Creature — Dragon Knight','{2}{W}',"Vigilance\nWhenever Nadaar enters or attacks, venture into the dungeon. (Enter the first room or advance to the next room.)\nOther creatures you control get +1/+1 as long as you've completed a dungeon.",3,'3','3'));
+   ok('Nadaar: "enters or attacks, venture" parses to an ETB and an attack trigger',!!(nad.etbOps||[]).some(o=>o.op==='venture')&&nad.triggers.some(t=>t.when==='attack'&&t.ops.some(o=>o.op==='venture')),JSON.stringify(nad.etbOps)+' '+JSON.stringify(nad.triggers.map(t=>t.when)));
+   const pm=await g.enterPerm(me,nad); await g.runOps(me,nad.etbOps,nad,{perm:pm}); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('…entering asks which dungeon and enters Tomb of Annihilation: Trapped Entry (each player loses 1)',asked.some(q=>/Which dungeon/.test(q))&&me.dungeon&&me.dungeon.key==='tomb'&&me.dungeon.room==='entry'&&me.life===39&&g.players[1].life===39,'asked '+asked.join('|')+' dungeon '+JSON.stringify(me.dungeon)+' life '+me.life);
+   me.hand=[tagCard(mk('Forest','Basic Land — Forest','','',0))]; const art=await g.enterPerm(me,tagCard(mk('Sol Ring','Artifact','{1}','{T}: Add {C}{C}.',1))); await g.enterPerm(me,tagCard(mk('Plains','Basic Land — Plains','','',0)));
+   await g.runOps(me,nad.etbOps,nad,{perm:pm}); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('…the second venture asks for the room (Veils of Fear vs Oubliette) and Oubliette discards + sacrifices artifact/creature/land',asked.filter(q=>/which room/.test(q)).length===1&&me.dungeon.room==='oubliette'&&me.hand.length===0&&!me.battlefield.includes(art),'room '+me.dungeon.room+' hand '+me.hand.length+' art '+me.battlefield.includes(art));
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const top=tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')); me.library.push(top);
+   const ss=tagCard(mk('Soul Summons','Sorcery','{1}{W}',"Manifest the top card of your library. (Put it onto the battlefield face down as a 2/2 creature. Turn it face up any time for its mana cost if it's a creature card.)",2));
+   ok('manifest parses',!!(ss.spellOpsX||ss.spellOps||[]).some&&JSON.stringify(ss.spellOpsX||ss.spellOps).includes('manifest'),JSON.stringify(ss.spellOpsX||ss.spellOps));
+   me.hand.push(ss); me.pool=[{c:'W'},{c:'W'}]; await g.cast(me,ss,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   const fd=me.battlefield.find(b=>b.faceDown); ok('…a face-down 2/2 enters',!!fd&&g.powerOf(me,fd)===2&&fd.card.faceDownOf===top,'');
+   me.pool=[{c:'G'},{c:'G'}]; const up=g.abilityOptions(me,{}).find(o=>o.perm===fd); if(up){await g.activate(me,up);while(g.stack.length)await g.resolve();}
+   ok('…and turns face up for the Bear\'s mana cost',!!up&&fd.card===top&&!fd.faceDown,'');
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const dp=tagCard(mk('Den Protector','Creature — Human Warrior','{1}{G}',"Creatures with power less than Den Protector's power can't block it.\nMegamorph {1}{G} (You may cast this card face down as a 2/2 creature for {3}. Turn it face up any time for its megamorph cost and put a +1/+1 counter on it.)\nWhen Den Protector is turned face up, return target card from your graveyard to your hand.",2,'2','1'));
+   me.hand.push(dp); me.pool=[{c:'G'},{c:'G'},{c:'G'}]; const alt=g.altOptions(me,dp,'hand').find(a=>a.kind==='faceDown');
+   ok('Megamorph (with reminder text): face-down cast for {3} offered',!!alt&&alt.cost.total===3,'');
+   g.hooks.humanPayOpt=async c=>c.alts.find(a=>a.kind==='faceDown'); await g.cast(me,dp,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   const fd=me.battlefield.find(b=>b.faceDown); me.pool=[{c:'G'},{c:'G'}]; const up=fd&&g.abilityOptions(me,{}).find(o=>o.perm===fd); if(up){await g.activate(me,up);while(g.stack.length)await g.resolve();}
+   ok('…turning it face up for {1}{G} adds a +1/+1 counter',!!fd&&fd.card===dp&&fd.counters===1,'fd '+!!fd+' counters '+(fd&&fd.counters));
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const fb=tagCard(mk('Fblthp, Lost on the Range','Legendary Creature — Homunculus','{2}{U}',"You may look at the top card of your library any time.\nPlot {2}{U} (You may pay {2}{U} and exile this card from your hand. Cast it as a sorcery on a later turn without paying its mana cost. Plot only as a sorcery.)",3,'1','1'));
+   me.hand.push(fb); me.pool=[{c:'U'},{c:'U'},{c:'U'}]; const o=g.abilityOptions(me,{}).find(x=>x.card===fb&&x.ab.label==='plot');
+   ok('Plot (with reminder text) offered from hand',!!o,''); if(o){await g.activate(me,o);while(g.stack.length)await g.resolve();}
+   ok('…plotted card is exiled and not castable this turn',me.exile.includes(fb)&&!g.castMode(me,fb,'exile'),''); g.turn+=4;
+   ok('…and is castable free on a later turn',g.castMode(me,fb,'exile')==='free',String(g.castMode(me,fb,'exile')));
+ }
  console.log(fails+' failed');})();

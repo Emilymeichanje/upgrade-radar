@@ -1,0 +1,20 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const pg=await b.newPage({viewport:{width:1500,height:1000}});const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
+await pg.goto('file://'+__dirname+'/rec.html');await pg.evaluate(()=>{Math.random=Goldfish.mulberry(5);boot()});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.click('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy&&!GoldfishUI.current.prompt,null,{timeout:60000});
+// venture: dungeon choice prompt appears as a choice with the three dungeons
+await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game,me=U.me;window.__done=false;g.venture(me,"dungeon").then(()=>{window.__done=true;U.render()});});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='choice',null,{timeout:10000});
+ok('venturing asks which dungeon (3 options)',await pg.evaluate(()=>{const P=GoldfishUI.current.prompt;return P.options.length===3&&/Lost Mine of Phandelver/.test(P.options[0])}));
+await pg.click('[data-act="pick-choice"][data-i="0"]');
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;if(U.prompt&&U.prompt.kind==='search'){U.prompt.res(U.prompt.peek?(U.prompt.pool||[]):[]);return false}return window.__done},null,{timeout:10000});
+ok('after the first room the seat shows the dungeon strip with Cave Entrance lit',await pg.evaluate(()=>{const el=document.querySelector('.gs .dg');return !!el&&/Lost Mine of Phandelver/.test(el.textContent)&&!!el.querySelector('.dgp i.cur')&&el.querySelector('.dgp i.cur').title.startsWith('Cave Entrance')}));
+await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game,me=U.me;window.__done=false;g.venture(me,"dungeon").then(()=>{window.__done=true;U.render()});});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='choice',null,{timeout:10000});
+ok('second venture asks Goblin Lair vs Mine Tunnels with the room text',await pg.evaluate(()=>{const P=GoldfishUI.current.prompt;return P.options.length===2&&/Goblin Lair — Create a 1\/1 red Goblin/.test(P.options[0])&&/Mine Tunnels — Create a Treasure/.test(P.options[1])}));
+await pg.click('[data-act="pick-choice"][data-i="1"]');
+await pg.waitForFunction(()=>{const U=GoldfishUI.current;if(U.prompt&&U.prompt.kind==='search'){U.prompt.res(U.prompt.peek?(U.prompt.pool||[]):[]);return false}return window.__done},null,{timeout:10000});
+ok('Mine Tunnels gave a Treasure and the strip moved on',await pg.evaluate(()=>{const U=GoldfishUI.current;return U.me.battlefield.some(b=>/Treasure/.test(b.card.name))&&document.querySelector('.gs .dg .dgp i.cur').title.startsWith('Mine Tunnels')}));
+console.log('errors',errs);await b.close()})();

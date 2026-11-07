@@ -25,6 +25,12 @@ function tokQueries(c) {
   const q = [`t:token ${nm}${pt}${col}${kwq}`, `t:token ${nm}${pt}${col}`, `t:token ${nm}${pt}`, `t:token ${nm}`, `t:token name:"${c.name.replace(/"/g, '')}"`];
   return [...new Set(q)];
 }
+const DG_ART = {}; // b13: dungeon card art by name
+function dungeonArt(name) {
+  if (DG_ART[name] !== undefined) return DG_ART[name] || '';
+  DG_ART[name] = ''; (async () => { try { const r = await fetch('https://api.scryfall.com/cards/named?exact=' + encodeURIComponent(name)); if (!r.ok) return; const j = await r.json(); DG_ART[name] = (j.image_uris && j.image_uris.small) || ''; if (GoldfishUI.current) GoldfishUI.current.render(); } catch (e) {} })();
+  return '';
+}
 async function tokLookup(c) {
   for (const q of tokQueries(c)) {
     try {
@@ -257,6 +263,7 @@ kbd{font:600 .62rem var(--mono);border:1px solid var(--line);border-radius:3px;p
 .hcd:first-child{margin-left:0}
 .hcd img{width:100%;height:100%;border-radius:7px;object-fit:cover;pointer-events:none}
 .gc .ctr.saga{top:2px;bottom:auto;background:#4b2d6b;color:#fff;font-weight:700}.gc .ctr.saga small{opacity:.75;font-weight:400}.gc .ctr.lvl{top:2px;bottom:auto;background:#2d5b6b;color:#fff}
+.dg{display:flex;gap:8px;align-items:center;margin:4px 0;padding:4px 6px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--panel) 85%,#5b3fa0)}.dg img{width:44px;height:32px;object-fit:cover;object-position:top;border-radius:4px}.dg .dgi{font-size:1.2rem}.dg .dgt{display:grid;gap:1px;min-width:0}.dg .dgt b{font-size:.78rem}.dg .dgt small{color:var(--muted);font-size:.7rem}.dg .dgp{display:flex;flex-wrap:wrap;gap:2px;font:600 .62rem/1.3 var(--mono,monospace)}.dg .dgp i{font-style:normal;padding:0 4px;border-radius:3px;background:rgba(255,255,255,.06);opacity:.6}.dg .dgp i.cur{opacity:1;background:var(--accent);color:#000}.dg .dgp b{opacity:.4}
 .gt-ctl .tgtchip{box-shadow:0 0 0 2px var(--bad);animation:gtpulse 1s infinite}.opp-pager .op.dead{opacity:.55;text-decoration:line-through}
 .hcd.can,.sopt.can{cursor:pointer;box-shadow:0 0 0 2px var(--accent),0 0 10px color-mix(in srgb,var(--accent) 60%,transparent)}
 .hcd:hover{transform:translateY(-22px) scale(1.18);z-index:5}
@@ -1072,6 +1079,7 @@ class Table {
       ${inc.map(([k, e]) => `<div class="inc-b">⚔ ${e.n} attacker${e.n === 1 ? '' : 's'} → ${esc(short(k))} · ${e.pw} power</div>`).join('')}
       <div class="gs-h"><div class="av" style="background-image:url('${esc(p.art || '')}')"></div><div class="nm"><b>${esc(short(p.name))}${g.monarch === p ? ' <span class="crown" title="The monarch: draws a card at end step; combat damage steals the crown">👑</span>' : ''}${g.initiative === p ? ` <span class="crown" title="Has the initiative: ventures into Undercity each upkeep${p.undercityRoom ? ' — room: ' + esc(p.undercityRoom) : ''}; combat damage takes it">🏰</span>` : ''}</b><small>${esc(p.deckName)}${p.level ? ' · ' + esc(p.level) : ''}</small></div><div class="lf ${p.life <= 10 ? 'low' : ''} ${tgtLife ? 'tgt' : ''}" data-life="${p.i}">${p.life}</div></div>
       <div class="gs-meta"><span>hand ${p.hand.length}</span><span>library ${p.library.length}</span><button class="zbtn" data-act="zone" data-p="${p.i}" data-z="graveyard" title="Show graveyard">gy ${p.graveyard.length}</button><button class="zbtn" data-act="zone" data-p="${p.i}" data-z="exile" title="Show exiled cards">exile ${p.exile.length}</button>${p.command.length ? `<span>cmd zone: ${esc(p.command.map(c => c.name.split(',')[0]).join(', '))}${p.cmdTax ? ' +' + p.cmdTax : ''}</span>` : ''}${cmdDmgOnMe}${cmdDmg}</div>
+      ${this.dungeonStrip(p)}
       ${threat !== null ? `<div class="thr" title="Threat to you: ${threat.toFixed(0)}"><i style="width:${Math.min(100, threat / maxT * 100)}%"></i></div>` : ''}
       ${isMe ? '<div class="gs-body"><div class="gs-main">' : ''}<div class="gs-bf">${nonl.map(b => this.tile(b, p)).join('') || (this.mobile && lands.length ? '' : '<span class="gs-meta">no permanents</span>')}</div>
       <div class="gs-lands">${[...groups].map(([key, bs]) => { const name = bs[0].card.name, tapped = bs[0].tapped; const c = bs[0].card; const canAct = isMe && bs.some(b => b.card.fetch && g.canActivate(p, b)) && ((this.myTurn && !this.busy && !this.prompt) || (this.prompt && this.prompt.kind === 'priority')); return `<div class="gc lg ${tapped ? 't' : ''} ${canAct ? 'act' : ''}" data-lg="${p.i}:${esc(name)}" data-uid="${c.uid}" title="${esc(name)}${tapped ? ' (tapped)' : ''}">${c.img ? `<img src="${esc(c.img)}" alt="${esc(name)}" loading="lazy">` : `<span>${esc(name)}</span>`}${canAct ? '<span class="cnt">crack</span>' : bs.length > 1 ? `<span class="cnt">×${bs.length}</span>` : ''}</div>`; }).join('')}</div>
@@ -1093,6 +1101,16 @@ class Table {
     if (t && t.life !== undefined) return `${c.dmg ? c.dmg + ' damage to ' : 'target '}${short(t.name)}`;
     if (c.roles.includes('wipe')) return 'destroy all creatures';
     return c.isCreature || c.isArtifact || c.isEnchantment || c.isPlaneswalker ? 'enter the battlefield' : 'resolve';
+  }
+  /** b13: dungeon strip — card art (Scryfall, cached) + room path with the current room lit */
+  dungeonStrip(p) {
+    const D = Goldfish.Game.DUNGEONS; const out = [];
+    const one = (key, roomKey, done) => { const d = D[key]; if (!d) return ''; const order = Object.keys(d.rooms); const cur = roomKey && d.rooms[roomKey]; const img = dungeonArt(d.name);
+      const path = order.map(k => `<i class="${k === roomKey ? 'cur' : ''}" title="${esc(d.rooms[k].name)}: ${esc(d.rooms[k].text)}">${esc(d.rooms[k].name.split(' ')[0])}</i>`).join('<b>›</b>');
+      return `<div class="dg" title="${esc(d.name)}${cur ? ' — ' + esc(cur.name) + ': ' + esc(cur.text) : ''}">${img ? `<img src="${esc(img)}" alt="">` : '<span class="dgi">⚔</span>'}<div class="dgt"><b>${esc(d.name)}</b><small>${cur ? esc(cur.name) + (cur.next.length ? '' : ' · completed') : 'not entered'}</small><div class="dgp">${path}</div></div></div>`; };
+    if (p.dungeon && p.dungeon.key) out.push(one(p.dungeon.key, p.dungeon.room));
+    if (p.undercityRoom || this.game.initiative === p) out.push(one('undercity', p.undercityRoom));
+    return out.join('');
   }
   stackPanel() {
     const g = this.game, st = g.stack || []; if (!st.length) return '';

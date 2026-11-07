@@ -79,6 +79,8 @@ function parseOps(t) {
   if (t.includes('__modal__')) { if (PENDING_MODAL) ops.push(PENDING_MODAL); PENDING_MODAL = null; return ops; }
   // ==== fixes b12 (parse) ====  Saga chapters and walker abilities from the Terra / Tam decks; exact texts, checked first
   { const T = t.replace(/\.$/, ''); const B12 = [
+      [/^manifest the top card of your library$/, () => [{ op: 'manifest', n: 1 }]], [/^manifest the top (two|three|\d+) cards of your library$/, m => [{ op: 'manifest', n: numOf(m[1]) }]], [/^manifest dread$/, () => [{ op: 'manifestDread' }]], // b13: manifest
+      [/^venture into the dungeon$/, () => [{ op: 'venture' }]], [/^venture into undercity$/, () => [{ op: 'venture', which: 'undercity' }]], // b13: dungeons
       [/^exile target permanent an opponent controls with mana value (\d+) or greater$/, m => [{ op: 'b12_exileOpp', minMV: +m[1] }]],
       [/^noncreature spells your opponents cast cost \{(\d+)\} more to cast until your next turn$/, m => [{ op: 'b12_oppTax', n: +m[1] }]],
       [/^return target creature or planeswalker card from your graveyard to the battlefield\. put a \+1\/\+1 counter or a loyalty counter on it$/, () => [{ op: 'b12_ecdReturn' }]],
@@ -739,6 +741,7 @@ function tagAbilities(card) {
     if (/^(i|ii|iii|iv|v|vi)(, (i|ii|iii|iv|v|vi))* — /.test(raw)) continue; // saga chapters are handled by tagSaga
     l = raw.replace(/^[a-z' ]+ — (?=[{a-z])/, s => /^(landfall|addendum|renew|adamant|grand summon|max speed|raid|ronso rage|blitzball captain|medicus ministorum|mold earth|lieutenant|time lord's prerogative|dualcast|battalion|strive|treasure hunter|hero's sundering|enthralling performance|shooting star|cheer|steal|unlock ability|the will of the hive mind|flashback|escape|unearth|cycling|embalm|eternalize|scavenge|metalcraft|imprint) — $/.test(s) ? s : ''); // drop ability words like "Raid — "
     let m;
+    if ((m = l.match(/^whenever this card enters or attacks, (.+)$/))) { const ops = parseOps(m[1]); if (ops && ops.length) { ETB(ops); card.triggers.push({ when: 'attack', zone: 'battlefield', who: 'this card', ops }); continue; } } // b13: Nadaar-style 'enters or attacks'
     if ((m = l.match(/^\{(\d+)\}, \{t\}: you may put an? ([a-z]+) card from your hand onto the battlefield\.?$/))) { AB('{' + m[1] + '}', [{ op: 'putFromHand', what: 'creature', filter: m[2] }], { tap: true, label: 'put a ' + m[2] + ' onto the battlefield' }); continue; } // b13: Belbe's Portal (after the type is chosen)
     if ((m = l.match(/^choose a creature type\. creatures that aren't of the chosen type get -(\d+)\/-(\d+) until end of turn\.?$/))) { card.spellOpsX = [{ op: 'b13_shrinkOthers', n: +m[1] }]; continue; } // b13: Crippling Fear
     if (/^each player chooses a creature type\. each player returns all creature cards of a type chosen this way from their graveyard to the battlefield\.?$/.test(l)) { card.spellOpsX = [{ op: 'b13_bidding' }]; continue; } // b13: Patriarch's Bidding
@@ -1078,7 +1081,7 @@ function tagAbilities(card) {
       else if (/^this spell costs \{x\} less to cast, where x is the total amount of noncombat damage dealt to your opponents this turn/.test(Lw)) ST('selfReduce', { what: 'ncOpp' });
       else if (/^whenever a source you control deals noncombat damage to an opponent, this card deals that much damage to target creature or planeswalker that player controls/.test(Lw)) ST('incinerator', true);
       else if ((m = Lw.match(/^vanishing (\d+)$/))) card.vanishing = +m[1];
-      else if ((m = Lw.match(/^plot ((?:\{[^}]+\})+)$/))) card.plot = manaInfo(m[1].toUpperCase());
+      else if ((m = Lw.match(/^plot ((?:\{[^}]+\})+)\.?(?: \(.*\))?$/))) card.plot = manaInfo(m[1].toUpperCase());
       else if (/^\{2\}\{r\}: you may put a red creature card or an artifact creature card from your hand onto the battlefield\. sacrifice it at the beginning of the next end step/.test(Lw)) AB('{2}{R}', [{ op: 'putFromHand', what: 'creature', filter: 'red or artifact', sacEnd: true }]);
       else if (/^whenever a player casts a noncreature spell, this card deals 6 damage to that player/.test(Lw)) card.triggers.push({ when: 'anyCast', zone: 'battlefield', filter: 'noncreature', ops: [{ op: 'dmgCaster', n: 6 }] });
       else if (/^whenever you cast a creature spell with power 4, 5, or 6, this card deals 4 damage to any target/.test(Lw)) TR('cast', [{ op: 'damage', n: 4, to: 'any target' }], { filter: 'creature', minPower: 4, maxPower: 6 });
@@ -2439,7 +2442,7 @@ function tagCard(c) {
     if (!ok) r.splice(r.indexOf('removal'), 1);
   }
   if (isPerm && r.includes('removal') && card.etbOps && card.etbOps.some(x => x.op === 'damage' && /target/.test(x.to || ''))) r.splice(r.indexOf('removal'), 1); // b13: Annie Joins Up — ETB damage is the removal; the cast-time removal path was a second 5 damage
-  const res = isPerm ? '' : o.split('\n').filter(l => !/^(at the beginning(?! of your next upkeep)|whenever|when )/.test(l) && !/^[^:"]+: /.test(l) && !/^(flashback|cycling|escape|jump-start|addendum)/.test(l)).join('\n');
+  const res = isPerm ? '' : o.split('\n').map(l => l.replace(/ ?\([^()]*\)/g, '').trim()).filter(l => !/^(at the beginning(?! of your next upkeep)|whenever|when )/.test(l) && !/^[^:"]+: /.test(l) && !/^(flashback|cycling|escape|jump-start|addendum)/.test(l)).join('\n'); // b13: reminder text stripped from spell text (manifest, discover…)
   card.freeCmd = /if you control a commander, you may cast this spell without paying its mana cost/.test(o);
   card.uncounterable = /this spell can't be countered/.test(o);
   card.redirect = /change the target of target spell|choose new targets for target spell|change the target of target (instant|sorcery)/.test(o);
@@ -2524,6 +2527,45 @@ function mulberry(seed) { const st = { s: seed }; const f = function () { let t 
 const clone = c => ({ ...c, uid: UID++ });
 
 // ============================== GAME ==============================
+const DUNGEONS = {
+  phandelver: { name: 'Lost Mine of Phandelver', start: 'entrance', rooms: {
+    entrance: { name: 'Cave Entrance', text: 'Scry 1.', ops: [{ op: 'scry', n: 1 }], next: ['goblin', 'tunnels'] },
+    goblin: { name: 'Goblin Lair', text: 'Create a 1/1 red Goblin creature token.', ops: [{ op: 'tokens', n: 1, pt: [1, 1], types: 'Goblin', tcolors: ['R'] }], next: ['storeroom', 'pool'] },
+    tunnels: { name: 'Mine Tunnels', text: 'Create a Treasure token.', ops: [{ op: 'artifactTokens', n: 1, kind: 'treasure', tapped: false }], next: ['pool', 'fungi'] },
+    storeroom: { name: 'Storeroom', text: 'Put a +1/+1 counter on target creature.', ops: [{ op: 'counters', n: 1, to: 'target creature' }], next: ['temple'] },
+    pool: { name: 'Dark Pool', text: 'Each opponent loses 1 life and you gain 1 life.', ops: [{ op: 'drain', n: 1, each: true, gainLost: true }], next: ['temple'] },
+    fungi: { name: 'Fungi Cavern', text: 'Target creature gets -4/-0 until end of turn.', ops: [{ op: 'dgShrinkPower', n: 4 }], next: ['temple'] },
+    temple: { name: 'Temple of Dumathoin', text: 'Draw a card.', ops: [{ op: 'draw', n: 1 }], next: [] } },
+    aiPick: (g, p, nx) => { if (nx.includes('goblin')) return nx.indexOf('goblin'); if (nx.includes('pool')) return nx.indexOf('pool'); return 0; } },
+  tomb: { name: 'Tomb of Annihilation', start: 'entry', rooms: {
+    entry: { name: 'Trapped Entry', text: 'Each player loses 1 life.', ops: [{ op: 'b12_eachLose', n: 1 }], next: ['veils', 'oubliette'] },
+    veils: { name: 'Veils of Fear', text: 'Each player loses 2 life unless they discard a card.', ops: [{ op: 'dgLoseUnlessDiscard', n: 2 }], next: ['sandfall'] },
+    oubliette: { name: 'Oubliette', text: 'Discard a card and sacrifice an artifact, a creature, and a land.', ops: [{ op: 'dgOubliette' }], next: ['cradle'] },
+    sandfall: { name: 'Sandfall Cell', text: 'Each player loses 2 life unless they sacrifice an artifact, creature, or land.', ops: [{ op: 'dgLoseUnlessSac', n: 2 }], next: ['cradle'] },
+    cradle: { name: 'Cradle of the Death God', text: 'Create The Atropal, a legendary 4/4 black God Horror creature token with deathtouch.', ops: [{ op: 'tokens', n: 1, pt: [4, 4], types: 'God Horror', tcolors: ['B'], kw: ['deathtouch'], name: 'The Atropal', legendary: true }], next: [] } },
+    aiPick: (g, p, nx) => (nx.includes('oubliette') && p.battlefield.filter(b => b.card.isCreature).length <= 1 && p.hand.length >= 2) ? nx.indexOf('oubliette') : 0 },
+  madmage: { name: 'Dungeon of the Mad Mage', start: 'portal', rooms: {
+    portal: { name: 'Yawning Portal', text: 'You gain 1 life.', ops: [{ op: 'gain', n: 1 }], next: ['level'] },
+    level: { name: 'Dungeon Level', text: 'Scry 1.', ops: [{ op: 'scry', n: 1 }], next: ['bazaar', 'caverns'] },
+    bazaar: { name: 'Goblin Bazaar', text: 'Create a Treasure token.', ops: [{ op: 'artifactTokens', n: 1, kind: 'treasure', tapped: false }], next: ['lost'] },
+    caverns: { name: 'Twisted Caverns', text: "Target creature can't attack until your next turn.", ops: [{ op: 'dgCantAttack' }], next: ['lost'] },
+    lost: { name: 'Lost Level', text: 'Scry 2.', ops: [{ op: 'scry', n: 2 }], next: ['runestone', 'muiral'] },
+    runestone: { name: 'Runestone Caverns', text: 'Exile the top two cards of your library. You may play them this turn.', ops: [{ op: 'impulse', n: 2 }], next: ['deep'] },
+    muiral: { name: "Muiral's Graveyard", text: 'Create two 1/1 black Skeleton creature tokens.', ops: [{ op: 'tokens', n: 2, pt: [1, 1], types: 'Skeleton', tcolors: ['B'] }], next: ['deep'] },
+    deep: { name: 'Deep Mines', text: 'Scry 3.', ops: [{ op: 'scry', n: 3 }], next: ['lair'] },
+    lair: { name: "Mad Wizard's Lair", text: 'Draw three cards and reveal them. You may cast one of them without paying its mana cost.', ops: [{ op: 'dgMadLair' }], next: [] } },
+    aiPick: (g, p, nx) => { if (nx.includes('caverns') && g.opponentsOf(p).some(q => q.battlefield.some(b => b.card.isCreature && g.powerOf(q, b) >= 4))) return nx.indexOf('caverns'); if (nx.includes('muiral')) return nx.indexOf('muiral'); return 0; } },
+  undercity: { name: 'Undercity', start: 'entrance', rooms: {
+    entrance: { name: 'Secret Entrance', text: 'Search your library for a basic land card, reveal it, put it into your hand, then shuffle.', ops: [{ op: 'landToHand', basic: true, types: [] }], next: ['forge', 'well'] },
+    forge: { name: 'Forge', text: 'Put two +1/+1 counters on target creature.', ops: [{ op: 'counters', n: 2, to: 'target creature' }], next: ['trap', 'arena'] },
+    well: { name: 'Lost Well', text: 'Scry 2.', ops: [{ op: 'scry', n: 2 }], next: ['arena', 'stash'] },
+    trap: { name: 'Trap!', text: 'Target player loses 5 life.', ops: [{ op: 'drain', n: 5, each: false }], next: ['archives'] },
+    arena: { name: 'Arena', text: 'Goad target creature.', ops: [{ op: 'goadTarget' }], next: ['archives', 'catacombs'] },
+    stash: { name: 'Stash', text: 'Create a Treasure token.', ops: [{ op: 'artifactTokens', n: 1, kind: 'treasure', tapped: false }], next: ['catacombs'] },
+    archives: { name: 'Archives', text: 'Draw a card.', ops: [{ op: 'draw', n: 1 }], next: ['throne'] },
+    catacombs: { name: 'Catacombs', text: 'Create a 4/1 black Skeleton creature token with menace.', ops: [{ op: 'tokens', n: 1, pt: [4, 1], kw: ['menace'], types: 'Skeleton', tcolors: ['B'] }], next: ['throne'] },
+    throne: { name: 'Throne of the Dead Three', text: 'Reveal the top ten cards of your library. Put a creature card from among them onto the battlefield with three +1/+1 counters on it. It gains hexproof until your next turn. Then shuffle.', ops: [{ op: 'throneDead' }], next: [] } } }
+};
 class Game {
   constructor(seats, opts = {}) {
     this.rng = mulberry(opts.seed || (Date.now() & 0xffffffff));
@@ -3979,6 +4021,10 @@ class Game {
     const t = obj.target; if (t && t.card && this.ownerOf(t) === p) { obj.target = null; const harmful = (obj.card.roles || []).some(r => /removal|wipe/.test(r)); if (harmful && p.ai) { const nt = p.ai.bestTarget(this, p, b => !b.card.isLand); obj.target = nt ? nt.perm : null; } this.say(`— ${obj.card.name} gets a new target${obj.target ? ': ' + obj.target.card.name : ''}`, p); }
     else if (t && !t.card && t === p) { obj.target = this.opponentsOf(p).sort((a, z) => a.life - z.life)[0] || null; } }
   /** a face-down 2/2 (morph, megamorph, disguise): no name, text or colour; disguise adds ward {2}; it can be turned face up for its cost */
+  /** b13: a manifested card — face-down 2/2; turn it face up for its mana cost if it's a creature card (or for its morph/disguise cost) */
+  manifestCard(real) { const ups = []; if (real.isCreature && real.mana && real.mana.total >= 0) ups.push({ zone: 'battlefield', label: 'turn face up', cost: real.mana, speed: 'instant', special: true, ops: [{ op: 'turnFaceUp' }] }); if (real.morph) ups.push({ zone: 'battlefield', label: 'turn face up (' + real.morph.kind + ')', cost: real.morph.cost, speed: 'instant', special: true, ops: [{ op: 'turnFaceUp' }] });
+    return { uid: UID++, name: 'Manifested card', type: 'Creature', oracle: '', cmc: 0, manaCost: '', mana: manaInfo(''), isCreature: true, power: 2, toughness: 2, kw: [], colors: [], roles: [], triggers: [], abilities: ups, statics: {}, anthems: [], reducers: [], orig: real, faceDownOf: real, manifested: true, img: '' }; }
+  async manifest(p, n = 1) { for (let k = 0; k < n; k++) { const c = p.library.pop(); if (!c) break; const pm = await this.enterPerm(p, this.manifestCard(c)); if (pm) { pm.faceDown = true; this.say(`— manifests the top card of the library (a face-down 2/2)`, p); await this.creatureEntered(p, pm); await this.permEntered(p, pm); } } }
   faceDownCard(real) { const k = real.morph.kind; return { uid: UID++, name: k === 'disguise' ? 'Disguised creature' : 'Face-down creature', type: 'Creature', oracle: '', cmc: 0, manaCost: '', mana: manaInfo(''), isCreature: true, power: 2, toughness: 2, kw: k === 'disguise' ? ['ward'] : [], colors: [], roles: [], triggers: [], abilities: [{ zone: 'battlefield', label: 'turn face up', cost: real.morph.cost, speed: 'instant', special: true, ops: [{ op: 'turnFaceUp' }] }], statics: k === 'disguise' ? { ward: 2 } : {}, anthems: [], reducers: [], orig: real, faceDownOf: real, img: '' }; }
   async airbendCard(owner, c, by, quiet) { if (c.isCommander && await this.cmdZoneInstead(owner, c, 'exile')) { owner.command.push(c); if (!quiet) this.say(`— airbends ${c.name} (to the command zone)`, by); return; } owner.exile.push(c); (owner.exileCast = owner.exileCast || []).push({ card: c, owner, cost: manaInfo('{2}'), forever: true, airbent: true }); if (!quiet) this.say(`— airbends ${c.name}: ${owner.name} may cast it for {2}`, by); }
   async bent(p, kind) { (p.bends = p.bendTurn === this.turn ? p.bends || {} : {})[kind] = true; p.bendTurn = this.turn; for (const b of p.battlefield.filter(x => x.card.statics && x.card.statics.aangBend && !x.neutral)) { this.say(`— ${b.card.name}: draws a card (${kind}bending)`, p); await this.draw(p, 1); if (['water', 'earth', 'fire', 'air'].every(k => p.bends[k])) await this.runOps(p, [{ op: 'transform' }], b.card, { perm: b }); } }
@@ -4479,8 +4525,38 @@ class Game {
   async becomeMonarch(p, why) { if (!p || p.dead || this.monarch === p) return; this.monarch = p; this.say(`— ${p.name} becomes the monarch${why ? ' (' + why + ')' : ''}`, p); }
   async takeInitiative(p) { if (!p || p.dead) return; const had = this.initiative === p; this.initiative = p; if (!had) this.say(`— ${p.name} takes the initiative`, p); await this.venture(p); }
   /** Undercity, simplified path: Entrance (basic land to hand) → Forge (two +1/+1 counters) → Trap! (5 life) → Archives (draw) → Throne (best creature of top 10 with 3 counters) */
+  /** b13: the four dungeons (CR 309). Each room: name, printed text, engine ops, next rooms. */
+  static get DUNGEONS() { return DUNGEONS; }
+  /** choose a dungeon to start (human: prompt; AI: Phandelver by default, Mad Mage when it has a big library and lots of mana, Tomb when it is behind on board) */
+  async chooseDungeon(p) {
+    const keys = ['phandelver', 'tomb', 'madmage'];
+    if (p.human && !this.shortcutting && this.hooks.humanChoice) { const opts = keys.map(k => DUNGEONS[k].name); const ch = await this.hooks.humanChoice({ p, card: { name: 'Venture into the dungeon' }, question: 'Which dungeon do you enter?', options: opts, dungeons: keys }); const k = keys.find(k => DUNGEONS[k].name === ch) || keys[String(ch).match(/^\d+$/) ? +ch : -1] || 'phandelver'; return k; }
+    const myCr = p.battlefield.filter(b => b.card.isCreature).length, oppCr = Math.max(0, ...this.opponentsOf(p).map(q => q.battlefield.filter(b => b.card.isCreature).length));
+    if (oppCr >= myCr + 3) return 'tomb'; if (p.battlefield.filter(b => b.card.isLand).length >= 7) return 'madmage'; return 'phandelver';
+  }
   /** the Undercity (CR 309, initiative): Secret Entrance → Forge | Lost Well → Trap! | Arena | Stash → Archives | Catacombs → Throne of the Dead Three */
-  async venture(p) {
+  async venture(p, which) {
+    if (which !== 'undercity' && this.initiative !== p || which === 'dungeon') { // b13: "venture into the dungeon" — pick/continue a non-Undercity dungeon
+      let d = p.dungeon; if (!d || !d.room || !DUNGEONS[d.key].rooms[d.room].next.length) { const key = await this.chooseDungeon(p); d = p.dungeon = { key, room: null }; this.say(`— enters ${DUNGEONS[key].name}`, p); }
+      const D = DUNGEONS[d.key]; const cur = d.room && D.rooms[d.room]; let nextKey;
+      if (!cur) nextKey = D.start; else if (cur.next.length === 1) nextKey = cur.next[0];
+      else if (p.human && !this.shortcutting && this.hooks.humanChoice) { const opts = cur.next.map(k => `${D.rooms[k].name} — ${D.rooms[k].text}`); const ch = await this.hooks.humanChoice({ p, card: { name: D.name }, question: `${D.name}: which room next?`, options: opts }); const i = Math.max(0, opts.indexOf(ch)); nextKey = cur.next[i]; }
+      else nextKey = cur.next[p.ai && D.aiPick ? D.aiPick(this, p, cur.next) : 0];
+      d.room = nextKey; const room = D.rooms[nextKey];
+      this.say(`— ventures into ${D.name}: ${room.name} (${room.text})`, p); await this.runOps(p, room.ops, { name: D.name + ' — ' + room.name }, {});
+      if (!room.next.length) { p.dungeonsCompleted = (p.dungeonsCompleted || 0) + 1; this.say(`— completes ${D.name}`, p); }
+      return;
+    }
+    const uc = DUNGEONS.undercity; const ROOMS = uc.rooms;
+    const cur = p.undercityRoom && ROOMS[p.undercityRoom]; let nextKey;
+    if (!cur || !cur.next.length) nextKey = 'entrance';
+    else if (cur.next.length === 1) nextKey = cur.next[0];
+    else if (p.human && !this.shortcutting && this.hooks.humanChoice) { const opts = cur.next.map(k => `${ROOMS[k].name} — ${ROOMS[k].text}`); const ch = await this.hooks.humanChoice({ p, card: { name: 'Undercity' }, question: 'Undercity: which room next?', options: opts }); nextKey = cur.next[Math.max(0, opts.indexOf(ch))]; }
+    else { const hasCreature = p.battlefield.some(b => b.card.isCreature); const pick = { entrance: hasCreature ? 'forge' : 'well', forge: 'trap', well: 'stash', arena: p.battlefield.filter(b => b.card.isCreature).length >= 2 ? 'catacombs' : 'archives' }[p.undercityRoom]; nextKey = pick || cur.next[0]; }
+    p.undercityRoom = nextKey; const room = ROOMS[nextKey];
+    this.say(`— ventures into the Undercity: ${room.name} (${room.text})`, p); await this.runOps(p, room.ops, { name: 'Undercity — ' + room.name }, {});
+    if (nextKey === 'throne') { p.dungeonsCompleted = (p.dungeonsCompleted || 0) + 1; this.say('— completes the Undercity', p); } }
+  async _oldVenture(p) {
     const ROOMS = { entrance: { name: 'Secret Entrance', ops: [{ op: 'landToHand', basic: true, types: [] }], next: ['forge', 'well'] }, forge: { name: 'Forge', ops: [{ op: 'counters', n: 2, to: 'target creature' }], next: ['trap', 'arena'] }, well: { name: 'Lost Well', ops: [{ op: 'scry', n: 2 }], next: ['arena', 'stash'] },
       trap: { name: 'Trap!', ops: [{ op: 'drain', n: 5, each: false }], next: ['archives'] }, arena: { name: 'Arena', ops: [{ op: 'goadTarget' }], next: ['archives', 'catacombs'] }, stash: { name: 'Stash', ops: [{ op: 'artifactTokens', n: 1, kind: 'treasure', tapped: false }], next: ['catacombs'] },
       archives: { name: 'Archives', ops: [{ op: 'draw', n: 1 }], next: ['throne'] }, catacombs: { name: 'Catacombs', ops: [{ op: 'tokens', n: 1, pt: [4, 1], kw: ['menace'], types: 'Skeleton', tcolors: ['B'] }], next: ['throne'] }, throne: { name: 'Throne of the Dead Three', ops: [{ op: 'throneDead' }], next: [] } };
@@ -5204,6 +5280,15 @@ class Game {
           if (!t) break; const pp = op.pp || 0, tt = op.tt || 0; t.tempPump = (t.tempTurn === this.turn ? t.tempPump || 0 : 0) + pp; t.tempTurn = this.turn; this.toughAdj(t, tt - pp); if (op.kws && op.kws.length) { (t.kwTurn === this.turn ? t.kwT : (t.kwT = [])).push(...op.kws); t.kwTurn = this.turn; } this.refreshStatics(); this.say(`— ${t.card.name} gets ${pp >= 0 ? '+' : ''}${pp}/${tt >= 0 ? '+' : ''}${tt}${op.kws && op.kws.length ? ' and ' + op.kws.join(', ') : ''}`, p); const o = this.ownerOf(t); if (o && this.toughOf(o, t) <= 0) await this.destroy(o, t); break; }
         case 'monarch': await this.becomeMonarch(p); break;
         case 'initiative': await this.takeInitiative(p); break;
+        case 'venture': await this.venture(p, op.which === 'undercity' ? 'undercity' : 'dungeon'); break;
+        case 'manifest': await this.manifest(p, op.n || 1); break;
+        case 'manifestDread': { const top = p.library.splice(-Math.min(2, p.library.length)).reverse(); if (!top.length) break; let keep; if (p.ai) keep = [...top].sort((a, z) => (z.isCreature ? 10 + (z.power || 0) : 0) - (a.isCreature ? 10 + (a.power || 0) : 0))[0]; else keep = (await this.chooseFromList(p, src, top, 1, 'manifest'))[0] || top[0]; for (const c of top) if (c !== keep) p.graveyard.push(c); p.library.push(keep); await this.manifest(p, 1); this.say(`— manifest dread: the other card goes to the graveyard`, p); break; }
+        case 'dgShrinkPower': { const t = await this.pickPerm(p, src, this.alive().flatMap(q => q.battlefield.filter(b => b.card.isCreature && this.targetOk(src, b, p))).filter(b => this.ownerOf(b) !== p || !p.ai), { harmful: true }); if (!t) break; if (t.tempTurn !== this.turn) { t.tempTurn = this.turn; t.tempPump = 0; } t.tempPump -= op.n; this.say(`— ${t.card.name} gets -${op.n}/-0 until end of turn`, p); break; }
+        case 'dgLoseUnlessDiscard': for (const q of this.alive()) { const can = q.hand.length > 0; const disc = can && (q.ai ? (q.life <= op.n + 3 || q.hand.length >= 3) : (this.hooks.humanMay ? await this.hooks.humanMay({ p: q, card: src, question: `${src.name}: discard a card instead of losing ${op.n} life?` }) : true)); if (disc) { const d = q.ai ? q.ai.chooseDiscard(this, q) : (this.hooks.humanDiscard ? await this.hooks.humanDiscard(q) : q.hand[0]); if (d) { await this.discardCard(q, d); this.say(`— ${q.name} discards ${d.name}`, q); continue; } } await this.changeLife(q, -op.n, src); this.say(`— ${q.name} loses ${op.n} life`, q); } await this.sba(); break;
+        case 'dgLoseUnlessSac': for (const q of this.alive()) { const pool = q.battlefield.filter(b => b.card.isArtifact || b.card.isCreature || b.card.isLand); let want = pool.length && (q.ai ? q.life <= op.n + 4 || pool.some(b => b.card.token) : !!(this.hooks.humanMay && await this.hooks.humanMay({ p: q, card: src, question: `${src.name}: sacrifice an artifact, creature or land instead of losing ${op.n} life?` }))); if (want) { const t = q.ai ? [...pool].sort((a, z) => q.ai.permBase(a) - q.ai.permBase(z))[0] : await this.pickPerm(q, src, pool, { dest: 'sacrifice' }); if (t) { await this.sacrifice(q, t); continue; } } await this.changeLife(q, -op.n, src); this.say(`— ${q.name} loses ${op.n} life`, q); } await this.sba(); break;
+        case 'dgOubliette': { const d = p.hand.length ? (p.ai ? p.ai.chooseDiscard(this, p) : (this.hooks.humanDiscard ? await this.hooks.humanDiscard(p) : p.hand[0])) : null; if (d) await this.discardCard(p, d); for (const f of ['isArtifact', 'isCreature', 'isLand']) { const pool = p.battlefield.filter(b => b.card[f]); if (!pool.length) continue; const t = p.ai ? [...pool].sort((a, z) => p.ai.permBase(a) - p.ai.permBase(z))[0] : await this.pickPerm(p, src, pool, { dest: 'sacrifice' }); if (t) await this.sacrifice(p, t); } break; }
+        case 'dgCantAttack': { const t = await this.pickPerm(p, src, this.oppPerms(p, b => b.card.isCreature), { harmful: true }); if (!t) break; t.lockUntil = { by: p, n: (p.turnCount || 0) + 1 }; this.say(`— ${t.card.name} can't attack until ${p.name}'s next turn`, p); break; }
+        case 'dgMadLair': { const n0 = p.hand.length; await this.draw(p, 3); const drawn = p.hand.slice(n0); const pool = drawn.filter(c => !c.isLand); if (!pool.length) break; let c; if (p.ai) c = [...pool].sort((a, z) => p.ai.castValueRaw(this, p, z) - p.ai.castValueRaw(this, p, a))[0]; else c = (await this.chooseFromList(p, src, pool, 1, 'cast free'))[0]; if (!c) break; p.hand.splice(p.hand.indexOf(c), 1); this.say(`— casts ${c.name} without paying its mana cost`, p); await this.castFreeCard(p, c); break; }
         case 'populate': { const pool = p.battlefield.filter(b => b.card.token && b.card.isCreature); const t = [...pool].sort((a, z) => this.powerOf(p, z) - this.powerOf(p, a))[0]; if (!t) break; const c = { ...t.card, uid: UID++, kwBase: null }; const n = { id: UID++, card: c, tapped: false, summoning: !op.hasteSac, counters: 0, enteredTurn: this.turn, sacAtEnd: !!op.hasteSac }; p.battlefield.push(n); this.say(`— populates: a copy of ${t.card.name}`, p); await this.creatureEntered(p, n); break; }
         case 'goadTarget': { const pool = this.oppPerms(p, b => b.card.isCreature); const t = p.ai ? [...pool].sort((a, z) => this.powerOf(this.ownerOf(z), z) - this.powerOf(this.ownerOf(a), a))[0] : await this.pickPerm(p, src, pool); if (t) { t.goadedBy = p; t.goadUntil = (p.turnCount || 0) + 1; this.say(`— goads ${t.card.name}`, p); } break; }
         case 'cantBlockTarget': { const pool = this.oppPerms(p, b => b.card.isCreature && !b.tapped); const t = p.ai ? [...pool].sort((a, z) => this.powerOf(this.ownerOf(z), z) - this.powerOf(this.ownerOf(a), a))[0] : await this.pickPerm(p, src, pool); if (t) { t.noBlockTurn = this.turn; this.say(`— ${t.card.name} can't block this turn`, p); } break; }
@@ -7827,6 +7912,9 @@ class AI {
       case 'b13_bridge': v += 6; break;
       case 'b13_clavileno': v += 3; break;
       case 'b13_pumpBite': { const best = Math.max(0, ...me.battlefield.filter(b => b.card.isCreature).map(b => game.powerOf(me, b))); v += best >= 2 ? 5 : 0; break; }
+      case 'venture': v += 3; break;
+      case 'manifest': v += 2.5 * (op.n || 1); break;
+      case 'manifestDread': v += 3; break;
       case 'b13_phaseAny': { const atk = (game.curAttackers || []).filter(b => !me.battlefield.includes(b)); v += atk.length ? Math.min(8, atk.reduce((s, b) => s + game.powerOf(game.ownerOf(b), b), 0) / 2) : -3; break; }
       case 'b13_shrinkOthers': { const ty = game.chooseCreatureType(me); let v = 0; for (const q of game.players) if (!q.dead) for (const b of q.battlefield) if (b.card.isCreature && !matchesFilter(b.card, ty)) v += (q === me ? -1 : 1) * (game.toughOf(q, b) <= op.n ? 3 : 0.5); break; }
       case 'b13_bidding': { v += 3 * me.graveyard.filter(c => c.isCreature && c.type.toLowerCase().includes(game.chooseCreatureType(me))).length - 2 * Math.max(0, ...game.opponentsOf(me).map(q => q.graveyard.filter(c => c.isCreature).length)) / 2; break; }

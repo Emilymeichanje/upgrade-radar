@@ -2090,6 +2090,7 @@ function tagAbilities(card) {
     if ((m = l.match(/^crew (\d+)/))) { card.abilities.push({ zone: 'battlefield', label: 'crew', cost: manaInfo(''), crew: +m[1], speed: 'instant', ops: [{ op: 'crew' }] }); continue; }
     if ((m = l.match(/^as this card enters, choose (\w+) or (\w+)\.?$/))) { card.siege = [m[1], m[2]].map(s => s[0].toUpperCase() + s.slice(1)); continue; }
     if (card.siege && /^• (\w+) — /.test(l)) continue;
+    if ((m = l.match(/^whenever you cast your second spell each turn, (.+)$/))) { const ops = parseOps(m[1]); if (ops.length) { card.triggers.push({ when: 'cast', zone: 'battlefield', filter: '', second: true, ops }); continue; } }
     if ((m = l.match(/^whenever (a player|an opponent) casts their second spell each turn, (.+)$/))) { const ops = parseOps(m[2]); if (ops.length) card.triggers.push({ when: m[1] === 'a player' ? 'anyCast' : 'oppCast', zone: 'battlefield', filter: '', second: true, ops }); continue; }
     if (/^whenever an opponent attacks you with two or more creatures, draws their second card each turn, or casts their second spell each turn, you draw a card/.test(l)) { const ops = [{ op: 'draw', n: 1 }]; card.triggers.push({ when: 'attackedBy2', zone: 'battlefield', ops }, { when: 'oppDraw', zone: 'battlefield', second: true, ops }, { when: 'oppCast', zone: 'battlefield', filter: '', second: true, ops }); continue; }
     if ((m = l.match(/^whenever an opponent attacks with creatures, if two or more of those creatures are attacking you[^,]*, (.+)$/))) { card.triggers.push({ when: 'attackedBy2', zone: 'battlefield', ops: parseOps(m[1]) }); continue; }
@@ -2885,7 +2886,7 @@ class Game {
     p.life += delta;
     if (!this._lifeFromDmg) { /* b13: every non-damage life change is visible in the log (damage annotates itself in dealDamage) */
       const shortN = p.name.replace(/^(You|AI) · /, ''); const tag = ` [${shortN} ${p.life - delta} → ${p.life}]`; const last = this.log[this.log.length - 1];
-      const mentions = last && !last.m.includes(`[${shortN} `) && (last.m.includes(p.name) || last.m.includes(shortN) || /each (opponent|player)/.test(last.m) || /^pays \d+ life/.test(last.m)) && /gain|lose|loses|life/.test(last.m) && !/draws? \d+ cards?/.test(last.m);
+      const mentions = last && !last.m.includes(`[${shortN} `) && (last.m.includes(p.name) || last.m.includes(shortN) || /each (opponent|player)/.test(last.m) || /^pays \d+ life/.test(last.m) || /\(paid \d+ life\)/.test(last.m)) && /gain|lose|loses|life/.test(last.m) && !/draws? \d+ cards?/.test(last.m);
       if (mentions) { last.m += tag; if (this.hooks.logPatch) this.hooks.logPatch(this.log.length - 1, last.m); }
       else this.say(`— ${source && source.name ? source.name + ': ' : ''}${shortN} ${delta > 0 ? 'gains' : 'loses'} ${Math.abs(delta)} life${tag}`, p);
     }
@@ -3927,12 +3928,12 @@ class Game {
     if (!combat && this.b5_stag(q)) n *= 2;
     if (q.b7_redirect && await this.b7_redirectPlayer(q, n, src)) return 0;
     if (q.battlefield.some(b => b.card.statics && b.card.statics.chasm && !b.neutral)) { this.say(`— damage to ${q.name} is prevented`, q); return 0; }
-    const lifeBefore = q.life;
+    const lifeBefore = q.life; const lastIdx = this.log.length - 1;
     this._lifeFromDmg = true; try { await this.changeLife(q, -n, src); } finally { this._lifeFromDmg = false; }
-    { // b13: every damage line names the source and shows the life change — annotate the line that announced it, or add one
-      const short = q.name.replace(/^(You|AI) · /, ''); const tag = ` [${short} ${lifeBefore} → ${q.life}]`; const last = this.log[this.log.length - 1];
+    { // b13: every damage line names the source and shows the life change — annotate the line that announced it (captured before lifelink/triggers could log), or add one
+      const short = q.name.replace(/^(You|AI) · /, ''); const tag = ` [${short} ${lifeBefore} → ${q.life}]`; const last = this.log[lastIdx];
       const mentions = last && !/\[[^\]]* \d+ → -?\d+\]$/.test(last.m) && (last.m.includes(`hits ${q.name} for`) || (/damage to /.test(last.m) && last.m.includes(q.name)) || (/loses? \d+/.test(last.m) && last.m.includes(q.name)));
-      if (mentions) { last.m += tag; if (this.hooks.logPatch) this.hooks.logPatch(this.log.length - 1, last.m); }
+      if (mentions) { last.m += tag; if (this.hooks.logPatch) this.hooks.logPatch(lastIdx, last.m); }
       else if (!combat) this.say(`— ${src && src.name ? src.name : 'damage'}: ${n} to ${q.name}${tag}`, by || (src && this.cardController(src)) || q);
     }
     const p = by || (src ? this.cardController(src) : null);
@@ -6134,7 +6135,7 @@ class Game {
         case 'landerToken': await this.makeArtifactTokens(p, 'lander', op.n || 1); break;
         case 'landFromAnyGy': { const pool = this.alive().flatMap(q => q.graveyard.filter(c => c.isLand).map(c => ({ c, q }))); let ch = p.ai ? pool.sort((a, z) => (z.c.produces || []).length - (a.c.produces || []).length)[0] : null; if (p.human && pool.length) { const c = (await this.chooseFromList(p, src, pool.map(x => x.c), 1, 'battlefield'))[0]; ch = pool.find(x => x.c === c); } if (!ch) break; ch.q.graveyard.splice(ch.q.graveyard.indexOf(ch.c), 1); const [pm] = await this.landEnters(p, ch.c, true); if (pm && ch.q !== p) pm.owner = this.players.indexOf(ch.q); this.say(`— puts ${ch.c.name} onto the battlefield tapped`, p); await this.landfall(p, pm); break; }
         case 'tapSelf': if (ctx.perm) ctx.perm.tapped = true; break;
-        case 'freeISByWizards': { const x = 2 * p.battlefield.filter(b => b.card.isLegendary && matchesFilter(b.card, 'wizard')).length; const pool = p.hand.filter(c => (c.isInstant || c.isSorcery) && c.cmc <= x); const c = p.ai ? [...pool].sort((a, z) => z.cmc - a.cmc)[0] : (await this.chooseFromList(p, src, pool, 1, 'cast free'))[0]; if (c) { p.hand.splice(p.hand.indexOf(c), 1); await this.castFreeCard(p, c); } break; }
+        case 'freeISByWizards': { const x = 2 * p.battlefield.filter(b => b.card.isLegendary && matchesFilter(b.card, 'wizard')).length; const pool = p.hand.filter(c => (c.isInstant || c.isSorcery) && c.cmc <= x); if (!pool.length) { this.say(`— ${src.name}: no instant or sorcery with mana value ${x} or less in hand`, p); break; } const c = p.ai ? [...pool].sort((a, z) => z.cmc - a.cmc)[0] : (await this.chooseFromList(p, src, pool, 1, 'cast free'))[0]; if (c) { p.hand.splice(p.hand.indexOf(c), 1); await this.castFreeCard(p, c); } break; }
         case 'galeCast': { const cc = ctx.castCard; if (!cc) break; const want = cc.isInstant ? 'sorcery' : 'instant'; const pool = p.graveyard.filter(c => matchesFilter(c, want) && c !== cc); const c = p.ai ? [...pool].filter(c => this.canPayCost(p, c.mana)).sort((a, z) => z.cmc - a.cmc)[0] : (await this.chooseFromList(p, src, pool.filter(c => this.canPayCost(p, c.mana)), 1, 'cast from graveyard'))[0]; if (!c) break; p.galeGrant = { card: c, turn: this.turn }; await this.cast(p, c, 'gy', null, { instant: true }); p.galeGrant = null; break; }
         case 'insurrection': { for (const q of this.alive()) for (const t of q.battlefield.filter(b => b.card.isCreature)) { t.tapped = false; if (q === p) { t.hasteTurn = this.turn; continue; } q.battlefield.splice(q.battlefield.indexOf(t), 1); if (t.owner == null) t.owner = this.players.indexOf(q); t.threatenTurn = this.turn; t.threatenFrom = this.players.indexOf(q); t.summoning = false; t.hasteTurn = this.turn; p.battlefield.push(t); } for (const b of p.battlefield.filter(b => b.card.isCreature)) { (b.kwTurn === this.turn ? b.kwT : (b.kwT = [])).push('haste'); b.kwTurn = this.turn; b.summoning = false; } this.refreshStatics(); this.say('— untaps all creatures and gains control of them until end of turn; they gain haste', p); break; }
         case 'kazaReduce': { const n = p.battlefield.filter(b => matchesFilter(b.card, 'wizard')).length; p.kaza = { turn: this.turn, n }; this.say(`— the next instant or sorcery this turn costs {${n}} less`, p); break; }
@@ -6590,6 +6591,7 @@ class Game {
       if (tr.when !== 'cast' || b.neutral) continue;
       if (tr.filter === '__chosen__' ? !(b.chosenType && matchesFilter(card, b.chosenType)) : !matchesFilter(card, tr.filter)) continue;
       if (tr.mvMin && card.cmc < tr.mvMin) continue;
+      if (tr.second && p.spellsThisTurn !== 2) continue; /* b13: Jori En — "your second spell each turn" */
       if (tr.minPower && !((card.power || 0) >= tr.minPower)) continue;
       if (tr.maxPower != null && (card.power || 0) > tr.maxPower) continue;
       if (tr.req && !this.reqOk(p, b, tr.req, { castCard: card, castObj: (this.stack[this.stack.length - 1] || {}).card === card ? this.stack[this.stack.length - 1] : null })) continue;
@@ -7213,7 +7215,7 @@ class Game {
     else { await p.ai.mainPhase(this, p, false); plan = { action: 'attack', assignments: p.ai.chooseAttacks(this, p) }; }
     let attacked = false;
     if (this.turnEndedTurn === this.turn) return;
-    if (!this.winner && !p.dead) { this.phase = 'combat'; await this.fireTriggers(p, 'combatStart'); for (const q of this.alive()) for (const b of q.battlefield.filter(x => !x.neutral)) for (const tr of b.card.triggers || []) if (tr.when === 'eachCombat') await this.runTrig(q, b, tr, {}); if (p.dead || this.winner) return; }
+    if (!this.winner && !p.dead) { this.phase = 'combat'; await this.fireTriggers(p, 'combatStart'); for (const q of this.alive()) for (const b of q.battlefield.filter(x => !x.neutral)) for (const tr of b.card.triggers || []) if (tr.when === 'eachCombat') await this.runTrig(q, b, tr, {}); if (plan && plan.action === 'combat' && p.human && !p.dead && !this.winner && this.turnEndedTurn !== this.turn) plan = await this.hooks.humanTurn(p, 'declare', this); /* b13: the human enters combat first, beginning-of-combat triggers resolve, THEN attackers are declared */ if (p.dead || this.winner) return; }
     for (let n = 0; n < 6 && plan && plan.action === 'attack' && !this.winner && !p.dead; n++) {
       if (p.skipCombat) { p.skipCombat--; this.say(`— ${p.name} skips this combat phase`, p); plan = { ...plan, assignments: [] }; }
       if (plan.assignments && plan.assignments.length) { await this.combatPhase(p, plan.assignments); attacked = true; }

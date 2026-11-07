@@ -625,4 +625,16 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const an=(iv.anthems||[]).filter(a=>a.filter==='token'); ok('Intangible Virtue: single token anthem with vigilance',an.length===1&&an[0].pump[0]===1&&an[0].kws.includes('vigilance'),JSON.stringify(iv.anthems));
    const iv2=tagCard(mk('Plain Virtue','Enchantment','{1}{W}','Creature tokens you control get +2/+2.',2)); ok('plain token anthem still parses',(iv2.anthems||[]).length===1&&iv2.anthems[0].pump[0]===2,JSON.stringify(iv2.anthems));
  }
+
+ { // v106: Jori En draws on the second spell each turn (and only then)
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; for(let i=0;i<6;i++)await g.landEnters(me,tagCard(mk('Island','Basic Land — Island','','',0)));
+   put(me,tagCard(mk('Jori En, Ruin Diver','Legendary Creature — Merfolk Wizard','{1}{U}{R}','Whenever you cast your second spell each turn, draw a card.',3,'2','3')));
+   const s1=tagCard(mk('Opt','Instant','{U}','Scry 1. Draw a card.',1)), s2=tagCard(mk('Opt','Instant','{U}','Scry 1. Draw a card.',1)), s3=tagCard(mk('Opt','Instant','{U}','Scry 1. Draw a card.',1)); s1.spellOps=s2.spellOps=s3.spellOps=[]; me.hand.push(s1,s2,s3); me.spellsThisTurn=0;
+   const h0=me.hand.length; g.hooks.humanSearch=async c=>[]; 
+   await g.cast(me,s1,'hand'); while(g.stack.length)await g.resolve(); await tick(g); const h1=me.hand.length;
+   await g.cast(me,s2,'hand'); while(g.stack.length)await g.resolve(); await tick(g); const h2=me.hand.length;
+   await g.cast(me,s3,'hand'); while(g.stack.length)await g.resolve(); await tick(g); const h3=me.hand.length;
+   ok('Jori En: no draw on 1st, draw on 2nd, none on 3rd',h1===h0&&h2===h1+1&&h3===h2,[h0,h1,h2,h3].join());
+ }
  console.log(fails+' failed');})();

@@ -396,4 +396,19 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const pm=await g.enterPerm(me,imp); await g.runOps(me,imp.etbOps,imp,{perm:pm}); while(g.stack.length)await g.resolve(); await tick(g);
    ok('Impulsivity: you choose the instant/sorcery from any graveyard (Blasphemous Act, not the first card)',!!asked&&asked.pool.length===2&&!g.players[1].battlefield.includes(bear)&&g.players[2].exile.some(c=>c.name==='Blasphemous Act'),'asked '+(asked&&asked.pool.map(c=>c.name))+' bear alive '+g.players[1].battlefield.includes(bear));
  }
+
+ // ==== v95: Kogla's cast-time target is its ETB fight; spree parsed from its mode lines ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; const opp=g.players[1];
+   const ring=await g.enterPerm(opp,tagCard(mk('Sol Ring','Artifact','{1}','{T}: Add {C}{C}.',1))); const bear=await g.enterPerm(opp,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')));
+   const kg=tagCard(mk('Kogla, the Titan Ape','Legendary Creature — Ape','{3}{G}{G}{G}',"When Kogla enters, it fights up to one target creature you don't control.\nWhenever Kogla attacks, destroy target artifact or enchantment defending player controls.\n{1}{G}: Return target Human you control to its owner's hand. Kogla gains indestructible until end of turn.",6,'7','6'));
+   ok('Kogla: cast-time targets are creatures (ETB fight), not artifacts (attack trigger)',!g.targetOk(kg,ring,me)&&g.targetOk(kg,bear,me),'');
+   me.hand.push(kg); me.pool=Array(6).fill(0).map(()=>({c:'G'})); const n0=g.log.length; await g.cast(me,kg,'hand',bear); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Kogla fights the chosen creature (no bounce, Sol Ring untouched)',!opp.battlefield.includes(bear)&&opp.battlefield.includes(ring)&&g.log.slice(n0).some(x=>/fights Bear/.test(x.m))&&!g.log.slice(n0).some(x=>/returns to/.test(x.m)),g.log.slice(n0).map(x=>x.m).join(' | '));
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const ss=tagCard(mk("Smuggler's Surprise",'Instant','{1}{G}',"+ {2} — Mill four cards. You may put up to two creature and/or land cards from among the milled cards into your hand.\n+ {4}{G} — You may put up to two creature cards from your hand onto the battlefield.\n+ {1} — Creatures you control with power 4 or greater gain hexproof and indestructible until end of turn.",2));
+   ok('Spree recognised from its + {cost} — lines even without the reminder line',!!ss.costModes&&ss.modes.length===3&&ss.modes[0].cost.total===2,'');
+   me.pool=[{c:'G'},{c:'G'}]; me.hand.push(ss);
+   ok('…and with 2 mana it is not castable (base {1}{G} + cheapest mode {1} = 3)',!g.castMode(me,ss,'hand'),String(g.castMode(me,ss,'hand')));
+ }
  console.log(fails+' failed');})();

@@ -376,4 +376,24 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    me.hand=[tagCard(mk('Forest','Basic Land — Forest','','',0))]; fs.tapped=false; me.pool=[{c:'G'}];
    ok('…and is not offered with only a land in hand',!g.abilityOptions(me,{}).some(x=>x.perm===fs),'');
  }
+
+ // ==== v94: reducers apply to alternative costs; Impulsivity lets you choose ====
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+   const an=await g.enterPerm(me,tagCard(mk('Animar, Soul of Elements','Legendary Creature — Elemental','{U}{R}{G}','Protection from white and from black\nWhenever you cast a creature spell, put a +1/+1 counter on Animar.\nCreature spells you cast cost {1} less to cast for each +1/+1 counter on Animar.',3,'1','1'))); an.counters=3;
+   await g.enterPerm(me,tagCard(mk('Ashling, the Limitless','Legendary Creature — Elemental Incarnation','{R}',"Elemental permanent spells you cast from your hand gain evoke {4} as you cast them.\nWhenever you sacrifice a nontoken Elemental, create a token that's a copy of it. The token gains haste until end of turn. At the beginning of your next end step, sacrifice it unless you pay {W}{U}{B}{R}{G}.",1,'2','3')));
+   const bane=tagCard(mk('Bane of Progress','Creature — Elemental','{4}{G}{G}','When this creature enters, destroy all artifacts and enchantments.',6,'2','2')); me.hand.push(bane); me.pool=[{c:'G'},{c:'G'},{c:'U'},{c:'U'},{c:'R'}];
+   const ev=g.altOptions(me,bane,'hand').find(a=>a.kind==='evoke');
+   ok("Animar (3 counters) reduces Ashling's evoke {4} to {1}",!!ev&&ev.cost.generic===1&&ev.cost.total===1,JSON.stringify(ev&&ev.cost));
+   const mull=tagCard(mk('Mulldrifter','Creature — Elemental','{4}{U}','Flying\nWhen this creature enters, draw two cards.\nEvoke {2}{U}',5,'2','2')); me.hand.push(mull);
+   const ev2=g.altOptions(me,mull,'hand').find(a=>a.kind==='evoke'&&a.cost.pips.U===1);
+   ok("…and Mulldrifter's own evoke {2}{U} becomes {U}",!!ev2&&ev2.cost.generic===0&&ev2.cost.total===1,JSON.stringify(ev2&&ev2.cost));
+ }
+ { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; let asked=null; g.hooks.humanSearch=async c=>{asked=c;return [c.pool.find(x=>x.name==='Blasphemous Act')]};
+   g.players[1].graveyard.push(tagCard(mk('Brainstorm','Instant','{U}','Draw three cards, then put two cards from your hand on top of your library in any order.',1)));
+   g.players[2].graveyard.push(tagCard(mk('Blasphemous Act','Sorcery','{8}{R}','This spell costs {1} less to cast for each creature on the battlefield.\nBlasphemous Act deals 13 damage to each creature.',9)));
+   const bear=await g.enterPerm(g.players[1],tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')));
+   const imp=tagCard(mk('Impulsivity','Creature — Elemental Incarnation','{6}{R}',"When this creature enters, you may cast target instant or sorcery card from a graveyard without paying its mana cost. If that spell would be put into a graveyard, exile it instead.",7,'6','6'));
+   const pm=await g.enterPerm(me,imp); await g.runOps(me,imp.etbOps,imp,{perm:pm}); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('Impulsivity: you choose the instant/sorcery from any graveyard (Blasphemous Act, not the first card)',!!asked&&asked.pool.length===2&&!g.players[1].battlefield.includes(bear)&&g.players[2].exile.some(c=>c.name==='Blasphemous Act'),'asked '+(asked&&asked.pool.map(c=>c.name))+' bear alive '+g.players[1].battlefield.includes(bear));
+ }
  console.log(fails+' failed');})();

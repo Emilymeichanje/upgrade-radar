@@ -697,4 +697,48 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const fd=tagCard(mk('Force of Despair','Instant','{1}{B}{B}',"If it's not your turn, you may exile a black card from your hand rather than pay this spell's mana cost.\nDestroy all creatures that entered this turn.",3)); await g3.runOps(m3,fd.spellOps,fd,{});
    ok('Force of Despair kills only creatures that entered this turn',o3.battlefield.includes(d)&&!o3.battlefield.includes(e),o3.battlefield.map(x=>x.card.name).join());
  }
+
+ { // v110 (Lyse Hext game): Gitaxian Probe shows the chosen hand; Water Wings base 4/4 flying hexproof; Lightfoot flying+indestructible on the countered creature; Apostle's Blessing protection from artifacts; casual commander not thrown into a free kill; damage lines tagged once
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const lands=async(g,pl,n)=>{for(let i=0;i<n;i++)await g.landEnters(pl,tagCard(mk('Island','Basic Land — Island','','',0)))};
+   // Gitaxian Probe
+   { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; await lands(g,me,2);
+     const gp=tagCard(mk('Gitaxian Probe','Sorcery','{U/P}','Look at target player\'s hand.\nDraw a card.',1)); me.hand.push(gp);
+     let asked=null, shown=null; g.hooks.humanChoosePlayer=async c=>{asked=c.players.map(q=>q.name);return g.players[2]}; g.hooks.humanMay=async c=>{if(c.cards)shown=c;return true}; g.hooks.humanPayOpt=async c=>c.options?c.options[0]:null;
+     await g.cast(me,gp,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+     ok('Gitaxian Probe: I choose the player and see that hand',asked&&asked.length===3&&shown&&shown.cards.length===g.players[2].hand.length&&shown.cards.every(c=>g.players[2].hand.includes(c)),JSON.stringify({asked,n:shown&&shown.cards.length}));
+     ok('…and the log names whose hand',g.log.some(x=>/looks at P2's hand \(\d+ card/.test(x.m)),g.log.slice(-6).map(x=>x.m).join(' / ')); }
+   // Water Wings
+   { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; await lands(g,me,1);
+     const lyse=put(me,tagCard(mk('Lyse Hext','Legendary Creature — Human Rebel Monk','{W}{U}','Noncreature spells you cast cost {1} less to cast.',2,'2','2'))); lyse.counters=1;
+     const ww=tagCard(mk('Water Wings','Instant','{1}{U}','Until end of turn, target creature you control has base power and toughness 4/4 and gains flying and hexproof. (It can\'t be the target of spells or abilities your opponents control.)',2)); me.hand.push(ww);
+     g.hooks.humanSearch=async c=>[c.pool.find(x=>x.name==='Lyse Hext')]; await g.cast(me,ww,'hand'); while(g.stack.length)await g.resolve(); await tick(g); g.refreshStatics();
+     ok('Water Wings: Lyse is 5/5 (base 4/4 + counter) with flying and hexproof',g.powerOf(me,lyse)===5&&g.toughOf(me,lyse)===5&&lyse.card.kw.includes('flying')&&lyse.card.kw.includes('hexproof'),g.powerOf(me,lyse)+'/'+g.toughOf(me,lyse)+' '+lyse.card.kw.join());
+     ok('…and no generic "protects" line',!g.log.some(x=>/protects Lyse/.test(x.m)),g.log.slice(-4).map(x=>x.m).join(' / ')); }
+   // Lightfoot Technique
+   { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; await g.landEnters(me,tagCard(mk('Plains','Basic Land — Plains','','',0)));
+     const a=put(me,tagCard(mk('Small','Creature — Elf','{G}','',1,'1','1'))), b=put(me,tagCard(mk('Big','Creature — Giant','{4}{G}','',5,'5','5')));
+     const lt=tagCard(mk('Lightfoot Technique','Instant','{W}','Put a +1/+1 counter on target creature. It gains flying and indestructible until end of turn.',1)); me.hand.push(lt);
+     g.hooks.humanSearch=async c=>[c.pool.find(x=>x.name==='Small')]; await g.cast(me,lt,'hand'); while(g.stack.length)await g.resolve(); await tick(g); g.refreshStatics();
+     ok('Lightfoot: counter, flying and indestructible all on the chosen creature',a.counters===1&&a.card.kw.includes('flying')&&a.card.kw.includes('indestructible')&&!b.card.kw.includes('flying'),JSON.stringify([a.counters,a.card.kw,b.card.kw])); }
+   // Apostle's Blessing
+   { const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null;
+     const ab=tagCard(mk("Apostle's Blessing",'Instant','{1}{W/P}','({W/P} can be paid with either {W} or 2 life.)\nTarget artifact or creature you control gains protection from artifacts or from the color of your choice until end of turn.',2));
+     ok("Apostle's Blessing parses to protColor with artifacts",ab.spellOps&&ab.spellOps[0].op==='protColor'&&ab.spellOps[0].artifacts,JSON.stringify(ab.spellOps));
+     const k=put(me,tagCard(mk('Knight','Creature — Knight','{1}{W}','',2,'2','2'))); let opts=null; g.hooks.humanSearch=async c=>[c.pool[0]]; g.hooks.humanChoice=async c=>{opts=c.options;return 'artifacts'};
+     await g.runOps(me,ab.spellOps,ab,{}); g.refreshStatics();
+     const bolt=tagCard(mk('Artifact Bolt','Artifact','{2}','',2));
+     ok('…offers "artifacts" and then artifact sources can\'t target it',opts&&opts.includes('artifacts')&&g.protectedFrom(k,bolt)&&!g.targetOk(bolt,k,g.players[1]),JSON.stringify({opts,pc:k.protColors})); }
+   // casual AI: commander not into a free kill
+   { const g=fresh(); const ai=g.players[1], me=g.players[0]; ai.ai=new AI('casual'); me.life=18; ai.life=40; g.players[2].life=40; g.players[3].life=40; g.round=4;
+     const ysh=put(ai,tagCard(mk("Y'shtola, Night's Blessed",'Legendary Creature — Cat Warlock','{1}{W}{U}{B}','Vigilance',4,'2','4'))); ysh.card.isCommander=true; ysh.summoning=false;
+     const drake=put(ai,tagCard(mk('Geyser Drake','Creature — Drake','{3}{U}','Flying',4,'2','2'))); drake.summoning=false;
+     const lyse=put(me,tagCard(mk('Lyse Hext','Legendary Creature — Human Rebel Monk','{W}{U}','First strike',2,'5','5')));
+     g.refreshStatics(); const as=ai.ai.chooseAttacks(g,ai); const names=as.map(x=>x.attacker.card.name);
+     ok('casual AI keeps its commander home rather than feed it to a 5/5 first striker',!names.includes("Y'shtola, Night's Blessed"),JSON.stringify(names)); }
+   // pain mana logged once
+   { const g=fresh(); const me=g.players[0]; me.life=20; g.pendingLife=[[me,-1,{name:'Talisman of Progress'}]]; const n0=g.log.length;
+     for (const [q, d, c] of (g.pendingLife || []).splice(0)) { if (d < 0 && c) g.say(`— ${c.name} deals ${-d} damage to ${q.name}`, q); await g.changeLife(q, d, c); }
+     const lines=g.log.slice(n0).map(x=>x.m); ok('damage announcement carries the [a → b] tag; no second "loses" line',lines.length===1&&/\[P0 20 → 19\]/.test(lines[0]),JSON.stringify(lines)); }
+ }
  console.log(fails+' failed');})();

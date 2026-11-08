@@ -23,7 +23,11 @@ await pg.waitForFunction(()=>!GoldfishUI.current.busy);
 st=await pg.evaluate(()=>{const me=GoldfishUI.current.me;return {pool:me.pool.map(m=>m.c),untapped:me.battlefield.filter(b=>b.card.isLand&&!b.tapped).map(b=>b.card.name).sort()}});
 ok('cast spent the floating mana; other lands untouched',st.pool.length===0&&st.untapped.join()==='Island,Plains',JSON.stringify(st));
 // Phyrexian: casting Probe offers the pay-life option even though an Island is open
-const probeBtns=await pg.evaluate(async()=>{const U=GoldfishUI.current,me=U.me;const c=me.hand.find(c=>c.name==='Gitaxian Probe');const p=U.act(()=>U.game.cast(me,c,'hand'));await new Promise(r=>setTimeout(r,150));const btns=[...document.querySelectorAll('[data-act=pay-alt],[data-act=pay-normal]')].map(b=>b.textContent);const alt=document.querySelector('[data-act=pay-alt]');if(alt)alt.click();await p;return btns});
+const probeBtns=await pg.evaluate(async()=>{const U=GoldfishUI.current,me=U.me;const c=me.hand.find(c=>c.name==='Gitaxian Probe');const p=U.act(()=>U.game.cast(me,c,'hand'));await new Promise(r=>setTimeout(r,150));const btns=[...document.querySelectorAll('[data-act=pay-alt],[data-act=pay-normal]')].map(b=>b.textContent);const alt=document.querySelector('[data-act=pay-alt]');if(alt)alt.click();window.__probe=p;return btns}); /* v110: don't await — Probe now prompts (whose hand / show hand); answered below */
+// v110: Probe now asks whose hand and shows it — answer both prompts (it used to resolve silently)
+{ let sawPick=false, sawHand=false; for(let i=0;i<40;i++){ const k=await pg.evaluate(()=>{const U=GoldfishUI.current;return U.busy?(U.prompt?U.prompt.kind:'busy'):'idle'}); if(k==='idle')break;
+  if(k==='player'){sawPick=true;await pg.click('[data-act=pick-player]');} else if(k==='may'){sawHand=await pg.evaluate(()=>!!(GoldfishUI.current.prompt.cards&&GoldfishUI.current.prompt.ok));await pg.click('[data-act=may-yes]');} else await pg.waitForTimeout(100); }
+  ok('Gitaxian Probe asks whose hand, then shows it',sawPick&&sawHand,JSON.stringify({sawPick,sawHand})); }
 await pg.waitForFunction(()=>!GoldfishUI.current.busy);
 ok('Phyrexian cast offers normal + pay-life',probeBtns.some(t=>/Normal cost/.test(t))&&probeBtns.some(t=>/Pay 2 life for \{U\/P\}/.test(t)),JSON.stringify(probeBtns));
 st=await pg.evaluate(()=>{const me=GoldfishUI.current.me;return {life:me.life,untapped:me.battlefield.filter(b=>b.card.isLand&&!b.tapped).length}});

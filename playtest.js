@@ -90,6 +90,10 @@ function overloadOps(txt) {
 }
 function parseOps(t) {
   const ops = []; let m; let caveGain = 0;
+  /* b13 (Lyse deck audit): friendly-target protection spells that the generic doProtect fallback flattened into "protects X" */
+  if ((m = t.match(/(?:^|[.\n] *)until end of turn, target creature(?: you control)? has base power and toughness (\d+)\/(\d+)(?: and gains ([a-z ,]+?))?(?:\.|$)/))) { ops.push({ op: 'baseTarget', pt: [+m[1], +m[2]], kws: m[3] ? m[3].split(/,? and |, /).map(x => x.trim()).filter(Boolean) : [] }); return ops; } // Water Wings
+  if (/(?:^|[.\n] *)target artifact or creature you control gains protection from artifacts or from the color of your choice until end of turn/.test(t)) { ops.push({ op: 'protColor', artifacts: true, pool: 'artifact or creature' }); return ops; } // Apostle's Blessing
+
   t = t.replace(/\s*if you put a cave onto the battlefield this way, you gain (\d+) life\.?/, (_, n) => { caveGain = +n; return ''; }); /* b13: Spelunking — the 4 life is conditional on a Cave; it was parsed as a flat gain 4 */
   if (t.includes('__modal__')) { if (PENDING_MODAL) ops.push(PENDING_MODAL); PENDING_MODAL = null; return ops; }
   // ==== fixes b12 (parse) ====  Saga chapters and walker abilities from the Terra / Tam decks; exact texts, checked first
@@ -178,6 +182,7 @@ function parseOps(t) {
   if ((m = t.match(/search your library for up to two (basic )?land cards, reveal those cards, put one onto the battlefield( tapped)? and the other into your hand/))) ops.push({ op: 'landToBf', n: 1, basic: !!m[1], types: [], tapped: !!m[2] }, { op: 'landToHand', n: 1, basic: !!m[1], types: [] }); // b13: Cultivate / Kodama's Reach — the "other into your hand" half was dropped
   else if ((m = t.match(/search your library for (a|an|up to two|up to three|two) (basic )?([a-z ]*?)\b(?:land )?cards?(?: and (?:a|an) [a-z ]+ card)?(?:[^.]*?)put (?:it|them|that card|those cards|one) onto the battlefield( tapped)?/)) && /land|plains|island|swamp|mountain|forest/.test(m[0])) ops.push({ op: 'landToBf', n: /two/.test(m[1]) ? 2 : /three/.test(m[1]) ? 3 : 1, basic: !!m[2], types: ['plains', 'island', 'swamp', 'mountain', 'forest'].filter(x => m[3].includes(x)), tapped: !!m[4] });
   if (/\bproliferate\b/.test(t)) ops.push({ op: 'proliferate' });
+  if ((m = t.match(/\bit gains ([a-z ,]+?) until end of turn/)) && ops.some(o => o.op === 'counters' && o.to === 'target creature')) ops.push({ op: 'kwIt', kws: m[1].split(/,? and |, /).map(x => x.trim()).filter(Boolean) }); // b13: Lightfoot Technique — same creature as the counter
   if ((m = t.match(/you may put a land card from your hand onto the battlefield( tapped)?/))) ops.push({ op: 'landFromHand', tapped: !!m[1], may: true, caveGain: caveGain || undefined }); // b13: Chulane et al. — the clause was silently dropped
   if (/^transform this card/.test(t.trim())) ops.push({ op: 'transform' });
   if ((m = t.match(/you get ((?:\{e\})+)/))) ops.push({ op: 'energy', n: m[1].length / 3 });
@@ -2906,7 +2911,7 @@ class Game {
     p.life += delta;
     if (!this._lifeFromDmg) { /* b13: every non-damage life change is visible in the log (damage annotates itself in dealDamage) */
       const shortN = p.name.replace(/^(You|AI) · /, ''); const tag = ` [${shortN} ${p.life - delta} → ${p.life}]`; const last = this.log[this.log.length - 1];
-      const mentions = last && !last.m.includes(`[${shortN} `) && (last.m.includes(p.name) || last.m.includes(shortN) || /each (opponent|player)/.test(last.m) || /^pays \d+ life/.test(last.m) || /\(paid \d+ life\)/.test(last.m)) && /gain|lose|loses|life/.test(last.m) && !/draws? \d+ cards?/.test(last.m);
+      const mentions = last && !last.m.includes(`[${shortN} `) && (last.m.includes(p.name) || last.m.includes(shortN) || /each (opponent|player)/.test(last.m) || /^pays \d+ life/.test(last.m) || /\(paid \d+ life\)/.test(last.m)) && /gain|lose|loses|life|deals \d+ damage|takes \d+/.test(last.m) && !/draws? \d+ cards?/.test(last.m);
       if (mentions) { last.m += tag; if (this.hooks.logPatch) this.hooks.logPatch(this.log.length - 1, last.m); }
       else this.say(`— ${source && source.name ? source.name + ': ' : ''}${shortN} ${delta > 0 ? 'gains' : 'loses'} ${Math.abs(delta)} life${tag}`, p);
     }
@@ -4318,7 +4323,7 @@ class Game {
   ownerOf(perm) { return this.players.find(q => q.battlefield.includes(perm)) || null; }
   isUncounterable(obj) { return !!obj.card.uncounterable || !!obj.uncounterable || !!(obj.caster && obj.caster.b1_uncTurn === this.turn) || obj.caster.battlefield.some(b => (b.card.noCounter || []).some(f => matchesFilter(obj.card, f))); }
   /** protection from a colour stops targeting by spells of that colour */
-  protectedFrom(t, card) { return !!(t && t.protColors && (card.colors || []).some(c => t.protColors.includes(c))); }
+  protectedFrom(t, card) { return !!(t && t.protColors && ((card.colors || []).some(c => t.protColors.includes(c)) || (card.isArtifact && t.protColors.includes('artifacts')))); }
   /** is the object's target still legal as it tries to resolve? */
   targetLegal(obj) {
     const t = obj.target; if (!t) return true;
@@ -4472,7 +4477,7 @@ class Game {
         else { const tough = this.toughOf(owner, target); const nm = target.card.name; await this.destroy(owner, target); this.say(owner.battlefield.includes(target) ? `— ${nm} survives` : `— destroys ${nm}`, p); /* b13: destroy-type removal never logged its result */ if (/if a creature is destroyed this way, you gain life equal to its toughness/.test(o) && !owner.battlefield.includes(target)) await this.changeLife(p, tough, card); }
         { const tm = o.match(/(?:its|that creature's|that permanent's) controller creates an? (\d+)\/(\d+) ([a-z ,]+?) creature token/); if (tm && !owner.battlefield.includes(target)) { const look = tokenLook(tm[1] + '/' + tm[2] + ' ' + tm[3] + ' creature token'); await this.runOps(owner, [{ op: 'tokens', n: 1, pt: [+tm[1], +tm[2]], kw: [], ...look }], { name: card.name }, {}); } }
         if (/its controller may search their library for a basic land card, put (?:that card|it) onto the battlefield(?! tapped)/.test(o) && !owner.battlefield.includes(target)) await this.runOps(owner, [{ op: 'landToBf', n: 1, basic: true, types: [], tapped: false }], card, {}); // b13: Assassin's Trophy — the target's controller ramps (untapped)
-        if (card.removalRider === 'chaosWarp' && !owner.battlefield.includes(target)) { const c = owner.library[owner.library.length - 1]; if (c) { this.say(`— ${owner.name} reveals ${c.name}`, owner); if (!c.isInstant && !c.isSorcery) { owner.library.pop(); if (c.isLand) await this.landEnters(owner, c); else { const pm = await this.enterPerm(owner, c); if (pm && c.etbOps) await this.trigger(owner, pm, c.etbOps, { perm: pm }, 'ETB'); if (pm && c.isCreature) await this.creatureEntered(owner, pm); } } } }
+        if (card.removalRider === 'chaosWarp' && !owner.battlefield.includes(target)) { const c = owner.library[owner.library.length - 1]; if (c) { this.say(`— ${owner.name} reveals ${c.name}${!c.isInstant && !c.isSorcery ? ' and puts it onto the battlefield' : ' (not a permanent; it stays on top)'}`, owner); if (!c.isInstant && !c.isSorcery) { owner.library.pop(); if (c.isLand) await this.landEnters(owner, c); else { const pm = await this.enterPerm(owner, c); if (pm && c.etbOps) await this.trigger(owner, pm, c.etbOps, { perm: pm }, 'ETB'); if (pm && c.isCreature) await this.creatureEntered(owner, pm); } } } }
       }
       if (card.altOppDraws && spell.alt) { const q = p.ai ? [...this.opponentsOf(p)].sort((a, z) => a.hand.length - z.hand.length)[0] : await this.choosePlayer(p, card, this.opponentsOf(p), `${card.name}: which opponent draws?`); if (q) await this.draw(q, 1); }
     }
@@ -4490,7 +4495,7 @@ class Game {
       await this.emit({ type: 'tokens', p, n, card });
       for (const t of p.battlefield.slice(-n)) await this.creatureEntered(p, t);
     }
-    if (card.roles.includes('protect') && card.isInstant && !card.b4NoDoProtect) this.doProtect(p, card);
+    if (card.roles.includes('protect') && card.isInstant && !card.b4NoDoProtect && !(card.spellOps || []).some(o => ['baseTarget', 'protColor', 'kwIt'].includes(o.op))) this.doProtect(p, card); /* b13: cards whose text is modelled no longer also get the generic "protects" */
     if (card.tutor && (!perm || /when(?:ever)? [^.]*enters[^.]*search your library/i.test(card.oracle)) && ![...(card.spellOps || []), ...(card.etbOps || [])].some(o => /^(tutorTo|landToBf|landToHand|tutorAll|tutorTop)$/.test(o.op))) await this.doTutor(p, card, spell);
     if (card.addendum && this.players[this.active] === p && /main/.test(this.phase)) await this.runOps(p, card.addendum, card, {});
     if (card.spellOps) await this.runOps(p, card.spellOps, card, { spell, x: spell.x, kicked: spell.kicked, gift: spell.gift, bargained: spell.bargained, target });
@@ -4762,7 +4767,7 @@ class Game {
   canTarget(p, b, src) { const c = b.card, o = this.ownerOf(b); if (!c || !o) return false; if ((c.kw || []).includes('shroud')) return false;
     if (o !== p) { if ((c.kw || []).includes('hexproof')) return false; if (b.hexUntil && (b.hexUntil.by.turnCount || 0) < b.hexUntil.n) return false; if (b.protTurn === this.turn && !(o.stripTurn && o.stripTurn.turn === this.turn)) return false;
       if (c.isPlaneswalker && o.battlefield.some(x => x.card.statics && x.card.statics.pwHexproof && !x.neutral && (!x.chosenType || matchesFilter(c, x.chosenType)))) return false; }
-    if (src && b.protColors && (src.colors || []).some(x => b.protColors.includes(x))) return false; return true; }
+    if (src && this.protectedFrom(b, src)) return false; return true; }
   allPerms(f) { return this.alive().flatMap(q => q.battlefield.filter(f)); }
   /** re-read a permanent's card with different text (sagas gaining abilities, classes levelling up) */
   retag(card, oracle) {
@@ -5133,12 +5138,24 @@ class Game {
         case 'forceAttack': for (const q of this.opponentsOf(p)) q.forceAttackTurn = this.turn; this.say('— opponents\' creatures must attack this turn', p); break;
         case 'dispatch': { const t = ctx.target && ctx.target.card ? ctx.target : await this.pickPerm(p, src, this.oppPerms(p, b => b.card.isCreature), { harmful: true }); if (!t) break; const o = this.ownerOf(t); if (!o) break; if (p.battlefield.filter(b => b.card.isArtifact).length >= 3) { o.battlefield.splice(o.battlefield.indexOf(t), 1); await this.emit({ type: 'destroy', owner: o, perm: t, quiet: true }); const bc = t.card.orig || t.card; if (!t.card.token) await this.toZone(o, bc, 'exile'); this.say(`— exiles ${t.card.name} (metalcraft)`, p); await this.leftBattlefield(o, t); } else { t.tapped = true; this.say(`— taps ${t.card.name}`, p); } break; }
         case 'ignition': { const mine = p.battlefield.filter(b => b.card.isCreature); const c = mine.length ? (p.ai ? [...mine].sort((a, b) => this.powerOf(p, b) - this.powerOf(p, a))[0] : await this.pickPerm(p, src, mine)) : null; if (!c) break; const n = this.powerOf(p, c); this.say(`— ${c.card.name} deals ${n} to each other creature and each opponent`, p); for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature && b !== c)) { if (!this.noncombatPrevented(q, b)) { await this.dealtDamage(q, b, n, c.card); if (this.toughOf(q, b) <= n && !b.card.kw.includes('indestructible') && b.protTurn !== this.turn) await this.destroy(q, b); } } for (const q of this.opponentsOf(p)) await this.changeLife(q, -n, c.card); break; }
-        case 'protColor': { const mine = p.battlefield.filter(b => b.card.isCreature); const threat = [...this.stack].reverse().find(o => o.kind !== 'ability' && o.caster !== p && o.target && mine.includes(o.target)); const human = p.human && !this.shortcutting; const t = threat && !human ? threat.target : await this.pickPerm(p, src, mine, { dest: 'give protection' }); if (!t) break; let col = threat ? (threat.card.colors[0] || 'W') : (this.opponentsOf(p).flatMap(q => q.battlefield.flatMap(b => b.card.colors || []))[0] || 'B'); if (human && this.hooks.humanChoice) { const names = { W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' }; const opts = ['W', 'U', 'B', 'R', 'G'].sort((a, z) => (a === col ? -1 : 0) - (z === col ? -1 : 0)).map(c => names[c]); const ch = await this.hooks.humanChoice({ p, card: src, question: `${src.name}: protection from which color?`, options: opts }); const back = Object.entries(names).find(([, n]) => n === String(ch || '').toLowerCase()); if (back) col = back[0]; } /* b13: Mother of Runes — you choose the colour */ t.protColor = { c: col, turn: this.turn }; this.say(`— ${t.card.name} gains protection from ${{ W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' }[col]}`, p); break; }
+        case 'protColor': { const mine = p.battlefield.filter(b => b.card.isCreature || (op.pool === 'artifact or creature' && b.card.isArtifact)); const threat = [...this.stack].reverse().find(o => o.kind !== 'ability' && o.caster !== p && o.target && mine.includes(o.target)); const human = p.human && !this.shortcutting; const t = threat && !human ? threat.target : await this.pickPerm(p, src, mine, { dest: 'give protection' }); if (!t) break; let col = threat ? (threat.card.colors[0] || 'W') : (this.opponentsOf(p).flatMap(q => q.battlefield.flatMap(b => b.card.colors || []))[0] || 'B'); if (human && this.hooks.humanChoice) { const names = { W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' }; if (op.artifacts) names.A = 'artifacts'; const opts = (op.artifacts ? ['W', 'U', 'B', 'R', 'G', 'A'] : ['W', 'U', 'B', 'R', 'G']).sort((a, z) => (a === col ? -1 : 0) - (z === col ? -1 : 0)).map(c => names[c]); const ch = await this.hooks.humanChoice({ p, card: src, question: `${src.name}: protection from ${op.artifacts ? 'artifacts or which color' : 'which color'}?`, options: opts }); const back = Object.entries(names).find(([, n]) => n === String(ch || '').toLowerCase()); if (back) col = back[0]; } /* b13: Mother of Runes — you choose the colour */ if (op.artifacts && !human && threat && threat.card.isArtifact) col = 'A'; t.protColor = { c: col === 'A' ? 'artifacts' : col, turn: this.turn }; this.say(`— ${t.card.name} gains protection from ${{ W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green', A: 'artifacts' }[col]}`, p); break; }
         case 'makeArtifact': { const t = await this.pickPerm(p, src, p.battlefield.filter(b => !b.card.isLand && !b.card.isArtifact)); if (t) { t.artifactTurn = this.turn; this.say(`— ${t.card.name} becomes an artifact this turn`, p); } break; }
         case 'valakut': { const lands = p.battlefield.filter(b => b.card.isLand).length; const away = p.human ? await this.chooseFromList(p, src, p.hand.filter(c => c !== src), p.hand.length, 'bottom') : p.hand.filter(c => c !== src && ((c.isLand && lands + p.hand.filter(x => x.isLand).length > 6) || (!c.isLand && c.cmc > lands + 2))); for (const c of away) { p.hand.splice(p.hand.indexOf(c), 1); p.library.unshift(c); } this.say(`— puts ${away.length} card${away.length === 1 ? '' : 's'} on the bottom and draws ${away.length + 1}`, p); await this.draw(p, away.length + 1); break; }
         case 'shrinkAll': { const n = op.n === 'X' ? this.xFor(ctx) : op.n; if (!n) break; for (const q of this.alive()) for (const b of q.battlefield.filter(b => b.card.isCreature)) { b.shrinkEOT = (b.shrinkTurn === this.turn ? b.shrinkEOT || 0 : 0) + n; b.shrinkTurn = this.turn; } this.say(`— every creature gets -${n}/-${n}`, p); await this.sba(); break; }
         case 'necro': { const c = p.library.pop(); if (!c) break; p.exile.push(c); (p.necro = p.necro || []).push(c); this.say('— exiles the top card face down (to hand at end step)', p); break; }
-        case 'peekHand': this.say('— looks at an opponent\'s hand', p); break;
+        case 'peekHand': { /* b13: Gitaxian Probe — you choose the player and actually see the hand (was a log line only) */
+          const pool = this.opponentsOf(p); if (!pool.length) break;
+          const q = p.human && !this.shortcutting ? (pool.length > 1 && this.choosePlayer ? await this.choosePlayer(p, src, pool, `${src.name}: look at whose hand?`) : pool[0]) : [...pool].sort((a, z) => z.hand.length - a.hand.length)[0];
+          if (!q) break; this.say(`— looks at ${q.name}'s hand (${q.hand.length} card${q.hand.length === 1 ? '' : 's'})`, p);
+          if (q.hand.length) await this.showCards(p, src, [...q.hand], `${q.name.replace(/^(You|AI) · /, '')}'s hand`); else await this.showCards(p, src, [], ''); break; }
+        case 'baseTarget': { /* Water Wings: base P/T and keywords until end of turn on a creature you control */
+          const mine = p.battlefield.filter(b => b.card.isCreature);
+          const t = ctx.target && ctx.target.card && mine.includes(ctx.target) ? ctx.target : p.ai ? ([...this.stack].reverse().map(o => o.target).find(x => x && mine.includes(x)) || [...mine].sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0]) : await this.pickPerm(p, src, mine, { dest: `make ${op.pt[0]}/${op.pt[1]}${op.kws.length ? ' with ' + op.kws.join(' and ') : ''}` });
+          if (!t) break; t.basePT = { turn: this.turn, p: op.pt[0], t: op.pt[1] }; if (op.kws.length) { if (t.kwTurn !== this.turn) { t.kwTurn = this.turn; t.kwT = []; } t.kwT.push(...op.kws); }
+          this.refreshStatics(); this.say(`— ${t.card.name} has base power and toughness ${op.pt[0]}/${op.pt[1]}${op.kws.length ? ' and gains ' + op.kws.join(' and ') : ''} until end of turn`, p); break; }
+        case 'kwIt': { /* Lightfoot Technique: the creature that got the counter */
+          const t = ctx.it || (ctx.target && ctx.target.card ? ctx.target : null); if (!t || !this.ownerOf(t)) break;
+          if (t.kwTurn !== this.turn) { t.kwTurn = this.turn; t.kwT = []; } t.kwT.push(...op.kws); this.refreshStatics(); this.say(`— ${t.card.name} gains ${op.kws.join(' and ')} until end of turn`, p); break; }
         case 'destroyLand': {
           const pool = this.oppPerms(p, b => b.card.isLand && (!op.nonbasic || !/\bBasic\b/.test(b.card.type)));
           const t = p.ai ? [...pool].sort((a, b) => ((b.card.landDyn || b.card.manaAmount > 1 || !/\bBasic\b/.test(b.card.type)) ? 2 : 0) + b.card.produces.length - ((a.card.landDyn || a.card.manaAmount > 1 || !/\bBasic\b/.test(a.card.type)) ? 2 : 0) - a.card.produces.length)[0] : await this.pickPerm(p, src, pool, { harmful: true, dest: 'destroy' });
@@ -6224,6 +6241,7 @@ class Game {
           else if (/each/.test(op.to)) targets = p.battlefield.filter(b => b.card.isCreature && !(/other/.test(op.to) && b === ctx.perm) && (!op.filter || matchesFilter(b.card, op.filter)));
           else { const mine0 = p.battlefield.filter(b => b.card.isCreature && (!op.filter || matchesFilter(b.card, op.filter))); const mine = op.preferOther && mine0.some(b => b !== ctx.perm) ? mine0.filter(b => b !== ctx.perm) : mine0; targets = mine.length ? [p.ai ? mine.sort((a, b) => p.ai.permBase(b) - p.ai.permBase(a))[0] : (await this.chooseFromList(p, src, mine.map(b => b.card), 1, 'counters')).map(c => mine.find(b => b.card === c))[0]].filter(Boolean) : []; }
           if (op.to === 'target creature' && ctx.target && ctx.target.card && p.battlefield.includes(ctx.target)) targets = [ctx.target];
+          if (op.to === 'target creature' && targets[0]) ctx.it = targets[0];
           if (op.notSelf) targets = targets.filter(b => b !== ctx.perm);
           const cn = this.counterAmt(p, op.n); for (const b of targets) { const cnb = cn + (b.card.isCreature ? (this.ownerOf(b) || p).battlefield.filter(x => x !== b && x.card.statics && x.card.statics.counterPlusOthers && !x.neutral).length : 0); b.counters = (b.counters || 0) + cnb; if (op.addKw) (b.kwPerm = b.kwPerm || []).push(op.addKw); await this.countersPut(p, b, cn); }
           if (op.kws) for (const b of targets) { (b.kwTurn === this.turn ? b.kwT : (b.kwT = [])).push(...op.kws); b.kwTurn = this.turn; }
@@ -6850,7 +6868,7 @@ class Game {
   targetOk(card, perm, caster) {
     if (!perm || !perm.card) return false; const o = (card.oracle || '').split('\n//\n')[0].toLowerCase(); const c = perm.card; const ctrl = this.ownerOf(perm);
     if (ctrl && ctrl !== caster && perm.hexUntil && (perm.hexUntil.by.turnCount || 0) < perm.hexUntil.n) return false; if (ctrl && ctrl !== caster && (c.kw.includes('hexproof') || c.kw.includes('shroud'))) return false; if (c.kw.includes('shroud')) return false;
-    if (perm.protColors && (card.colors || []).some(x => perm.protColors.includes(x))) return false;
+    if (this.protectedFrom(perm, card)) return false;
     if (card.rmColor && !(c.colors || []).includes(card.rmColor)) return false; // b13: Pyroblast-style "destroy target permanent if it's blue"
     if (this.b1_hexUB(card, ctrl, caster)) return false;
     if (c.protMulti && (card.colors || []).length > 1) return false;
@@ -8157,8 +8175,9 @@ class AI {
     let allowBad = this.level === 'casual' || lethalOn.length ? Infinity : lateGame || pressing ? Infinity : Math.max(0, bad.length - primary.blockers.length) >= 2 ? bad.length - primary.blockers.length : 0;
     const cheap = a => game.powerOf(me, a) <= 2 && (a.card.token || (a.card.cmc || 0) <= 2);
     const going = pool.filter(a => {
-      if (this.level === 'casual' || lethalOn.length) return true;
+      if (lethalOn.length) return true;
       if (!bad.includes(a)) return true;
+      if (this.level === 'casual') return !isCmdr(a); /* b13: casual still attacks loosely, but not its commander into a blocker that kills it for free (Y'shtola into Lyse) */
       if (isCmdr(a)) return false;
       if (allowBad > 0 || (cheap(a) && (ahead || lateGame))) { allowBad--; return true; }
       return false;

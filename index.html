@@ -243,7 +243,7 @@ details.sum>summary b{font-family:var(--mono);font-size:1.05rem}
     <button class="chip" id="syncbtn" title="Keep your decks in step across devices with a private GitHub Gist">Sync: off</button>
     <button class="chip" id="checkbtn" title="Check every card in your saved lists against the game engine">Rules check</button>
     <button class="chip" id="bulkbtn" title="Paste several deck exports at once">Bulk lists</button>
-    <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button>
+    <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button><button class="chip" id="exptxt" title="Download the Oracle text of every card in all your decks (for the engine audit)">Export card text</button>
     <label class="chip" for="impfile">Import</label><input type="file" id="impfile" accept="application/json" hidden>
     <button class="chip" id="theme" title="Switch between light, dark and system theme">Theme: system</button>
   </div>
@@ -460,6 +460,13 @@ function toggleSync(open){const p=$('#syncpanel');p.hidden=!open;if(!open)return
   if(on){$('#syncgo').onclick=()=>syncNow();$('#syncoff').onclick=()=>{lsSet('sync-token',null);lsSet('sync-gist',null);syncStatus('Disconnected — decks stay on this device.');toggleSync(true)}}
   else $('#syncon').onclick=async()=>{const t=$('#synctok').value.trim();if(!t)return syncStatus('Paste the token first.',true);lsSet('sync-token',t);const ok=await syncNow();if(!ok)lsSet('sync-token',null);else toggleSync(true);syncStatus(S.syncMsg,!ok)};
 }
+async function exportCardText(){ // b13: fixture-shaped rows [idx,name,mana,type,oracle,cmc,power,toughness,null] for every card in every deck → tests/fixtures/owner.json
+  const b=$('#exptxt');const old=b.textContent;b.disabled=true;
+  try{const names=[...new Set(Object.values(S.decks).flatMap(d=>d.list||[]).concat(S.index.flatMap(d=>[...commanderNames(d)])))];
+    const rows=[];const seen=new Set();for(let i=0;i<names.length;i+=75){b.textContent=`Card text ${Math.min(i+75,names.length)}/${names.length}…`;let got=[];try{got=await cardsNamed(names.slice(i,i+75))}catch(e){}
+      for(const c of got){if(seen.has(c.name))continue;seen.add(c.name);rows.push([rows.length,c.name,c.mana||'',c.type||'',c.oracle||'',c.cmc??0,c.power??null,c.toughness??null,null])}}
+    const blob=new Blob([JSON.stringify(rows)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='mtg-card-text.json';a.click()}
+  finally{b.disabled=false;b.textContent=old}}
 function exportData(){const blob=new Blob([JSON.stringify({decks:S.decks,cfg:S.cfg||null,exported:new Date().toISOString()},null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='mtg-dashboard-data.json';a.click()}
 function importData(file){const r=new FileReader();r.onload=()=>{try{const j=JSON.parse(r.result);S.decks=j.decks||{};S.cfg=j.cfg||S.cfg;localStorage.setItem('decks',JSON.stringify(S.decks));if(S.cfg)localStorage.setItem('cfg',JSON.stringify(S.cfg));buildIndex();renderHome();syncSoon()}catch(e){alert('Not a valid export file')}};r.readAsText(file)}
 function parseList(txt){return parseListFull(txt).map(x=>x.name)}
@@ -1009,7 +1016,7 @@ function wire(){
   $('#cmode').onchange=()=>{S.cmode=$('#cmode').value;syncF();toHome()};
   $('#fclear').onclick=()=>{S.colors.clear();S.brackets=new Set(['2','3','4','cEDH']);syncF();toHome()};syncF();
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-rep').onclick=()=>openReplays();$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#checkbtn').onclick=()=>toggleCheck($('#checkpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-rep').onclick=()=>openReplays();$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#exptxt').onclick=exportCardText;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#checkbtn').onclick=()=>toggleCheck($('#checkpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};

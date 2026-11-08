@@ -671,4 +671,30 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    g.hooks.humanChoice=async c=>'vampire'; await g.runOps(me,bb.spellOps,bb,{});
    ok('…returns only my Vampires',me.battlefield.some(b=>b.card.name==='Vampire Nighthawk')&&!me.battlefield.some(b=>b.card.name==='Bear')&&op.graveyard.some(c=>c.name==='Blood Artist'),me.battlefield.map(b=>b.card.name).join());
  }
+
+ { // v109: owner-deck audit — Touch the Spirit Realm (exile until leaves), Reunion of the House, Damning Verdict, Force of Despair
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const g=fresh(); const me=g.players[0], op=g.players[1]; me.human=true; me.ai=null;
+   const tsr=tagCard(mk('Touch the Spirit Realm','Enchantment','{2}{W}','When this enchantment enters, exile up to one target artifact or creature until this enchantment leaves the battlefield.\nChannel — {1}{W}, Discard this card: Exile target artifact or creature. Return it to the battlefield under its owner\'s control at the beginning of the next end step.',3));
+   ok('Touch the Spirit Realm parses exile-until',tsr.etbOps&&tsr.etbOps.some(o=>o.op==='b2_exileOppUntil'&&o.what==='artifact or creature'),JSON.stringify(tsr.etbOps));
+   const bear=put(op,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2'))), ench=put(op,tagCard(mk('Propaganda','Enchantment','{2}{U}','',3)));
+   let pool=null; g.hooks.humanSearch=async c=>{pool=c.pool.map(x=>x.name);return [c.pool.find(x=>x.name==='Bear')]};
+   const pm=await g.enterPerm(me,tsr); await g.trigger(me,pm,pm.card.etbOps,{perm:pm},'ETB'); await tick(g);
+   ok('…offers only artifacts/creatures and exiles the Bear',pool&&pool.includes('Bear')&&!pool.includes('Propaganda')&&!op.battlefield.includes(bear)&&op.exile.some(c=>c.name==='Bear'),JSON.stringify(pool));
+   await g.destroy(me,pm); await tick(g); ok('…Bear returns when it leaves',op.battlefield.some(b=>b.card.name==='Bear'),op.battlefield.map(b=>b.card.name).join());
+   // Reunion of the House
+   const g2=fresh(); const m2=g2.players[0]; m2.human=true; m2.ai=null;
+   const ru=tagCard(mk('Reunion of the House','Sorcery','{3}{W}{W}','Return any number of target creature cards with total power 10 or less from your graveyard to the battlefield. Exile Reunion of the House.',5)); ok('Reunion parses',ru.spellOps&&ru.spellOps[0].op==='b13_reunion',JSON.stringify(ru.spellOps));
+   m2.graveyard.push(tagCard(mk('Big','Creature — Giant','{5}{G}','',6,'7','7')),tagCard(mk('Mid','Creature — Elf','{2}{G}','',3,'4','4')),tagCard(mk('Small','Creature — Elf','{G}','',1,'1','1')));
+   g2.hooks.humanSearch=async c=>c.pool; await g2.runOps(m2,ru.spellOps,ru,{});
+   const names=m2.battlefield.filter(b=>b.card.isCreature).map(b=>b.card.name).sort(); ok('Reunion: 7+4 exceeds 10 → Big and Small (8), Mid skipped',names.join()==='Big,Small',names.join());
+   // Damning Verdict / Force of Despair
+   const g3=fresh(); const m3=g3.players[0], o3=g3.players[1]; m3.human=true; m3.ai=null; g3.turn=9;
+   const a=put(o3,tagCard(mk('Plain','Creature — Bear','{1}{G}','',2,'2','2'))), b=put(o3,tagCard(mk('Countered','Creature — Bear','{1}{G}','',2,'2','2'))); b.counters=1; const c=put(m3,tagCard(mk('Fresh','Creature — Elf','{G}','',1,'1','1'))); c.enteredTurn=9;
+   const dv=tagCard(mk('Damning Verdict','Sorcery','{3}{W}{W}','Destroy all creatures with no counters on them.',5)); await g3.runOps(m3,dv.spellOps,dv,{});
+   ok('Damning Verdict spares the creature with a counter',!o3.battlefield.includes(a)&&o3.battlefield.includes(b)&&!m3.battlefield.includes(c),o3.battlefield.map(x=>x.card.name).join());
+   const d=put(o3,tagCard(mk('Old','Creature — Bear','{1}{G}','',2,'2','2'))); d.enteredTurn=3; const e=put(o3,tagCard(mk('New','Creature — Bear','{1}{G}','',2,'2','2'))); e.enteredTurn=9;
+   const fd=tagCard(mk('Force of Despair','Instant','{1}{B}{B}',"If it's not your turn, you may exile a black card from your hand rather than pay this spell's mana cost.\nDestroy all creatures that entered this turn.",3)); await g3.runOps(m3,fd.spellOps,fd,{});
+   ok('Force of Despair kills only creatures that entered this turn',o3.battlefield.includes(d)&&!o3.battlefield.includes(e),o3.battlefield.map(x=>x.card.name).join());
+ }
  console.log(fails+' failed');})();

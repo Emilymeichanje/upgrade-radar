@@ -652,4 +652,23 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const ov=(mm.abilities||[]).find(a=>a.label==='overload');
    ok("Mizzix's Mastery overload = cast every instant/sorcery in the graveyard free",ov&&ov.ops[0].op==='mizzix'&&ov.ops[0].overload===true,JSON.stringify(ov&&ov.ops));
  }
+
+ { // v108: overload derived from text (Vandalblast = only opponents' artifacts); Expel the Interlopers asks for a number; Bloodline Bidding returns the chosen type
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const g=fresh(); const me=g.players[0], op=g.players[1]; me.human=true; me.ai=null;
+   const vb=tagCard(mk('Vandalblast','Sorcery','{R}',"Destroy target artifact you don't control.\nOverload {4}{R} (You may cast this spell for its overload cost. If you do, change \"target\" in its text to \"each.\")",1));
+   const ov=(vb.abilities||[]).find(a=>a.label==='overload'); ok('Vandalblast overload = destroy all artifacts you don\'t control',ov&&ov.ops[0].op==='destroyAll'&&ov.ops[0].what==='artifacts'&&ov.ops[0].oppOnly===true,JSON.stringify(ov&&ov.ops));
+   const mine=put(me,tagCard(mk('Sol Ring','Artifact','{1}','{T}: Add {C}{C}.',1))), theirs=put(op,tagCard(mk('Arcane Signet','Artifact','{2}','{T}: Add one mana of any color in your commander\'s color identity.',2)));
+   await g.runOps(me,ov.ops,vb,{}); ok('…keeps my Sol Ring, destroys their Signet',me.battlefield.includes(mine)&&!op.battlefield.includes(theirs),me.battlefield.map(b=>b.card.name).join()+' | '+op.battlefield.map(b=>b.card.name).join());
+   const rift=tagCard(mk('Cyclonic Rift','Instant','{1}{U}',"Return target nonland permanent you don't control to its owner's hand.\nOverload {6}{U}",2)); const ro=(rift.abilities||[]).find(a=>a.label==='overload'); ok('Cyclonic Rift overload = bounce opponents\' nonland permanents',ro&&ro.ops[0].op==='bounceAllOpp'&&!ro.ops[0].all,JSON.stringify(ro&&ro.ops));
+   // Expel
+   const ex=tagCard(mk('Expel the Interlopers','Sorcery','{3}{W}','Choose a number between 0 and 10. Destroy all creatures with power greater than or equal to the chosen number.',4)); ok('Expel parses to b13_expel',ex.spellOps&&ex.spellOps[0].op==='b13_expel',JSON.stringify(ex.spellOps));
+   const s2=put(op,tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2'))), b5=put(op,tagCard(mk('Ogre','Creature — Ogre','{4}{R}','',5,'5','5'))), my3=put(me,tagCard(mk('Knight','Creature — Knight','{2}{W}','',3,'3','3')));
+   g.hooks.humanNumber=async c=>4; await g.runOps(me,ex.spellOps,ex,{}); ok('Expel at 4: kills the 5/5 only',!op.battlefield.includes(b5)&&op.battlefield.includes(s2)&&me.battlefield.includes(my3),op.battlefield.filter(b=>b.card.isCreature).map(b=>b.card.name).join());
+   // Bloodline Bidding
+   const bb=tagCard(mk('Bloodline Bidding','Sorcery','{3}{B}{B}','Convoke\nChoose a creature type. Return all creature cards of the chosen type from your graveyard to the battlefield.',5)); ok('Bloodline Bidding parses',bb.spellOps&&bb.spellOps[0].op==='b13_bidding'&&bb.spellOps[0].selfOnly,JSON.stringify(bb.spellOps));
+   me.graveyard.push(tagCard(mk('Vampire Nighthawk','Creature — Vampire Shaman','{1}{B}{B}','Flying, deathtouch, lifelink',3,'2','3')),tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2'))); op.graveyard.push(tagCard(mk('Blood Artist','Creature — Vampire','{1}{B}','',2,'0','1')));
+   g.hooks.humanChoice=async c=>'vampire'; await g.runOps(me,bb.spellOps,bb,{});
+   ok('…returns only my Vampires',me.battlefield.some(b=>b.card.name==='Vampire Nighthawk')&&!me.battlefield.some(b=>b.card.name==='Bear')&&op.graveyard.some(c=>c.name==='Blood Artist'),me.battlefield.map(b=>b.card.name).join());
+ }
  console.log(fails+' failed');})();

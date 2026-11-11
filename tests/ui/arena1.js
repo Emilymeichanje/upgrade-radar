@@ -14,5 +14,10 @@ const r=await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game,me=U.me;const
 ok('reader shows live P/T with printed base',/5\/5/.test(r.html)&&/printed 2\/2/.test(r.html),r.html);
 ok('reader lists counters, granted keywords, equipment and tapped',/\+2 \+1\/\+1 counters/.test(r.html)&&/hexproof/.test(r.html)&&/haste/.test(r.html)&&/Swiftfoot Boots/.test(r.html)&&/tapped/.test(r.html),r.html);
 ok('desktop hand is fanned',r.fan&&/deg/.test(r.rot||''),JSON.stringify([r.fan,r.rot]));
+// v111: the fanned hand must not clip its outer cards (leftmost was cut off; bottoms too)
+for(const n of [7,20]){const c=await pg.evaluate(n=>{const U=GoldfishUI.current,me=U.me;const {tagCard}=Goldfish;me.hand=[...Array(n)].map((_,i)=>tagCard({name:'C'+i,type:'Creature — Elf',mana:'{G}',oracle:'',cmc:1,power:'1',toughness:'1'}));U.render();
+  const h=document.querySelector('.gt-hand');h.scrollLeft=0;const hr=h.getBoundingClientRect();const cs=[...h.querySelectorAll('.hcd')];const L=cs[0].getBoundingClientRect();h.scrollLeft=h.scrollWidth;const R=cs[cs.length-1].getBoundingClientRect();
+  const bot=hr.bottom-(h.offsetHeight-h.clientHeight);return {left:Math.round(L.left-hr.left),right:Math.round(hr.right-R.right),bottom:Math.round(bot-Math.max(...cs.map(x=>x.getBoundingClientRect().bottom)))}},n);
+  ok(`fanned hand of ${n}: outer cards fully inside the strip`,c.left>=0&&c.right>=0&&c.bottom>=0,JSON.stringify(c));}
 ok('arena fx default on',await pg.evaluate(()=>GoldfishUI.current.s.fx==='arena'));
 console.log('errors',errs);await b.close()})();

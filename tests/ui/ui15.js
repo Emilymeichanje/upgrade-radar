@@ -26,7 +26,8 @@ ok('cast spent the floating mana; other lands untouched',st.pool.length===0&&st.
 const probeBtns=await pg.evaluate(async()=>{const U=GoldfishUI.current,me=U.me;const c=me.hand.find(c=>c.name==='Gitaxian Probe');const p=U.act(()=>U.game.cast(me,c,'hand'));await new Promise(r=>setTimeout(r,150));const btns=[...document.querySelectorAll('[data-act=pay-alt],[data-act=pay-normal]')].map(b=>b.textContent);const alt=document.querySelector('[data-act=pay-alt]');if(alt)alt.click();window.__probe=p;return btns}); /* v110: don't await — Probe now prompts (whose hand / show hand); answered below */
 // v110: Probe now asks whose hand and shows it — answer both prompts (it used to resolve silently)
 { let sawPick=false, sawHand=false; for(let i=0;i<40;i++){ const k=await pg.evaluate(()=>{const U=GoldfishUI.current;return U.busy?(U.prompt?U.prompt.kind:'busy'):'idle'}); if(k==='idle')break;
-  if(k==='player'){sawPick=true;await pg.click('[data-act=pick-player]');} else if(k==='may'){sawHand=await pg.evaluate(()=>!!(GoldfishUI.current.prompt.cards&&GoldfishUI.current.prompt.ok));await pg.click('[data-act=may-yes]');} else await pg.waitForTimeout(100); }
+  if(k==='priority'){await pg.evaluate(()=>GoldfishUI.current.prompt.res(null));}
+  else if(k==='player'){sawPick=true;await pg.click('[data-act=pick-player]');} else if(k==='may'){sawHand=await pg.evaluate(()=>!!(GoldfishUI.current.prompt.cards&&GoldfishUI.current.prompt.ok));await pg.click('[data-act=may-yes]');} else await pg.waitForTimeout(100); }
   ok('Gitaxian Probe asks whose hand, then shows it',sawPick&&sawHand,JSON.stringify({sawPick,sawHand})); }
 await pg.waitForFunction(()=>!GoldfishUI.current.busy);
 ok('Phyrexian cast offers normal + pay-life',probeBtns.some(t=>/Normal cost/.test(t))&&probeBtns.some(t=>/Pay 2 life for \{U\/P\}/.test(t)),JSON.stringify(probeBtns));
@@ -56,7 +57,9 @@ ok('quest counters shown on the tile',/3Q/.test(await pg.$eval('.gc[data-pid="72
 // clicking a permanent with one tap ability activates it
 await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me;const {tagCard}=Goldfish;const c=tagCard({name:'Pinger',type:'Creature — Wizard',mana:'{U}',oracle:'{T}: Draw a card.',cmc:1,power:1,toughness:1});me.battlefield.push({id:7300,card:c,tapped:false,summoning:false,counters:0});U.render();});
 const h0=await pg.evaluate(()=>GoldfishUI.current.me.hand.length);
-await pg.click('.gc[data-pid="7300"]');await pg.waitForTimeout(1500);console.log('dbg',await pg.evaluate(()=>{const U=GoldfishUI.current;return {busy:U.busy,prompt:U.prompt&&U.prompt.kind,mode:U.mode&&U.mode.kind,myTurn:U.myTurn,opts:(U.mainOpts||[]).length,log:U.game.log.slice(-3).map(l=>l.m)}}));
+await pg.click('.gc[data-pid="7300"]');
+// v112: if an instant is in hand you correctly get priority to respond to your own ability — pass it (the test was flaky on the random Probe draw)
+for(let i=0;i<50;i++){const st=await pg.evaluate(()=>{const U=GoldfishUI.current;if(U.prompt&&U.prompt.kind==='priority'){U.prompt.res(null);return 'passed'}return U.game.stack.length?'stack':'done'});if(st==='done')break;await pg.waitForTimeout(100);}console.log('dbg',await pg.evaluate(()=>{const U=GoldfishUI.current;return {busy:U.busy,prompt:U.prompt&&U.prompt.kind,mode:U.mode&&U.mode.kind,myTurn:U.myTurn,opts:(U.mainOpts||[]).length,log:U.game.log.slice(-3).map(l=>l.m)}}));
 const r2=await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me;const p=me.battlefield.find(b=>b.id===7300);return {tapped:p.tapped,hand:me.hand.length,prompt:U.prompt&&U.prompt.kind,opts:U.prompt&&U.prompt.options&&U.prompt.options.map(o=>o.kind+':'+(o.card&&o.card.name)),log:U.game.log.slice(-4).map(l=>l.m)}});
 ok('click on a permanent activates its tap ability',r2.tapped&&r2.hand===h0+1,JSON.stringify(r2)+' h0='+h0);
 console.log('errors',errs);await b.close();})();

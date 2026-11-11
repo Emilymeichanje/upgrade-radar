@@ -2115,6 +2115,7 @@ function tagAbilities(card) {
     if ((m = l.match(/^crew (\d+)/))) { card.abilities.push({ zone: 'battlefield', label: 'crew', cost: manaInfo(''), crew: +m[1], speed: 'instant', ops: [{ op: 'crew' }] }); continue; }
     if ((m = l.match(/^as this card enters, choose (\w+) or (\w+)\.?$/))) { card.siege = [m[1], m[2]].map(s => s[0].toUpperCase() + s.slice(1)); continue; }
     if (card.siege && /^• (\w+) — /.test(l)) continue;
+    if ((m = l.match(/^whenever you cast a creature spell, if (three|two|four|\d+) or more mana from creatures was spent to cast it, (.+)$/))) { const ops = parseOps(m[2]); if (ops.length) { card.triggers.push({ when: 'cast', zone: 'battlefield', filter: 'creature', creatureManaMin: numOf(m[1]) || +m[1] || 3, ops }); continue; } } /* b13: Inga and Esika — the condition was dropped, so it drew on every creature spell (even free ones) */
     if ((m = l.match(/^whenever you cast your second spell each turn, (.+)$/))) { const ops = parseOps(m[1]); if (ops.length) { card.triggers.push({ when: 'cast', zone: 'battlefield', filter: '', second: true, ops }); continue; } }
     if ((m = l.match(/^whenever (a player|an opponent) casts their second spell each turn, (.+)$/))) { const ops = parseOps(m[2]); if (ops.length) card.triggers.push({ when: m[1] === 'a player' ? 'anyCast' : 'oppCast', zone: 'battlefield', filter: '', second: true, ops }); continue; }
     if (/^whenever an opponent attacks you with two or more creatures, draws their second card each turn, or casts their second spell each turn, you draw a card/.test(l)) { const ops = [{ op: 'draw', n: 1 }]; card.triggers.push({ when: 'attackedBy2', zone: 'battlefield', ops }, { when: 'oppDraw', zone: 'battlefield', second: true, ops }, { when: 'oppCast', zone: 'battlefield', filter: '', second: true, ops }); continue; }
@@ -3135,6 +3136,7 @@ class Game {
     this.lastSpend.colors = this.b3_colorsSpent(plan, cost);
     this.lastSpend.ancestry = plan.some(x => (x.kind === 'perm' && x.b && x.b.card.statics && x.b.card.statics.ancestryScry) || (x.kind === 'pool' && p.pool && p.pool[x.idx] && p.pool[x.idx].ancestry)); // b13
     this.lastSpend.cavern = plan.some(x => (x.kind === 'perm' && x.b && cost.card && this.cavernFor(x.b, cost.card)) || (x.kind === 'pool' && p.pool && p.pool[x.idx] && p.pool[x.idx].cavern && cost.card && cost.card.isCreature && matchesFilter(cost.card, p.pool[x.idx].cavern))); // b13: Cavern of Souls mana actually spent on a matching creature
+    this.lastSpend.fromCreatures = Math.min(cost.total || 0, plan.reduce((n, x) => n + (x.kind === 'perm' && x.b && x.b.card.isCreature ? (x.amount || 1) : x.kind === 'pool' && p.pool && p.pool[x.idx] && p.pool[x.idx].creature ? 1 : 0), 0)); // b13
     if (cost.card && (cost.card.orig || cost.card).isCommander && plan.some(s => s.b1_opal && s.pip)) (cost.card.orig || cost.card)._opalTurn = this.turn;
     const poolIdx = [];
     for (const s of plan) {
@@ -3169,6 +3171,7 @@ class Game {
     await this.flushTapped(p);
     this.say(`taps ${perm.card.name}`, p); this.addMana(p, Array(s.amount).fill(col)); if (perm.card.statics && perm.card.statics.ancestryScry) for (let k = 1; k <= s.amount; k++) p.pool[p.pool.length - k].ancestry = true; // b13: Path of Ancestry mana remembers where it came from
     if (perm.chosenType && /spend this mana only to cast a creature spell of the chosen type/i.test(perm.card.oracle)) for (let k = 1; k <= s.amount; k++) p.pool[p.pool.length - k].cavern = perm.chosenType; // b13: Cavern of Souls mana remembers its type
+    if (perm.card.isCreature) for (let k = 1; k <= s.amount; k++) p.pool[p.pool.length - k].creature = true; // b13: mana from creatures (Inga and Esika)
     await this.emit({ type: 'activate', p, card: perm.card }); await this.flushPending(); return true;
   }
   /** floating mana (rituals, Lotus Cobra, Birgi...). eot: survives step changes */
@@ -3434,14 +3437,14 @@ class Game {
   /** cast a spell. Outside a priority loop this runs the stack until it's empty; returns true if this spell resolved. */
   async cast(p, card, zone = 'hand', target = null, opts = {}) { return this.held(() => this._cast(p, card, zone, target, opts)); }
   async _cast(p, card, zone = 'hand', target = null, opts = {}) {
-    card._castZone = zone;
+    card._castZone = opts.fromZone || zone;
     const obj = await this.putOnStack(p, card, zone, target, opts);
     if (!obj) return false;
     if (this.stackBusy) return true; // cast in response: it resolves when everyone passes
     await this.runStack(p);
     return !!obj.resolved;
   }
-  async putOnStack(p, card, zone = 'hand', target = null, { instant = false, free = false, owner = null } = {}) {
+  async putOnStack(p, card, zone = 'hand', target = null, { instant = false, free = false, owner = null, fromZone = null } = {}) {
     if (card.counter && card.counter.hits === 'targetsMine' && target && target.spell && !(target.spell.target && target.spell.target.card && this.ownerOf(target.spell.target) === p)) return null;
     let obj_gc = null; let fromExileZ = false;
     if (zone === 'exile') { const e = (p.exileCast || []).find(x => x.card === card); if (!e) return null; if (e.notBefore && this.turn < e.notBefore) return null; if (e.maralen) { p.maralenTurn = this.turn; p.exileCast = p.exileCast.filter(x => !x.maralen || x === e); } if (e.group) p.exileCast = p.exileCast.filter(x => x.group !== e.group || x === e); if (e.nashi && card.cmc) await this.changeLife(p, -card.cmc, card); if (e.onAdventure) card._noAdv = true; if (e.free) free = true; if (e.cost) card._costOverride = e.cost; p.exileCast.splice(p.exileCast.indexOf(e), 1); const o = e.owner || p; const i = o.exile.indexOf(card); if (i >= 0) o.exile.splice(i, 1); p.hand.push(card); owner = o; zone = 'hand'; fromExileZ = true; }
@@ -3528,7 +3531,7 @@ class Game {
     if (extra.alt && extra.alt.kind === 'adventure') { const orig = card; card = { ...orig.adventure.spell, uid: UID++, img: orig.img, advOf: orig, advKind: orig.adventure.kind }; this.say(`casts ${card.name} (${orig.adventure.kind === 'omen' ? 'omen' : 'adventure'} of ${orig.name})`, p); }
     if (obj_gc && obj_gc.castAs) { const orig = card; card = { ...obj_gc.castAs, uid: UID++, img: orig.img, aftermathOf: orig }; }
     delete card._noAdv;
-    const obj = { id: UID++, kind: 'spell', fromExile: fromExileZ, spent: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.total : card.cmc), spentC: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.c : 0), owner, noMana: mode === 'free' || (extra.alt && extra.alt.cost.total === 0), uncounterable: p.uncounterNext === this.turn, card, caster: p, target, zone, x: card._lifeX != null ? card._lifeX : extra.x, kicks: extra.kicks, kicked: extra.kicks > 0 || !!extra.kicked, gift: extra.gift, bargained: extra.bargain, alt: extra.alt && extra.alt.kind };
+    const obj = { id: UID++, kind: 'spell', fromExile: fromExileZ || (!!fromZone && fromZone !== 'hand'), spentCreature: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.fromCreatures || 0 : 0), spent: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.total : card.cmc), spentC: mode === 'free' ? 0 : (this.lastSpend ? this.lastSpend.c : 0), owner, noMana: mode === 'free' || (extra.alt && extra.alt.cost.total === 0), uncounterable: p.uncounterNext === this.turn, card, caster: p, target, zone, x: card._lifeX != null ? card._lifeX : extra.x, kicks: extra.kicks, kicked: extra.kicks > 0 || !!extra.kicked, gift: extra.gift, bargained: extra.bargain, alt: extra.alt && extra.alt.kind };
     if (extra.modes) obj.modes = extra.modes;
     delete card._lifeX;
     obj.b3Colors = mode === 'free' ? [] : (this.lastSpend && this.lastSpend.colors) || null;
@@ -4783,13 +4786,15 @@ class Game {
     return t;
   }
   /** cast a card that's already out of every zone (exiled / revealed) without paying its cost */
-  async castFreeCard(p, card, owner = p) {
+  /** fromZone: where the card really is cast from. Default 'exile' (cascade, Jodah, Bre, discover…); only a genuine hand cast passes 'hand'.
+   *  b13: it used to be cast as a hand cast, so "whenever you cast … from your hand" (Jodah, Gale, prepare) fired on every free spell and Jodah chained. */
+  async castFreeCard(p, card, owner = p, fromZone = 'exile') {
     if (card.isLand) { if (p.landsThisTurn < this.landLimit(p)) { p.landsThisTurn++; const [pm] = await this.landEnters(p, card); this.say(`— plays ${card.name}`, p); await this.emit({ type: 'land', p, card, perm: pm }); await this.landfall(p); return true; } owner.exile.push(card); return false; }
     let target = null;
     if (card.roles.includes('removal')) target = p.ai ? (p.ai.bestTarget(this, p, this.aiRmOk(card, b => b.card.isCreature)) || {}).perm || null : await this.pickPerm(p, card, this.oppPerms(p, b => b.card.isCreature), { harmful: true });
     if (card.roles.includes('removal') && !target) { owner.graveyard.push(card); this.say(`— ${card.name} has no target`, p); return false; }
     if (card.roles.includes('counter') && !(card.modes && card.modes.some(m => m.card && !(m.card.roles || []).includes('counter')))) { owner.graveyard.push(card); return false; }
-    p.hand.push(card); const ok = await this.cast(p, card, 'hand', target, { free: true, owner });
+    p.hand.push(card); const ok = await this.cast(p, card, 'hand', target, { free: true, owner, fromZone });
     if (!ok) { const i = p.hand.indexOf(card); if (i >= 0) { p.hand.splice(i, 1); owner.exile.push(card); this.say(`— ${card.name} could not be cast and stays in exile`, p); } } // b13: a failed free cast must not leave the card in your hand
     return ok;
   }
@@ -5530,7 +5535,11 @@ class Game {
         case 'kediss': { const n = ctx.dmg || 0; const d = ctx.defender; if (!n) break; for (const o of this.opponentsOf(p).filter(o => o !== d)) await this.changeLife(o, -n, src); this.say(`— deals ${n} damage to each other opponent`, p); break; }
         case 'hearthHome': { const pool = p.battlefield.filter(b => b.card.isCreature && !b.card.token && (b.owner == null || this.players[b.owner] === p)); const t = [...pool].filter(b => b.card.etbOps).sort((a, z) => (p.ai ? p.ai.permBase(z) - p.ai.permBase(a) : 0))[0]; if (t) { const c = t.card.orig || t.card; p.battlefield.splice(p.battlefield.indexOf(t), 1); await this.emit({ type: 'destroy', owner: p, perm: t, quiet: true }); await this.leftBattlefield(p, t); const pm = await this.enterPerm(p, c); this.say(`— flickers ${c.name}`, p); if (pm) { if (c.etbOps) await this.trigger(p, pm, c.etbOps, { perm: pm }, 'ETB'); await this.creatureEntered(p, pm); await this.permEntered(p, pm); } } await this.runOps(p, [{ op: 'landToBf', n: 1, basic: true, types: [] }], src, {}); break; }
         case 'doubleAttackerPower': { const a = ctx.attacker || (ctx.perm && ctx.perm.attachedTo != null ? p.battlefield.find(b => b.id === ctx.perm.attachedTo) : null); if (!a) break; const pw = Math.max(0, this.powerOf(p, a)); a.tempPump = (a.tempTurn === this.turn ? a.tempPump || 0 : 0) + pw; a.tempTurn = this.turn; this.toughAdj(a, -pw); this.say(`— ${a.card.name}'s power doubles`, p); break; }
-        case 'jodahCascade': { const mv = (ctx.castCard && ctx.castCard.cmc) || 0; const out = []; let hit = null; while (p.library.length) { const c = p.library.pop(); if (c.isLegendary && !c.isLand && c.cmc < mv) { hit = c; break; } out.push(c); } p.library.unshift(...shuffle(out, this.rng)); if (hit) { this.say(`— exiles ${hit.name} and casts it without paying its mana cost`, p); await this.castFreeCard(p, hit, p); } break; }
+        case 'jodahCascade': { const mv = (ctx.castCard && ctx.castCard.cmc) || 0; const out = []; let hit = null; while (p.library.length) { const c = p.library.pop(); if (c.isLegendary && !c.isLand && c.cmc < mv) { hit = c; break; } out.push(c); } if (!hit) { p.library.unshift(...shuffle(out, this.rng)); this.say(`— ${src.name}: no legendary nonland card with mana value less than ${mv} (${out.length} exiled, bottomed)`, p); break; }
+          this.say(`— ${src.name}: exiles ${out.length + 1} card${out.length ? 's' : ''}, hits ${hit.name} (mana value ${hit.cmc} < ${mv})`, p);
+          /* b13: "you MAY cast that card" — the human is asked (with the card shown); the AI casts when it's worth it. A declined card goes to the bottom with the rest. */
+          const go = p.human && !this.shortcutting ? (this.hooks.humanMay ? await this.hooks.humanMay({ p, card: src, question: `cast ${hit.name} without paying its mana cost?`, cards: [hit] }) : true) : !p.ai || p.ai.castValue(this, p, hit) > -2;
+          if (go) { p.library.unshift(...shuffle(out, this.rng)); await this.castFreeCard(p, hit, p); } else { p.library.unshift(...shuffle([...out, hit], this.rng)); this.say(`— declines; ${hit.name} goes to the bottom with the rest`, p); } break; }
         case 'chimeraSwap': { const pm = ctx.perm; const q = ctx.other; const obj = [...this.stack].reverse().find(o => o.kind !== 'ability' && o.caster === q && o.card === ctx.castCard); if (!pm || !q || !obj || !p.battlefield.includes(pm)) break; const worth = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: src, question: `exchange control of ${src.name} and ${obj.card.name}?` })) : (obj.card.cmc >= 4 || (obj.card.roles || []).some(r => /removal|wipe|counter/.test(r)) || (obj.target && obj.target.card && this.ownerOf(obj.target) === p)); if (!worth) break; p.battlefield.splice(p.battlefield.indexOf(pm), 1); if (pm.owner == null) pm.owner = this.players.indexOf(p); q.battlefield.push(pm); pm.summoning = true; this.say(`— exchanges control of ${src.name} with ${q.name}'s ${obj.card.name}`, p); await this.stealSpell(p, obj); this.refreshStatics(); break; }
         case 'slicer': { const pm = ctx.perm, q = ctx.active; if (!pm || !q || q === p || !p.battlefield.includes(pm)) break; const give = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: src, question: `give ${q.name} control of ${pm.card.name} this turn (it's goaded)? If not, it converts.` })) : this.opponentsOf(p).length > 1; if (give) { p.battlefield.splice(p.battlefield.indexOf(pm), 1); if (pm.owner == null) pm.owner = this.players.indexOf(p); pm.threatenTurn = this.turn; pm.threatenFrom = this.players.indexOf(p); pm.tapped = false; pm.summoning = false; pm.goadedBy = p; pm.goadUntil = (p.turnCount || 0) + 1; pm.noSacTurn = this.turn; q.battlefield.push(pm); this.say(`— ${q.name} gains control of ${pm.card.name} until end of turn; it's goaded and can't be sacrificed`, p); this.refreshStatics(); } else await this.runOps(p, [{ op: 'transform' }], src, ctx); break; }
         case 'turnFaceUp': { const pm = ctx.perm; if (!pm || !pm.card.faceDownOf) break; const real = pm.card.faceDownOf; pm.card = real; pm.faceDown = false; if (real.morph && real.morph.kind === 'megamorph') { const n = this.counterAmt(p, 1); pm.counters = (pm.counters || 0) + n; } this.refreshStatics(); this.say(`— turns ${real.name} face up`, p); for (const b of p.battlefield.filter(x => !x.neutral)) for (const tr of b.card.triggers || []) if (tr.when === 'turnedFaceUp' && (tr.selfOnly ? b === pm : true)) await this.runTrig(p, b, tr, { perm: b, entered: pm }); break; }
@@ -6175,7 +6184,7 @@ class Game {
         case 'landerToken': await this.makeArtifactTokens(p, 'lander', op.n || 1); break;
         case 'landFromAnyGy': { const pool = this.alive().flatMap(q => q.graveyard.filter(c => c.isLand).map(c => ({ c, q }))); let ch = p.ai ? pool.sort((a, z) => (z.c.produces || []).length - (a.c.produces || []).length)[0] : null; if (p.human && pool.length) { const c = (await this.chooseFromList(p, src, pool.map(x => x.c), 1, 'battlefield'))[0]; ch = pool.find(x => x.c === c); } if (!ch) break; ch.q.graveyard.splice(ch.q.graveyard.indexOf(ch.c), 1); const [pm] = await this.landEnters(p, ch.c, true); if (pm && ch.q !== p) pm.owner = this.players.indexOf(ch.q); this.say(`— puts ${ch.c.name} onto the battlefield tapped`, p); await this.landfall(p, pm); break; }
         case 'tapSelf': if (ctx.perm) ctx.perm.tapped = true; break;
-        case 'freeISByWizards': { const x = 2 * p.battlefield.filter(b => b.card.isLegendary && matchesFilter(b.card, 'wizard')).length; const pool = p.hand.filter(c => (c.isInstant || c.isSorcery) && c.cmc <= x); if (!pool.length) { this.say(`— ${src.name}: no instant or sorcery with mana value ${x} or less in hand`, p); break; } const c = p.ai ? [...pool].sort((a, z) => z.cmc - a.cmc)[0] : (await this.chooseFromList(p, src, pool, 1, 'cast free'))[0]; if (c) { p.hand.splice(p.hand.indexOf(c), 1); await this.castFreeCard(p, c); } break; }
+        case 'freeISByWizards': { const x = 2 * p.battlefield.filter(b => b.card.isLegendary && matchesFilter(b.card, 'wizard')).length; const pool = p.hand.filter(c => (c.isInstant || c.isSorcery) && c.cmc <= x); if (!pool.length) { this.say(`— ${src.name}: no instant or sorcery with mana value ${x} or less in hand`, p); break; } const c = p.ai ? [...pool].sort((a, z) => z.cmc - a.cmc)[0] : (await this.chooseFromList(p, src, pool, 1, 'cast free'))[0]; if (c) { p.hand.splice(p.hand.indexOf(c), 1); await this.castFreeCard(p, c, p, 'hand'); } break; }
         case 'galeCast': { const cc = ctx.castCard; if (!cc) break; const want = cc.isInstant ? 'sorcery' : 'instant'; const pool = p.graveyard.filter(c => matchesFilter(c, want) && c !== cc); const c = p.ai ? [...pool].filter(c => this.canPayCost(p, c.mana)).sort((a, z) => z.cmc - a.cmc)[0] : (await this.chooseFromList(p, src, pool.filter(c => this.canPayCost(p, c.mana)), 1, 'cast from graveyard'))[0]; if (!c) break; p.galeGrant = { card: c, turn: this.turn }; await this.cast(p, c, 'gy', null, { instant: true }); p.galeGrant = null; break; }
         case 'insurrection': { for (const q of this.alive()) for (const t of q.battlefield.filter(b => b.card.isCreature)) { t.tapped = false; if (q === p) { t.hasteTurn = this.turn; continue; } q.battlefield.splice(q.battlefield.indexOf(t), 1); if (t.owner == null) t.owner = this.players.indexOf(q); t.threatenTurn = this.turn; t.threatenFrom = this.players.indexOf(q); t.summoning = false; t.hasteTurn = this.turn; p.battlefield.push(t); } for (const b of p.battlefield.filter(b => b.card.isCreature)) { (b.kwTurn === this.turn ? b.kwT : (b.kwT = [])).push('haste'); b.kwTurn = this.turn; b.summoning = false; } this.refreshStatics(); this.say('— untaps all creatures and gains control of them until end of turn; they gain haste', p); break; }
         case 'kazaReduce': { const n = p.battlefield.filter(b => matchesFilter(b.card, 'wizard')).length; p.kaza = { turn: this.turn, n }; this.say(`— the next instant or sorcery this turn costs {${n}} less`, p); break; }
@@ -6633,6 +6642,7 @@ class Game {
       if (tr.filter === '__chosen__' ? !(b.chosenType && matchesFilter(card, b.chosenType)) : !matchesFilter(card, tr.filter)) continue;
       if (tr.mvMin && card.cmc < tr.mvMin) continue;
       if (tr.second && p.spellsThisTurn !== 2) continue; /* b13: Jori En — "your second spell each turn" */
+      if (tr.creatureManaMin) { const top = this.stack[this.stack.length - 1]; if (!(top && top.card === card && (top.spentCreature || 0) >= tr.creatureManaMin)) continue; }
       if (tr.minPower && !((card.power || 0) >= tr.minPower)) continue;
       if (tr.maxPower != null && (card.power || 0) > tr.maxPower) continue;
       if (tr.req && !this.reqOk(p, b, tr.req, { castCard: card, castObj: (this.stack[this.stack.length - 1] || {}).card === card ? this.stack[this.stack.length - 1] : null })) continue;

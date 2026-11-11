@@ -741,4 +741,42 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      for (const [q, d, c] of (g.pendingLife || []).splice(0)) { if (d < 0 && c) g.say(`— ${c.name} deals ${-d} damage to ${q.name}`, q); await g.changeLife(q, d, c); }
      const lines=g.log.slice(n0).map(x=>x.m); ok('damage announcement carries the [a → b] tag; no second "loses" line',lines.length===1&&/\[P0 20 → 19\]/.test(lines[0]),JSON.stringify(lines)); }
  }
+
+ { // v112 (Jodah game g5474): free casts are not "from your hand" — Jodah no longer chains; "you may cast" is optional; a genuine free hand cast still counts
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0};pl.battlefield.push(b);return b};
+   const JODAH="Legendary creatures you control get +X/+X, where X is the number of legendary creatures you control.\nWhenever you cast a legendary spell from your hand, exile cards from the top of your library until you exile a legendary nonland card with lesser mana value. You may cast that card without paying its mana cost. Put the rest on the bottom of your library in a random order.";
+   const leg=(n,mv)=>tagCard(mk(n,'Legendary Creature — Human',`{${mv}}`,'',mv,'2','2'));
+   const setup=()=>{const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; put(me,tagCard(mk('Jodah, the Unifier','Legendary Creature — Human Wizard','{W}{U}{B}{R}{G}',JODAH,5,'5','5')));
+     for(let i=0;i<12;i++) me.library.push(tagCard(mk('Forest','Basic Land — Forest','','',0)));
+     // top of library is the END: first hit is a legendary MV3, beneath it another legendary MV2 (would be the chained hit)
+     me.library.push(leg('Second Hit',2)); for(let i=0;i<3;i++) me.library.push(tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2'))); me.library.push(leg('First Hit',3));
+     return [g,me]; };
+   { const [g,me]=setup(); let asked=0; g.hooks.humanMay=async c=>{asked++;return true}; g.hooks.humanSearch=async c=>[];
+     const samut=leg('Samut',5); me.hand.push(samut); g.freeCasts=1; await g.castFreeCard(me,samut,me,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+     const trig=g.log.filter(x=>/Jodah, the Unifier triggers/.test(x.m)).length;
+     ok('Jodah triggers once for the hand cast and NOT for the card it casts from exile',trig===1&&me.battlefield.some(b=>b.card.name==='First Hit')&&!me.battlefield.some(b=>b.card.name==='Second Hit'),'triggers '+trig+' bf '+me.battlefield.map(b=>b.card.name).join());
+     ok('…and "you may cast" was actually asked',asked===1,'asked '+asked);
+     ok('…and the log shows how many were exiled and the hit',g.log.some(x=>/exiles 1 card, hits First Hit \(mana value 3 < 5\)/.test(x.m)),g.log.filter(x=>/hits First Hit/.test(x.m)).map(x=>x.m).join()); }
+   { const [g,me]=setup(); g.hooks.humanMay=async c=>false; const n0=me.library.length;
+     await g.runOps(me,[{op:'jodahCascade'}],{name:'Jodah, the Unifier'},{castCard:leg('Samut',5)});
+     ok('declining puts the hit on the bottom (library size unchanged, hit not cast)',me.library.length===n0&&me.library[0]&&!me.battlefield.some(b=>b.card.name==='First Hit')&&me.library.some(c=>c.name==='First Hit'),'lib '+n0+'→'+me.library.length); }
+   { const [g,me]=setup(); g.hooks.humanMay=async c=>true; const c=leg('Default Free',5); await g.castFreeCard(me,c,me); while(g.stack.length)await g.resolve(); await tick(g);
+     ok('a free cast from exile (default) does not trigger Jodah',!g.log.some(x=>/Jodah, the Unifier triggers/.test(x.m)),g.log.slice(-4).map(x=>x.m).join(' / ')); }
+ }
+
+ { // v112: Inga and Esika draws only if 3+ mana from creatures was spent (not on free casts, not on land mana)
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false};pl.battlefield.push(b);return b};
+   const INGA="Creatures you control have vigilance and \"{T}: Add one mana of any color. Spend this mana only to cast a creature spell.\"\nWhenever you cast a creature spell, if three or more mana from creatures was spent to cast it, draw a card.";
+   const run=async(how)=>{const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; put(me,tagCard(mk('Inga and Esika','Legendary Creature — Human Elf','{2}{G}{U}',INGA,4,'3','4')));
+     if(how==='elves') for(let i=0;i<3;i++) put(me,tagCard(mk('Llanowar Elves','Creature — Elf Druid','{G}','{T}: Add {G}.',1,'1','1')));
+     if(how==='lands') for(let i=0;i<3;i++) await g.landEnters(me,tagCard(mk('Forest','Basic Land — Forest','','',0)));
+     const ogre=tagCard(mk('Ogre','Creature — Ogre','{2}{G}','',3,'3','3')); const n0=g.log.length;
+     if(how==='free'){ await g.castFreeCard(me,ogre,me,'hand'); } else { me.hand.push(ogre); await g.cast(me,ogre,'hand'); }
+     while(g.stack.length)await g.resolve(); await tick(g);
+     return {drew:g.log.slice(n0).filter(x=>/draws a card/.test(x.m)).length, trig:g.log.some(x=>/Inga and Esika triggers/.test(x.m)), cast:me.battlefield.some(b=>b.card.name==='Ogre')}; };
+   const a=await run('elves'), b=await run('lands'), c=await run('free');
+   ok('Inga: 3 mana from creatures → draws',a.cast&&a.trig&&a.drew===1,JSON.stringify(a));
+   ok('Inga: paid with lands → no draw',b.cast&&!b.trig&&b.drew===0,JSON.stringify(b));
+   ok('Inga: cast free → no draw (Hajar in g5474)',c.cast&&!c.trig&&c.drew===0,JSON.stringify(c));
+ }
  console.log(fails+' failed');})();

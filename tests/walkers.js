@@ -779,4 +779,14 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    ok('Inga: paid with lands → no draw',b.cast&&!b.trig&&b.drew===0,JSON.stringify(b));
    ok('Inga: cast free → no draw (Hajar in g5474)',c.cast&&!c.trig&&c.drew===0,JSON.stringify(c));
  }
+
+ { // v113: Arcane Denial — the countered spell's controller may draw up to two, and you draw one, at the next turn's upkeep
+   const g=fresh(); const me=g.players[0], op=g.players[1]; me.human=true; me.ai=null; for(let i=0;i<3;i++)await g.landEnters(me,tagCard(mk('Island','Basic Land — Island','','',0)));
+   const ad=tagCard(mk('Arcane Denial','Instant','{1}{U}',"Counter target spell. Its controller may draw up to two cards at the beginning of the next turn's upkeep.\nYou draw a card at the beginning of the next turn's upkeep.",2));
+   const victim={id:991,card:tagCard(mk('Basilisk Collar','Artifact — Equipment','{1}','',1)),caster:op,kind:'spell'}; g.stack.push(victim); const o={id:992,card:ad,caster:me,target:{spell:victim},kind:'spell'}; g.stack.push(o); await g.resolve(o); await tick(g);
+   ok('Arcane Denial counters and schedules both draws',victim&&victim.countered&&(g.upkeepDelayed||[]).length===2,JSON.stringify((g.upkeepDelayed||[]).map(d=>[d.p.name,d.n])));
+   g.turn++; const n0=g.log.length; g.hooks.humanTurn=async()=>({action:'end'}); await g.takeTurn(g.players[2]);
+   const lines=g.log.slice(n0).map(x=>x.m).filter(m=>/Arcane Denial/.test(m));
+   ok('next upkeep: the opponent draws 2 and I draw 1',lines.some(m=>/P1 draws 2/.test(m))&&lines.some(m=>/P0 draws 1/.test(m))&&!(g.upkeepDelayed||[]).length,JSON.stringify(lines));
+ }
  console.log(fails+' failed');})();

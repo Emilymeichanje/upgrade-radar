@@ -982,7 +982,7 @@ class Table {
     if (a === 'close-zone') { this.zoneView = null; this.render(); return; }
     if (a === 'ff') { this.ff = !this.ff; this.render(); return; }
     if (a === 'leave') { this.aborted = true; this.sfx.musicStop(); if (!this.replay) { this.clearSave(); this.storeRecording('abandoned'); } window.removeEventListener('popstate', this.onPop); window.removeEventListener('beforeunload', this.onUnload); if (location.hash === '#playtest/game') history.replaceState(null, '', '#playtest'); if (this.endTurn) this.endTurn(); if (this.prompt) this.prompt.res(null); document.removeEventListener('keydown', this.onKey); this.opts.onExit && this.opts.onExit(); return; }
-    if (a === 'cancel') { const wasAtk = this.mode && this.mode.kind === 'attack'; this.mode = null; if (wasAtk && this.turnPhase === 'declare' && this.endTurn) { this.endTurn({ action: 'attack', assignments: [] }); return; } this.render(); return; }
+    if (a === 'cancel') { const wasAtk = this.mode && this.mode.kind === 'attack'; this.mode = null; if (wasAtk && this.turnPhase === 'declare' && this.endTurn) { this.endTurn({ action: 'back' }); return; } /* b13: Cancel = back to main 1, not 'skip combat' */ this.render(); return; }
     if (a === 'tap-col' && this.mode && this.mode.kind === 'mana') { this.doTap(this.mode.perm, btn.dataset.c); return; }
     if (a === 'abil-pick' && this.mode && this.mode.kind === 'abil') { const m = this.mode; this.mode = null; const o = m.opts[+btn.dataset.i]; if (o) m.run(o); return; }
     if (a === 'undo' && this.myTurn && !this.busy && !P) { this.undo(); return; }

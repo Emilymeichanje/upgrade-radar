@@ -22,6 +22,16 @@ await pg.click('.sopt[data-name=divination]');
 await pg.waitForFunction(()=>GoldfishUI.current.mode&&GoldfishUI.current.mode.kind==='attack',null,{timeout:15000}).catch(()=>{});
 const st2=await pg.evaluate(()=>({mode:GoldfishUI.current.mode&&GoldfishUI.current.mode.kind,phase:GoldfishUI.current.turnPhase,hand:GoldfishUI.current.me.hand.length,btn:(document.querySelector('[data-act=attack]')||{}).textContent}));
 ok('after the free cast resolves, attack mode opens in the declare step',st2.mode==='attack'&&st2.phase==='declare'&&st2.hand===hand0+1,JSON.stringify(st2));
+// v113: Cancel in the attacker picker goes back to main 1 (it used to skip combat silently); sorcery-speed actions work again; re-entering combat does not re-fire Gandalf
+await pg.click('[data-act=cancel]');
+await pg.waitForFunction(()=>GoldfishUI.current.turnPhase==='main1'&&GoldfishUI.current.myTurn&&!GoldfishUI.current.busy,null,{timeout:10000}).catch(()=>{});
+const back=await pg.evaluate(()=>({phase:GoldfishUI.current.turnPhase,engine:GoldfishUI.current.game.phase,mode:GoldfishUI.current.mode&&GoldfishUI.current.mode.kind,atk:!!document.querySelector('[data-act=attack]:not([disabled])')}));
+ok('Cancel returns to main 1 with Attack still available',back.phase==='main1'&&back.engine==='main1'&&!back.mode&&back.atk,JSON.stringify(back));
+const trigBefore=await pg.evaluate(()=>GoldfishUI.current.game.log.filter(x=>/Gandalf, Party Guest triggers/.test(x.m)).length);
+await pg.click('[data-act=attack]');
+await pg.waitForFunction(()=>GoldfishUI.current.mode&&GoldfishUI.current.mode.kind==='attack',null,{timeout:10000}).catch(()=>{});
+const again=await pg.evaluate(()=>({mode:GoldfishUI.current.mode&&GoldfishUI.current.mode.kind,phase:GoldfishUI.current.turnPhase,prompt:GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind,trig:GoldfishUI.current.game.log.filter(x=>/Gandalf, Party Guest triggers/.test(x.m)).length}));
+ok('re-entering combat opens the picker without re-firing beginning-of-combat triggers',again.mode==='attack'&&again.phase==='declare'&&!again.prompt&&again.trig===trigBefore,JSON.stringify(again)+' before='+trigBefore);
 // pick the bear and go
 await pg.evaluate(()=>{const U=GoldfishUI.current,me=U.me;const bear=me.battlefield.find(b=>b.card.name==='Grizzly Bears');U.mode.map.set(bear,U.mode.def);U.render();});
 await pg.click('[data-act=atk-go]');

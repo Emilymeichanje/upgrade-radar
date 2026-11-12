@@ -342,6 +342,25 @@ function statsFor(deck){ // name(norm) -> {s,d,p,l,z,list}
   return m;
 }
 
+// ---------- enlarged card on hover (desktop) / tap (touch) ----------
+(()=>{
+  const SEL='.card > img, .dg-c img, .hero img';let z=null,cur=null;
+  const big=u=>u.replace('/small/','/normal/').replace('/art_crop/','/normal/');
+  const hide=()=>{if(z)z.style.display='none';cur=null};
+  const show=(img,centre)=>{
+    if(!/scryfall/.test(img.src))return; /* only Scryfall card images have a larger version */
+    if(!z){z=document.createElement('img');z.id='cardzoom';z.alt='';z.style.cssText='position:fixed;z-index:9999;width:min(320px,80vw);aspect-ratio:488/680;border-radius:4.75% / 3.5%;box-shadow:0 10px 40px rgba(0,0,0,.7);pointer-events:none;display:none;background:#111';document.body.appendChild(z)}
+    cur=img;z.src=img.src;const hi=new Image();hi.onload=()=>{if(cur===img)z.src=hi.src};hi.src=big(img.src); /* show the small one instantly, swap to the sharp one when it arrives */
+    z.style.display='block';const w=z.offsetWidth,h=w*680/488,r=img.getBoundingClientRect(),vw=innerWidth,vh=innerHeight;
+    let x=centre?(vw-w)/2:(r.right+12+w<=vw?r.right+12:r.left-12-w>=0?r.left-12-w:(vw-w)/2);
+    let y=centre?(vh-h)/2:r.top+r.height/2-h/2;y=Math.max(8,Math.min(y,vh-h-8));x=Math.max(8,Math.min(x,vw-w-8));
+    z.style.left=x+'px';z.style.top=y+'px';
+  };
+  const hover=matchMedia('(hover:hover)').matches;
+  if(hover){document.addEventListener('mouseover',e=>{const i=e.target.closest&&e.target.closest(SEL);if(i)show(i);else if(cur)hide()});document.addEventListener('mouseleave',hide)}
+  else document.addEventListener('click',e=>{const i=e.target.closest&&e.target.closest('.card > img, .hero img');if(i&&cur!==i){e.preventDefault();show(i,true)}else hide()},true);
+  addEventListener('scroll',hide,true);addEventListener('keydown',e=>{if(e.key==='Escape')hide()});
+})();
 // ---------- scryfall ----------
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function scryPages(q,max=3){

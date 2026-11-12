@@ -824,4 +824,61 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      let pool=null; g.hooks.humanSearch=async c=>{pool=c.pool.map(x=>x.name);return [c.pool.find(x=>x.name==='Bear')]}; await g.runOps(me,cap.spellOps,cap,{}); while(g.stack.length)await g.resolve(); await tick(g);
      ok('Capstone: I choose which exiled spells to cast; the rest stay exiled',pool&&pool.length===2&&me.battlefield.some(b=>b.card.name==='Bear')&&me.exile.some(c=>c.name==='Ogre')&&!me.battlefield.some(b=>b.card.name==='Ogre'),JSON.stringify(pool)); }
  }
+
+ { // v116: owner's Burakos game — Flawless Maneuver, Fire Magic, Folk Hero/changelings, party, Revel in Riches, Wrexial vs an eliminated player, melee under Isshin
+   const O=require(__dirname+'/fixtures/owner.json'); const OR=O.cards||O; const OC=n=>{const r=OR.find(r=>r[1]===n); if(!r)throw new Error('no '+n); return tagCard({name:r[1],mana:r[2],type:r[3],oracle:r[4],cmc:r[5],power:r[6],toughness:r[7]})};
+   const put=(g,pl,c,o={})=>{const b={id:900000+Math.floor(Math.random()*1e6),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false,...o};pl.battlefield.push(b);g.refreshStatics();return b};
+   const cr=(n,t,p=2,q=2,o='')=>tagCard(mk(n,'Creature — '+t,'{1}{W}',o,2,String(p),String(q)));
+   const base=()=>{const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; g.hooks.humanMay=async()=>true; g.hooks.humanSearch=async c=>c.pool.slice(0,c.n||1); g.hooks.humanTurn=async()=>({action:'end'}); return [g,me]};
+   // Flawless Maneuver
+   { const [g,me]=base(); const fh=OC('Folk Hero'); fh.isCommander=true; put(g,me,fh); const fm=OC('Flawless Maneuver');
+     ok('Folk Hero (a Background) is a commander: Flawless Maneuver is free with only Folk Hero out',g.castMode?g.castMode(me,fm,'hand')==='free':true,'');
+     const bear=put(g,me,cr('Bear','Bear')); const rock=put(g,me,tagCard(mk('Rock','Artifact','{2}','',2)));
+     await g.runOps(me,fm.spellOps,fm,{}); g.refreshStatics();
+     ok('Flawless Maneuver: creatures are indestructible',g.isIndestructible(bear),'');
+     ok('…and nothing gets hexproof or blanket protection; noncreatures get nothing',bear.protTurn!==g.turn&&rock.protTurn!==g.turn&&!g.isIndestructible(rock)&&me.hexproofTurn!==g.turn,JSON.stringify([bear.protTurn,rock.protTurn]));
+     const sp={id:1,kind:'spell',card:fm,caster:me,owner:me,zone:'hand'}; const n0=g.log.length; g.stack.push(sp); await g.resolve(sp); ok('no generic "protects N permanents" line',!g.log.slice(n0).some(x=>/protects \d+ permanents|hexproof/.test(x.m)),JSON.stringify(g.log.slice(n0).map(x=>x.m))); }
+   // Fire Magic — 1 damage is not a board wipe
+   { const [g,me]=base(); const opp=g.players[1]; const small=put(g,opp,cr('Squire','Human Soldier',1,1)); const big=put(g,opp,cr('Ogre','Ogre',3,4)); const mine=put(g,me,cr('Wall','Wall',0,5)); const z=put(g,me,OC('Zulaport Cutthroat')); const w1=put(g,me,cr('Pup','Dog',1,1));
+     const fmg=OC('Fire Magic'); const L=g.players.map(p=>p.life); const sp={id:2,kind:'spell',card:fmg,caster:opp,owner:opp,zone:'hand',modes:[fmg.modes[0].card]}; await g.resolve(sp); while(g.stack.length)await g.resolve(); await tick(g); while(g.stack.length)await g.resolve();
+     ok('Fire Magic (Fire, 1 damage): only toughness-1 creatures die',!opp.battlefield.includes(small)&&opp.battlefield.includes(big)&&me.battlefield.includes(mine)&&!me.battlefield.includes(w1)&&!me.battlefield.includes(z),JSON.stringify([opp.battlefield.map(b=>b.card.name),me.battlefield.map(b=>b.card.name)]));
+     ok('Zulaport Cutthroat sees itself and the other creature die together (2 drains)',g.players[2].life===L[2]-2&&me.life===L[0]+2,JSON.stringify(g.players.map(p=>p.life))); }
+   { const [g,me]=base(); const opp=g.players[1]; const big=put(g,opp,cr('Ogre','Ogre',3,3)); const huge=put(g,opp,cr('Giant','Giant',5,5)); const fmg=OC('Fire Magic'); const sp={id:3,kind:'spell',card:fmg,caster:me,owner:me,zone:'hand',modes:[fmg.modes[2].card]}; await g.resolve(sp); await tick(g);
+     ok('Fire Magic (Firaga, 3 damage): a 3/3 dies, a 5/5 lives',!opp.battlefield.includes(big)&&opp.battlefield.includes(huge),''); }
+   // party + changelings, Burakos attack
+   { const [g,me]=base(); const opp=g.players[1]; const bu=OC('Burakos, Party Leader'); bu.isCommander=true; const b=put(g,me,bu);
+     ok('Burakos alone is a party of 1',g.partySize(me)===1,'n='+g.partySize(me));
+     put(g,me,cr('Mimic','Shapeshifter',1,1,'Changeling')); ok('a changeling fills a party slot (2)',g.partySize(me)===2,'n='+g.partySize(me));
+     put(g,me,cr('Mimic B','Shapeshifter',1,1,'Changeling')); put(g,me,cr('Mimic C','Shapeshifter',1,1,'Changeling')); put(g,me,cr('Extra','Human Cleric'));
+     ok('Burakos + three changelings is a full party (4), never more',g.partySize(me)===4,'n='+g.partySize(me));
+     const L=opp.life; g.active=0; await g.combatPhase(me,[{attacker:b,defender:opp}]); await tick(g);
+     ok('Burakos attacks with a full party: defender loses 4 (+2 combat) and I make 4 Treasures',opp.life===L-4-2&&me.battlefield.filter(x=>x.card.name==='Treasure').length===4,JSON.stringify([L,opp.life,me.battlefield.filter(x=>x.card.name==='Treasure').length])); }
+   // Folk Hero: needs the commander creature on the battlefield; changeling spells count; once per turn
+   { const [g,me]=base(); const fh=OC('Folk Hero'); fh.isCommander=true; put(g,me,fh); const bu=OC('Burakos, Party Leader'); bu.isCommander=true; me.command.push(bu); for(let i=0;i<8;i++)await g.landEnters(me,tagCard(mk('Plains','Basic Land — Plains','','',0)));
+     const castIt=async c=>{for(const l of me.battlefield)l.tapped=false;me.hand.push(c); const h=me.hand.length; await g.cast(me,c,'hand'); while(g.stack.length)await g.resolve(); await tick(g); while(g.stack.length)await g.resolve(); return me.hand.length-(h-1)};
+     ok('Folk Hero: no draw while Burakos is in the command zone',await castIt(cr('Wiz','Human Wizard'))===0,'');
+     me.command.splice(me.command.indexOf(bu),1); put(g,me,bu); g.turn++;
+     ok('Folk Hero: a changeling spell shares a type with Burakos → draw',await castIt(cr('Mimic','Shapeshifter',1,1,'Changeling'))===1,'');
+     ok('…only once each turn',await castIt(cr('Wiz2','Human Wizard'))===0,''); g.turn++;
+     ok('Folk Hero: a Wizard spell draws; ',await castIt(cr('Wiz3','Human Wizard'))===1,''); g.turn++;
+     ok('Folk Hero: an unrelated creature (Bird) does not',await castIt(cr('Bird','Bird'))===0,''); }
+   // Revel in Riches
+   { const [g,me]=base(); const opp=g.players[1]; put(g,me,OC('Revel in Riches')); const v=put(g,opp,cr('Victim','Bear')); const own=put(g,me,cr('Mine','Bear')); const tk=put(g,opp,{...cr('Tok','Goblin',1,1),token:true});
+     const T=()=>me.battlefield.filter(x=>x.card.name==='Treasure').length;
+     await g.destroy(opp,v); await tick(g); while(g.stack.length)await g.resolve(); ok("Revel in Riches: an opponent's creature dies → Treasure",T()===1,'T='+T());
+     await g.destroy(opp,tk); await tick(g); while(g.stack.length)await g.resolve(); ok('…tokens count too',T()===2,'T='+T());
+     await g.destroy(me,own); await tick(g); while(g.stack.length)await g.resolve(); ok('…my own creature dying does not',T()===2,'T='+T());
+     await g.makeArtifactTokens(me,'treasure',7); g.turn++; g.active=0; await g.takeTurn(me); ok('nine Treasures at upkeep: no win',!g.winner,'');
+     if(!g.winner){ await g.makeArtifactTokens(me,'treasure',10-T()); g.turn++; await g.takeTurn(me); ok('ten Treasures at upkeep: I win',g.winner===me,'T='+T()); } }
+   // an eliminated player's graveyard leaves with them
+   { const [g,me]=base(); const opp=g.players[1]; opp.graveyard.push(OC('Flawless Maneuver')); await g.kill(opp,'test'); const wx=put(g,me,OC('Wrexial, the Risen Deep')); const n0=g.log.length; await g.runOps(me,[{op:'wrexial'}],wx.card,{defender:opp,perm:wx});
+     ok("Wrexial can't cast from an eliminated player's graveyard",!g.log.slice(n0).some(x=>/casts .* from/.test(x.m))&&opp.graveyard.length===0,''); }
+   // melee is an attack trigger: Isshin doubles it
+   { const [g,me]=base(); const o1=g.players[1],o2=g.players[2]; put(g,me,tagCard(mk('Isshin, Two Heavens as One','Legendary Creature — Human Samurai','{R}{W}{B}','If a creature attacking causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.',3,'3','4')));
+     const a=put(g,me,cr('Meleer','Cat Knight',2,2,'Melee')); const b2=put(g,me,cr('Other','Cat',2,2)); const L=o1.life; g.active=0; await g.combatPhase(me,[{attacker:a,defender:o1},{attacker:b2,defender:o2}]); await tick(g);
+     ok('melee with Isshin, two opponents attacked: +4/+4 (2 power → 6 damage)',o1.life===L-6,JSON.stringify([L,o1.life])); }
+   // commander hit shows the life change on the hit line
+   { const [g,me]=base(); const opp=g.players[1]; const c=tagCard(mk('Cmd','Legendary Creature — Orc','{B}','',1,'3','3')); c.isCommander=true; const b=put(g,me,c); g.active=0; const n0=g.log.length; await g.combatPhase(me,[{attacker:b,defender:opp}]); await tick(g);
+     const hl=g.log.slice(n0).map(x=>x.m).find(m=>/Cmd hits/.test(m)); ok('commander hit line carries [life a → b]',/\[P1 \d+ → \d+\]$/.test(hl||''),hl); }
+ }
  console.log(fails+' failed');})();

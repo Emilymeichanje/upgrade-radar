@@ -802,4 +802,26 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    g.turn++; g.active=0; await g.takeTurn(me); await tick(g);
    ok('next upkeep: recast from exile, then to the graveyard — no second rebound',me.graveyard.includes(ds)&&!me.exile.includes(ds)&&!(me.rebound||[]).includes(ds)&&g.log.filter(x=>/is exiled \(rebound\)/.test(x.m)).length===1,JSON.stringify({gy:me.graveyard.includes(ds),ex:me.exile.includes(ds),n:g.log.filter(x=>/is exiled \(rebound\)/.test(x.m)).length}));
  }
+
+ { // v115: paradigm — resolves → exiled + a free copy each first main phase; countered or fizzled → graveyard and nothing set up; the copy never re-exiles; a countered copy doesn't end it
+   const PARA="Paradigm (Then exile this spell. After you first resolve a spell with this name, you may cast a copy of it from exile without paying its mana cost at the beginning of each of your first main phases.)";
+   const mkLesson=()=>tagCard(mk('Study Session','Sorcery — Lesson','{2}{U}',"Draw a card.\n"+PARA,3));
+   const base=async()=>{const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; for(let i=0;i<3;i++)await g.landEnters(me,tagCard(mk('Island','Basic Land — Island','','',0))); g.hooks.humanMay=async()=>true; g.hooks.humanSearch=async c=>c.pool; g.hooks.humanTurn=async()=>({action:'end'}); return [g,me]};
+   { const [g,me]=await base(); const c=mkLesson(); ok('paradigm parses',c.paradigm===true,''); me.hand.push(c); await g.cast(me,c,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+     ok('resolved: exiled and registered',me.exile.includes(c)&&(me.paradigms||[]).includes(c)&&!me.graveyard.includes(c),'');
+     g.turn++; g.active=0; const n0=g.log.length; await g.takeTurn(me); await tick(g); const L=g.log.slice(n0).map(x=>x.m);
+     ok('next first main phase: a copy is cast free; the original stays exiled; the copy is not exiled again',L.some(m=>/casts a copy of Study Session \(paradigm\)/.test(m))&&me.exile.filter(x=>x.name==='Study Session').length===1&&me.exile.includes(c)&&L.filter(m=>/is exiled \(paradigm/.test(m)).length===0&&!me.graveyard.some(x=>x.name==='Study Session'),JSON.stringify(L.filter(m=>/Study|paradigm/.test(m))));
+     g.turn++; const n1=g.log.length; await g.takeTurn(me); ok('…and again the turn after',g.log.slice(n1).some(x=>/casts a copy of Study Session \(paradigm\)/.test(x.m)),''); }
+   { const [g,me]=await base(); const c=mkLesson(); const o={id:901,kind:'spell',card:c,caster:me,owner:me,zone:'hand',countered:true}; await g.leaveStack(o);
+     ok('countered: goes to the graveyard, no paradigm',me.graveyard.includes(c)&&!me.exile.includes(c)&&!(me.paradigms||[]).includes(c),JSON.stringify([me.graveyard.includes(c),me.exile.includes(c)])); }
+   { const [g,me]=await base(); const c=mkLesson(); const o={id:902,kind:'spell',card:c,caster:me,owner:me,zone:'hand',fizzled:true}; await g.leaveStack(o);
+     ok('fizzled (illegal target): graveyard, no paradigm',me.graveyard.includes(c)&&!(me.paradigms||[]).includes(c),''); }
+   { const [g,me]=await base(); const c=mkLesson(); me.exile.push(c); me.paradigms=[c]; const cp={...c,uid:99999,token:true,paradigm:false}; const o={id:903,kind:'spell',card:cp,caster:me,owner:me,zone:'hand',countered:true,fromExile:true}; await g.leaveStack(o);
+     ok('a countered paradigm copy just vanishes; the original keeps giving copies',me.exile.includes(c)&&me.paradigms.includes(c)&&!me.graveyard.some(x=>x.name==='Study Session'),JSON.stringify(me.graveyard.map(x=>x.name))); }
+   // Improvisation Capstone: you choose which exiled spells to cast
+   { const [g,me]=await base(); const cap=tagCard(mk('Improvisation Capstone','Sorcery — Lesson','{5}{R}{R}',"Exile cards from the top of your library until you exile cards with total mana value 4 or greater. You may cast any number of spells from among them without paying their mana costs.\n"+PARA,7));
+     me.library.push(tagCard(mk('Ogre','Creature — Ogre','{2}{R}','',3,'3','3')),tagCard(mk('Bear','Creature — Bear','{1}{G}','',2,'2','2')));
+     let pool=null; g.hooks.humanSearch=async c=>{pool=c.pool.map(x=>x.name);return [c.pool.find(x=>x.name==='Bear')]}; await g.runOps(me,cap.spellOps,cap,{}); while(g.stack.length)await g.resolve(); await tick(g);
+     ok('Capstone: I choose which exiled spells to cast; the rest stay exiled',pool&&pool.length===2&&me.battlefield.some(b=>b.card.name==='Bear')&&me.exile.some(c=>c.name==='Ogre')&&!me.battlefield.some(b=>b.card.name==='Ogre'),JSON.stringify(pool)); }
+ }
  console.log(fails+' failed');})();

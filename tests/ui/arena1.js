@@ -19,5 +19,12 @@ for(const n of [7,20]){const c=await pg.evaluate(n=>{const U=GoldfishUI.current,
   const h=document.querySelector('.gt-hand');h.scrollLeft=0;const hr=h.getBoundingClientRect();const cs=[...h.querySelectorAll('.hcd')];const L=cs[0].getBoundingClientRect();h.scrollLeft=h.scrollWidth;const R=cs[cs.length-1].getBoundingClientRect();
   const bot=hr.bottom-(h.offsetHeight-h.clientHeight);return {left:Math.round(L.left-hr.left),right:Math.round(hr.right-R.right),bottom:Math.round(bot-Math.max(...cs.map(x=>x.getBoundingClientRect().bottom)))}},n);
   ok(`fanned hand of ${n}: outer cards fully inside the strip`,c.left>=0&&c.right>=0&&c.bottom>=0,JSON.stringify(c));}
+// v115: prepared badge on the tile + in the reader; the recording export carries the text log
+{ const r=await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game,me=U.me;const {tagCard}=Goldfish;const c=tagCard({name:'Dirgur Focusmage // Braingeyser',type:'Creature — Djinn Monk // Sorcery',mana:'{2}{U} // {X}{U}{U}',oracle:'Instant and sorcery spells you cast cost {1} less to cast.\nWhenever you cast an instant or sorcery spell with mana value 5 or greater from your hand, this creature becomes prepared.\n//\nTarget player draws X cards.',cmc:3,power:'2',toughness:'4'});
+  const b={id:8800,card:c,tapped:false,counters:0,enteredTurn:0,summoning:false};me.battlefield.push(b);g.refreshStatics();U.render();const before=!!document.querySelector('.gc[data-pid="8800"] .ctr.prep');b.prepared=true;U.render();const badge=document.querySelector('.gc[data-pid="8800"] .ctr.prep');U.preview(c.uid);const now=U.pv.querySelector('.now');
+  const rec=U.recordingJson();const j=rec?JSON.parse(rec):null;return {spell:c.prepareSpell&&c.prepareSpell.name,before,badge:badge&&badge.textContent,now:now&&now.textContent,hasText:!!(j&&typeof j.text==='string'&&/playtest log · engine/.test(j.text)&&/== turn/.test(j.text)),hasMoves:!!(j&&j.moves&&j.seed!=null)}});
+  ok('prepared creature shows a badge only while prepared',!r.before&&/prepared/.test(r.badge||''),JSON.stringify(r));
+  ok('reader says it is prepared and names the spell',/prepared/.test(r.now||'')&&/Braingeyser/.test(r.now||''),r.now);
+  ok('recording export contains the full text log plus the replay data',r.hasText&&r.hasMoves,JSON.stringify([r.hasText,r.hasMoves])); }
 ok('arena fx default on',await pg.evaluate(()=>GoldfishUI.current.s.fx==='arena'));
 console.log('errors',errs);await b.close()})();

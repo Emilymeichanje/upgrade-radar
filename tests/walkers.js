@@ -789,4 +789,17 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    const lines=g.log.slice(n0).map(x=>x.m).filter(m=>/Arcane Denial/.test(m));
    ok('next upkeep: the opponent draws 2 and I draw 1',lines.some(m=>/P1 draws 2/.test(m))&&lines.some(m=>/P0 draws 1/.test(m))&&!(g.upkeepDelayed||[]).length,JSON.stringify(lines));
  }
+
+ { // v114: rebound happens once — the recast from exile goes to the graveyard, not back to exile
+   const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false};pl.battlefield.push(b);return b};
+   const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; await g.landEnters(me,tagCard(mk('Island','Basic Land — Island','','',0)));
+   put(me,tagCard(mk('Lyse Hext','Legendary Creature — Human Rebel Monk','{W}{U}','',2,'2','2')));
+   const ds=tagCard(mk('Distortion Strike','Sorcery','{U}',"Target creature gets +1/+0 until end of turn and can't be blocked this turn.\nRebound (If you cast this spell from your hand, exile it as it resolves. At the beginning of your next upkeep, you may cast this card from exile without paying its mana cost.)",1));
+   ok('Distortion Strike has rebound',!!ds.rebound,'');
+   me.hand.push(ds); g.hooks.humanSearch=async c=>[c.pool[0]]; g.hooks.humanMay=async()=>true; g.hooks.humanTurn=async()=>({action:'end'});
+   await g.cast(me,ds,'hand'); while(g.stack.length)await g.resolve(); await tick(g);
+   ok('cast from hand: exiled with rebound',me.exile.includes(ds)&&(me.rebound||[]).includes(ds),'exile '+me.exile.includes(ds));
+   g.turn++; g.active=0; await g.takeTurn(me); await tick(g);
+   ok('next upkeep: recast from exile, then to the graveyard — no second rebound',me.graveyard.includes(ds)&&!me.exile.includes(ds)&&!(me.rebound||[]).includes(ds)&&g.log.filter(x=>/is exiled \(rebound\)/.test(x.m)).length===1,JSON.stringify({gy:me.graveyard.includes(ds),ex:me.exile.includes(ds),n:g.log.filter(x=>/is exiled \(rebound\)/.test(x.m)).length}));
+ }
  console.log(fails+' failed');})();

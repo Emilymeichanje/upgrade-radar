@@ -881,4 +881,39 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    { const [g,me]=base(); const opp=g.players[1]; const c=tagCard(mk('Cmd','Legendary Creature — Orc','{B}','',1,'3','3')); c.isCommander=true; const b=put(g,me,c); g.active=0; const n0=g.log.length; await g.combatPhase(me,[{attacker:b,defender:opp}]); await tick(g);
      const hl=g.log.slice(n0).map(x=>x.m).find(m=>/Cmd hits/.test(m)); ok('commander hit line carries [life a → b]',/\[P1 \d+ → \d+\]$/.test(hl||''),hl); }
  }
+
+ { // v117: owner's second Burakos game — per-commander tax, protection in combat, Lossarnach Captain, Kutzil timing, Reconnaissance
+   const O=require(__dirname+'/fixtures/owner.json'); const OR=O.cards||O; const OC=n=>{const r=OR.find(r=>r[1]===n); if(!r)throw new Error('no '+n); return tagCard({name:r[1],mana:r[2],type:r[3],oracle:r[4],cmc:r[5],power:r[6],toughness:r[7]})};
+   const put=(g,pl,c,o={})=>{const b={id:800000+Math.floor(Math.random()*1e6),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false,...o};pl.battlefield.push(b);g.refreshStatics();return b};
+   const cr=(n,t,p=2,q=2,o='',mana='{1}{W}')=>tagCard(mk(n,'Creature — '+t,mana,o,2,String(p),String(q)));
+   // commander tax is per commander
+   { const bu=OC('Burakos, Party Leader'), fh=OC('Folk Hero'); const dk=buildDeck([...Array(60)].map(()=>mk('Plains','Basic Land — Plains','','',0)).concat([...Array(38)].map(()=>mk('Swamp','Basic Land — Swamp','','',0))).concat([mk('Burakos, Party Leader','Legendary Creature — Orc','{3}{B}',bu.oracle,4,'2','4'),mk('Folk Hero','Legendary Enchantment — Background','{1}{W}',fh.oracle,2)]),['Burakos, Party Leader','Folk Hero']);
+     const g=new Game([0,1,2,3].map(i=>({name:'P'+i,deck:i?deck():dk,ai:new AI('expert')})),{seed:5,hooks:{emit:()=>{}}}); g.active=0; g.phase='main1'; g.turn=6; const me=g.players[0];
+     for(let i=0;i<5;i++)await g.landEnters(me,tagCard(mk('Plains','Basic Land — Plains','','',0))); for(let i=0;i<5;i++)await g.landEnters(me,tagCard(mk('Swamp','Basic Land — Swamp','','',0)));
+     const B=me.command.find(c=>c.name==='Burakos, Party Leader'), F=me.command.find(c=>c.name==='Folk Hero');
+     ok('two commanders in the command zone',!!B&&!!F,''); ok('Burakos costs 4 before anything is cast',g.costOf(me,B,'cmd').total===4,'');
+     await g.cast(me,F,'cmd'); while(g.stack.length)await g.resolve(g.stack[g.stack.length-1]); await tick(g);
+     ok('casting Folk Hero does NOT tax Burakos (still 4)',g.costOf(me,B,'cmd').total===4&&g.cmdTaxOf(me,B)===0,'cost='+g.costOf(me,B,'cmd').total);
+     ok('Folk Hero itself is now taxed (+2)',g.cmdTaxOf(me,F)===2,''); 
+     for(const l of me.battlefield)l.tapped=false; await g.cast(me,B,'cmd'); await tick(g);
+     ok('after casting Burakos once his tax is 2 (6 to recast), Folk Hero stays at 2',g.cmdTaxOf(me,B)===2&&g.cmdTaxOf(me,F)===2,JSON.stringify(me.cmdTaxBy)); }
+   // protection prevents combat damage to the protected creature
+   { const g=fresh(); const [me,opp]=g.players; const agent=put(g,me,cr('Agent','Human Rogue',3,2,'','{2}{B}')); const om=put(g,opp,tagCard(mk('Omnath','Legendary Creature — Elemental','{1}{G}{U}{R}','',4,'7','7')));
+     agent.protColor={turn:g.turn,c:'G'}; g.refreshStatics(); ok('protection from green applies against a green-blue-red creature',g.protectedFrom(agent,om.card),JSON.stringify([agent.protColors,om.card.colors]));
+     g.active=1; g.hooks.humanBlocks=null; const n0=g.log.length; await g.fightCombat(opp,om,me,agent,[]); await tick(g);
+     ok('blocker with protection from the attacker’s colour survives and still deals damage',me.battlefield.includes(agent)&&g.log.slice(n0).some(x=>/prevented \(protection\)/.test(x.m)),JSON.stringify(g.log.slice(n0).map(x=>x.m))); }
+   { const g=fresh(); const [me,opp]=g.players; const a=put(g,me,cr('Knight','Human Knight',2,2)); const b1=put(g,opp,cr('Bear','Bear',5,5,'','{1}{G}')); a.protColor={turn:g.turn,c:'G'}; g.refreshStatics();
+     await g.fightCombat(me,a,opp,b1,[]); await tick(g); ok('attacker with protection takes no damage from a blocker of that colour',me.battlefield.includes(a),''); }
+   // Lossarnach Captain taps creatures only
+   { const g=fresh(); const [me,opp]=g.players; put(g,opp,tagCard(mk('Sol Ring','Artifact','{1}','{T}: Add {C}{C}.',1))); put(g,opp,tagCard(mk('Forest','Basic Land — Forest','','',0))); const n0=g.log.length;
+     await g.runOps(me,OC('Lossarnach Captain').triggers[0].ops,OC('Lossarnach Captain'),{}); ok('Lossarnach Captain: no creature to tap → taps nothing (not a land or Sol Ring)',!g.log.slice(n0).some(x=>/taps /.test(x.m))&&opp.battlefield.every(b=>!b.tapped),JSON.stringify(g.log.slice(n0).map(x=>x.m)));
+     const c=put(g,opp,cr('Bear','Bear')); await g.runOps(me,OC('Lossarnach Captain').triggers[0].ops,OC('Lossarnach Captain'),{}); ok('…with a creature there, it taps the creature',c.tapped,''); }
+   // Kutzil checks power when damage is dealt
+   { const g=fresh(); const [me,opp]=g.players; put(g,me,OC('Kutzil, Malamet Exemplar')); const v=put(g,me,OC('Vincent, Vengeful Atoner')); const h=me.hand.length; g.active=0; await g.combatPhase(me,[{attacker:v,defender:opp}]); await tick(g);
+     ok('Kutzil: an unpumped Vincent hitting does not draw (his counter arrives after the damage)',me.hand.length===h&&v.counters===1,JSON.stringify([h,me.hand.length,v.counters]));
+     v.tapped=false; g.turn++; const h2=me.hand.length; await g.combatPhase(me,[{attacker:v,defender:opp}]); await tick(g); ok('…next turn, with the counter, it draws',me.hand.length===h2+1,JSON.stringify([h2,me.hand.length])); }
+   // Reconnaissance needs one of my attackers
+   { const g=fresh(); const [me]=g.players; const r=put(g,me,OC('Reconnaissance')); g.curAttackers=[]; ok('Reconnaissance is not offered with none of my creatures attacking',!g.abilityOptions(me,{}).some(o=>o.perm===r),'');
+     const a=put(g,me,cr('Knight','Human Knight')); g.curAttackers=[a]; g.phase='combat'; ok('…and is offered when one is',g.abilityOptions(me,{instant:true}).some(o=>o.perm===r)||g.abilityOptions(me,{}).some(o=>o.perm===r),''); }
+ }
  console.log(fails+' failed');})();

@@ -14,8 +14,8 @@ const fresh=()=>{const g=new Game([0,1,2].map(i=>({name:'P'+i,deck:deck(),ai:new
  // human: exiled → Yes → command zone
  { const g=fresh();const [a]=g.players;a.human=true;a.ai=null;const cm=a.command.shift();const pm=await g.enterPerm(a,cm);g.hooks.humanMay=async()=>true;await g.exilePerm(a,pm);ok('exiled, Yes → command zone',a.command.includes(cm)&&!a.exile.includes(cm)); }
  // AI: bounce with tax → keeps in hand; no tax → command zone; destroy → command zone
- { const g=fresh();const [a,b]=g.players;const cm=a.command.shift();let pm=await g.enterPerm(a,cm);a.cmdTax=2;await g.bounce(a,pm,b);ok('AI with tax keeps bounced commander in hand',a.hand.includes(cm));
-   a.hand.splice(a.hand.indexOf(cm),1);pm=await g.enterPerm(a,cm);a.cmdTax=0;await g.bounce(a,pm,b);ok('AI without tax → command zone',a.command.includes(cm));
+ { const g=fresh();const [a,b]=g.players;const cm=a.command.shift();let pm=await g.enterPerm(a,cm);a.cmdTax=2;a.cmdTaxBy[cm.name]=2;await g.bounce(a,pm,b);ok('AI with tax keeps bounced commander in hand',a.hand.includes(cm));
+   a.hand.splice(a.hand.indexOf(cm),1);pm=await g.enterPerm(a,cm);a.cmdTax=0;a.cmdTaxBy[cm.name]=0;await g.bounce(a,pm,b);ok('AI without tax → command zone',a.command.includes(cm));
    a.command.splice(a.command.indexOf(cm),1);pm=await g.enterPerm(a,cm);await g.destroy(a,pm);ok('AI destroyed → command zone',a.command.includes(cm)); }
  // block prompt skipped when nothing can block
  { const g=fresh();const [a,b]=g.players;b.human=true;b.ai=null;let asked=0;g.hooks.humanBlocks=async()=>{asked++;return new Map()};g.hooks.humanRespond=async()=>null;

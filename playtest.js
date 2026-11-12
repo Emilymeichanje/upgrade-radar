@@ -381,7 +381,7 @@ function parseOps(t) {
     if (/^return target card from a graveyard to its owner's hand\.?$/.test(t)) ops.push({ op: 'b13_anyGyToHand' }); // Naya Charm mode 2
   else   if ((m = t.match(/^tap all (creatures|artifacts|permanents|nonland permanents|lands) target (player|opponent) controls\.?$/))) ops.push({ op: 'b13_tapAllOf', what: m[1], opp: m[2] === 'opponent' }); // Naya Charm's third mode, Cryptic Command, Sleep…
   else if ((m = t.match(/^tap all (creatures|artifacts|permanents|nonland permanents|lands) your opponents control\.?$/))) ops.push({ op: 'b13_tapAllOf', what: m[1], all: true });
-  else   if ((m = t.match(/^tap target (creature|artifact or creature|permanent)(?: an opponent controls| you don't control)?\.?$/)) || (m = t.match(/(?:^|, |\. )tap target (creature|permanent) an opponent controls/))) ops.push({ op: 'tapTarget' });
+  else   if ((m = t.match(/^tap target (creature|artifact or creature|permanent)(?: an opponent controls| you don't control)?\.?$/)) || (m = t.match(/(?:^|, |\. )tap target (creature|permanent) an opponent controls/))) ops.push({ op: 'tapTarget', what: m[1] });
   if (/airbend (?:up to one )?(?:other )?target (?:creature|nonland permanent|creature or spell)/.test(t) || /^airbend target nonland permanent/.test(t)) ops.push({ op: 'bounceTarget', what: 'nonland permanent', airbend: true });
   if (/each opponent loses life equal to the sacrificed creature's power/.test(t)) ops.push({ op: 'drainX' });
   if ((m = t.match(/put (a|one|two) \+1\/\+1 counters? on each ([a-z]+?)s? you control/)) && !/creature/.test(m[2]) && !ops.some(o => o.op === 'counters')) ops.push({ op: 'counters', n: numOf(m[1]), to: 'each creature', filter: m[2] });
@@ -2608,7 +2608,7 @@ class Game {
     this.players = seats.map((s, i) => ({
       i, name: s.name, deckName: s.deckName || s.name, human: !!s.human, ai: s.ai || null, level: s.level || null, life: 40, dead: false,
       library: shuffle(s.deck.library.map(clone), this.rng), hand: [], battlefield: [], graveyard: [], exile: [],
-      command: s.deck.commanders.map(c => ({ ...clone(c), isCommander: true })), cmdTax: 0, landsThisTurn: 0, cmdDamage: {}, mulligans: 0,
+      command: s.deck.commanders.map(c => ({ ...clone(c), isCommander: true })), cmdTax: 0, cmdTaxBy: Object.fromEntries(s.deck.commanders.map(c => [c.name, 0])), landsThisTurn: 0, cmdDamage: {}, mulligans: 0,
       art: s.art || '',
     }));
     for (const p of this.players) if (p.ai) p.ai.rng = this.rng; // b10: AIs share the seeded RNG so a recorded game replays identically
@@ -2890,6 +2890,8 @@ class Game {
     for (const q of this.opponentsOf(p)) for (const b of q.battlefield.filter(x => !x.neutral)) for (const tr of b.card.triggers || []) if (tr.when === 'oppLoss') { this.say(`— ${b.card.name} triggers (${p.name} lost ${-delta})`, q); await this.runTrig(q, b, tr, { x: -delta }); }
   }
   mulligan(p) { p.library.push(...p.hand); p.hand = []; shuffle(p.library, this.rng); this.drawSilent(p, 7); p.mulligans++; }
+  /** commander tax for THIS commander: 2 per time it was cast from the command zone (partners / Backgrounds are taxed separately) */
+  cmdTaxOf(p, card) { const cn = card && (card.orig || card).name; return p.cmdTaxBy && cn in p.cmdTaxBy ? p.cmdTaxBy[cn] : (p.cmdTax || 0); }
   bottomCards(p, cards) { for (const c of cards) { const i = p.hand.indexOf(c); if (i >= 0) { p.hand.splice(i, 1); p.library.unshift(c); } } }
   async kill(p, why) {
     if (p.dead) return; p.dead = true; this.say(`is out (${why})`, p);
@@ -3078,7 +3080,7 @@ class Game {
   costOf(p, card, zone) {
     const ggc = zone === 'gy' ? this.gyGrant(p, card) : null;
     if (ggc && ggc.tapReduce) { const c = p.battlefield.filter(b => b.card.isCreature && !b.tapped).sort((a, b) => this.powerOf(p, b) - this.powerOf(p, a))[0]; if (c) { const k = Math.min(this.powerOf(p, c), ggc.cost.generic); return { ...ggc.cost, generic: ggc.cost.generic - k, total: ggc.cost.total - k, card }; } }
-    let cost = card._costOverride ? card._costOverride : zone === 'gy' ? (ggc ? ggc.cost : card.mana) : zone === 'cmd' ? { ...card.mana, total: card.mana.total + p.cmdTax, generic: card.mana.generic + p.cmdTax } : card.mana;
+    let cost = card._costOverride ? card._costOverride : zone === 'gy' ? (ggc ? ggc.cost : card.mana) : zone === 'cmd' ? { ...card.mana, total: card.mana.total + this.cmdTaxOf(p, card), generic: card.mana.generic + this.cmdTaxOf(p, card) } : card.mana;
     if (!card.isCreature && !card.isLand && zone !== 'ability') { const tx = this.opponentsOf(p).reduce((s, q) => s + (q.b12_tax ? q.b12_tax.n : 0), 0); if (tx) cost = { ...cost, generic: (cost.generic || 0) + tx, total: (cost.total || 0) + tx }; } // b12 Elspeth Conquers Death II
     const red = this.genericReduction(p, card, zone);
     if (red && cost.generic) { const k = Math.min(red, cost.generic); cost = { ...cost, generic: cost.generic - k, total: cost.total - k }; }
@@ -3522,7 +3524,7 @@ class Game {
       this.say(`exiles ${ex.name} to cast ${card.name} for free`, p);
     }
     await this.payAddCost(p, card);
-    if (zone === 'cmd') p.cmdTax += 2;
+    if (zone === 'cmd') { const cn = (card.orig || card).name; if (p.cmdTaxBy && cn in p.cmdTaxBy) p.cmdTaxBy[cn] += 2; p.cmdTax += 2; } /* b14: commander tax is per commander — casting Folk Hero was taxing Burakos (p.cmdTax stays as the total for the AI's counter-value and older callers) */
     if (free && card.isLand) return null;
     if (target && target.card) { const to = this.ownerOf(target); if (to && to !== p) { const tl = target.card.statics && target.card.statics.targetLife; if (tl) { await this.changeLife(p, -tl, card); this.say(`pays ${tl} life to target ${target.card.name}`, p); } const wl = (target.card.statics && target.card.statics.wardLife) || target.wardLife; if (target.equipWard && !(target.card.statics && target.card.statics.ward)) { const wc = { generic: target.equipWard, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: target.equipWard }; if (this.canPayCost(p, wc)) this.payCost(p, wc); else { this.say(`casts ${card.name} — countered by ward`, p); return null; } } if (wl) { await this.changeLife(p, -wl, card); this.say(`pays ${wl} life for ward`, p); } } }
     if (mode === 'free' && zone === 'hand' && !(card.colors || []).length && p.battlefield.some(b => b.card.statics && b.card.statics.monolith && !b.neutral) && !this.freeMode(p, card)) p.monoTurn = this.turn;
@@ -5659,7 +5661,7 @@ class Game {
       case 'b13_tapAllOf': { const ok = b => op.what === 'creatures' ? b.card.isCreature : op.what === 'artifacts' ? b.card.isArtifact : op.what === 'lands' ? b.card.isLand : op.what === 'nonland permanents' ? !b.card.isLand : true;
           const who = op.all ? this.opponentsOf(p) : [p.ai ? [...this.opponentsOf(p)].sort((a, z) => z.battlefield.filter(b => ok(b) && !b.tapped).length - a.battlefield.filter(b => ok(b) && !b.tapped).length)[0] : await this.choosePlayer(p, src, op.opp ? this.opponentsOf(p) : this.alive(), `${src.name}: tap all ${op.what} of which player?`)].filter(Boolean);
           for (const q of who) { const ts = q.battlefield.filter(b => ok(b) && !b.tapped); for (const b of ts) b.tapped = true; this.say(`— taps ${ts.length ? ts.map(b => b.card.name).join(', ') : 'nothing'} (${q.name})`, p); } break; }
-        case 'tapTarget': { const pool = this.oppPerms(p, b => !b.tapped && (b.card.isArtifact || b.card.isCreature || b.card.isLand)); const t = p.ai ? [...pool].sort((a, z) => (z.card.isCreature ? this.powerOf(this.ownerOf(z), z) : 1.5) - (a.card.isCreature ? this.powerOf(this.ownerOf(a), a) : 1.5))[0] : await this.pickPerm(p, src, pool, { harmful: true }); if (t) { t.tapped = true; this.say(`— taps ${t.card.name}`, p); } break; }
+        case 'tapTarget': { const w = op.what || 'creature'; /* b14: Lossarnach Captain tapped lands and Sol Ring — 'tap target creature' means a creature */ const pool = this.oppPerms(p, b => !b.tapped && (w === 'permanent' || (/creature/.test(w) && b.card.isCreature) || (/artifact/.test(w) && b.card.isArtifact) || (/land/.test(w) && b.card.isLand))); const t = p.ai ? [...pool].sort((a, z) => (z.card.isCreature ? this.powerOf(this.ownerOf(z), z) : 1.5) - (a.card.isCreature ? this.powerOf(this.ownerOf(a), a) : 1.5))[0] : await this.pickPerm(p, src, pool, { harmful: true }); if (t) { t.tapped = true; this.say(`— taps ${t.card.name}`, p); } break; }
         case 'payThen': { const cost = op.cost ? manaInfo(op.cost.toUpperCase()) : { generic: op.n, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: op.n }; if (!this.canPayCost(p, cost)) break; const want = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: src, question: `pay ${op.cost || '{' + op.n + '}'}?` })) : (p.ai.opsValue(this, p, op.ops, src) >= 2); if (!want) break; this.payCost(p, cost); this.say(`— pays ${op.cost || '{' + op.n + '}'}`, p); await this.runOps(p, op.ops, src, ctx); break; }
         case 'gyToBfF': { const lim = op.maxMVpower ? Math.max(0, this.powerOf(p, ctx.perm || { card: src })) : null; const pool = p.graveyard.filter(c => c.isCreature && c !== src && (op.maxPower == null || (c.power || 0) <= op.maxPower) && (lim == null || c.cmc <= lim)); if (!pool.length) break; const pick = p.ai ? [...pool].sort((a, b) => p.ai.permBase({ card: b }) - p.ai.permBase({ card: a }))[0] : (await this.chooseFromList(p, src, pool, 1, 'reanimate'))[0]; if (!pick) break; p.graveyard.splice(p.graveyard.indexOf(pick), 1); const pm = await this.enterPerm(p, pick, { tapped: !!op.tapped }); this.say(`— returns ${pick.name} to the battlefield${op.attacking ? ' attacking' : ''}`, p); if (op.gainMV && pick.cmc) await this.changeLife(p, pick.cmc, src); if (pm && pick.etbOps) await this.trigger(p, pm, pick.etbOps, { perm: pm }, 'ETB'); if (pm) await this.creatureEntered(p, pm); if (pm && op.attacking && ctx.atk && ctx.defender) ctx.atk.push({ attacker: pm, defender: ctx.defender }); break; }
         case 'chainerGrant': p.chainerTurn = this.turn; p.chainerUsed = false; this.say('— may cast a creature spell from the graveyard this turn', p); break;
@@ -6362,6 +6364,7 @@ class Game {
     if (ab.crew) { if (src.card.isCreature) return false; const pw = q.battlefield.filter(b => b.card.isCreature && !b.tapped && b !== src).reduce((s, b) => s + Math.max(0, this.powerOf(q, b)), 0); if (pw < ab.crew) return false; }
     if (ab.levelReq != null && (src.level || 1) !== ab.levelReq) return false;
     if (ab.needPrepared && !src.prepared) return false;
+    if ((ab.ops || []).some(o => o.op === 'removeFromCombat') && !(this.curAttackers || []).some(b => q.battlefield.includes(b))) return false; /* b14: Reconnaissance was offered with no attacking creature of yours */
     if (ab.needHideaway && !(src.hideaway && this.hideawayOk(q, src))) return false;
     for (const op of ab.ops) { if (op.op === 'exileGyCard' && !this.alive().some(o => o.graveyard.some(c => this.gyKind(c, op.what)))) return false; if (op.op === 'untapSelf' && !src.tapped) return false; if (op.op === 'castImprinted' && !src.imprinted) return false; }
     if (ab.ops.some(o => o.op === 'attach') && !q.battlefield.some(b => b.card.isCreature)) return false;
@@ -6538,7 +6541,7 @@ class Game {
   async cmdZoneInstead(owner, card, zone) {
     if (!card || !card.isCommander) return false;
     if (owner.human && this.hooks.humanMay) return !!(await this.hooks.humanMay({ p: owner, card, question: `${card.name} is going to your ${zone === 'library' ? 'library' : zone}. Move it to the command zone instead? (No = it stays in your ${zone})` }));
-    if (zone === 'hand') return !(owner.cmdTax > 0);
+    if (zone === 'hand') return !(this.cmdTaxOf(owner, card) > 0);
     return true;
   }
   /** put a card into a zone, offering the command zone to a commander; returns the zone used */
@@ -6703,6 +6706,7 @@ class Game {
     }
   }
   async combatDamageTriggers(p, attacker) {
+    const pumpedAtHit = !!attacker && this.powerOf(p, attacker) > attacker.card.power; /* b14: Kutzil looks at power when the damage is dealt, not after Vincent's counter lands */
     await this.b13_tamiyo(attacker);
     if (this._cdDefender && attacker) { if (attacker.b3HitTurn !== this.turn) { attacker.b3HitTurn = this.turn; attacker.b3Hit = []; } if (!attacker.b3Hit.includes(this._cdDefender)) attacker.b3Hit.push(this._cdDefender); }
     await this.b6_cd(p, attacker);
@@ -6720,7 +6724,7 @@ class Game {
       if (tr.attackerHasCounter && !this.hasCounters(attacker)) continue;
       if (tr.cmdOnly && !(attacker.card.orig || attacker.card).isCommander) continue;
       if (tr.modifiedOnly && !this.isModified(p, attacker)) continue;
-      if (tr.pumpedOnly && !(this.powerOf(p, attacker) > attacker.card.power)) continue;
+      if (tr.pumpedOnly && !pumpedAtHit) continue;
       if (tr.withCounters && !this.hasCounters(attacker)) continue;
       if (tr.withCounters) { if (b.cheerTurn === this.turn) continue; b.cheerTurn = this.turn; }
       if (tr.who === 'one or more creatures you control' && this._cdOnce && this._cdOnce.has(b)) continue;
@@ -7005,6 +7009,8 @@ class Game {
       if (aHits) { const pw = Math.max(0, this.combatPow(p, attacker)); if (bGone || !defender.battlefield.includes(blocker)) { if (has(attacker, 'trample')) toPlayer = pw; } else if (has(attacker, 'trample')) { const lethal = has(attacker, 'deathtouch') ? 1 : Math.max(0, this.toughOf(defender, blocker) - blocker.cDmg); toB = Math.min(pw, lethal); toPlayer = pw - toB; } else toB = pw; }
       if (bHits) toA = Math.max(0, this.combatPow(defender, blocker));
       if (toB && this.shieldUp(defender, blocker)) toB = 0;
+      if (toB && this.protectedFrom(blocker, attacker.card)) { toB = 0; this.say(`— damage to ${blocker.card.name} is prevented (protection)`, defender); } /* b14: protection never prevented combat damage to a creature (Giver of Runes) */
+      if (toA && this.protectedFrom(attacker, blocker.card)) { toA = 0; this.say(`— damage to ${attacker.card.name} is prevented (protection)`, p); }
       if (toA && this.shieldUp(p, attacker)) toA = 0;
       if (toA && p.battlefield.some(x => x.card.statics && x.card.statics.preventAttackerDmg && !x.neutral)) toA = 0;
       if (toB) { if (has(attacker, 'wither') || has(attacker, 'infect')) { blocker.counters = (blocker.counters || 0) - toB; await this.minusPut(blocker, toB); } else blocker.cDmg += toB; await this.dealtDamage(defender, blocker, toB, attacker.card); await this.b13_tamiyo(attacker); }
@@ -7032,7 +7038,8 @@ class Game {
       if (aHits) { let pw = Math.max(0, this.combatPow(p, attacker)); const order = defender.ai || !p.human ? [...live].sort((x, z) => (this.toughOf(defender, x) - (x.cDmg || 0)) - (this.toughOf(defender, z) - (z.cDmg || 0))) : live;
         for (let i = 0; i < order.length && pw > 0; i++) { const b = order[i]; const lethal = has(attacker, 'deathtouch') ? 1 : Math.max(0, this.toughOf(defender, b) - (b.cDmg || 0)); const last = i === order.length - 1; const n = last && !has(attacker, 'trample') ? pw : Math.min(pw, lethal); if (n) toB.set(b, n); pw -= n; }
         if (pw > 0) { if (has(attacker, 'trample') || !order.length) toPlayer = has(attacker, 'trample') ? pw : 0; } }
-      let toA = 0; const hitters = live.filter(b => first ? fs(b) : (!fs(b) || has(b, 'double strike')));
+      for (const [b] of [...toB]) if (this.protectedFrom(b, attacker.card)) { toB.delete(b); this.say(`— damage to ${b.card.name} is prevented (protection)`, defender); }
+      let toA = 0; const hitters = live.filter(b => first ? fs(b) : (!fs(b) || has(b, 'double strike'))).filter(b => !this.protectedFrom(attacker, b.card));
       for (const b of hitters) toA += Math.max(0, this.combatPow(defender, b));
       if (toA && (this.shieldUp(p, attacker) || p.battlefield.some(x => x.card.statics && x.card.statics.preventAttackerDmg && !x.neutral))) toA = 0;
       for (const [b, n0] of toB) { const n = this.shieldUp(defender, b) ? 0 : n0; if (!n) continue; if (has(attacker, 'wither') || has(attacker, 'infect')) { b.counters = (b.counters || 0) - n; await this.minusPut(b, n); } else b.cDmg += n; await this.dealtDamage(defender, b, n, attacker.card); if (has(attacker, 'lifelink')) await this.changeLife(p, n, attacker.card); } if ([...toB].some(([, n]) => n > 0)) await this.b13_tamiyo(attacker);

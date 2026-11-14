@@ -6776,7 +6776,7 @@ class Game {
     const pool = pm.card.soulbond ? un : un.filter(b => b.card.soulbond);
     if (!pool.length) return;
     let mate = null;
-    if (p.human && this.hooks.humanSearch && !this.shortcutting) { const got = ([].concat(await this.hooks.humanSearch({ p, card: pm.card, pool: pool.map(b => b.card), n: 1, dest: 'soulbond' }) || []))[0]; mate = got ? pool.find(b => b.card === got) : null; if (!mate) { this.say(`— ${pm.card.name}: no soulbond pairing`, p); return; } }
+    if (p.human && this.hooks.humanSearch && !this.shortcutting) { const got = ([].concat(await this.hooks.humanSearch({ p, card: pm.card, pool: pool.map(b => b.card), n: 1, dest: 'soulbond' }) || []))[0]; mate = got ? pool.find(b => b.card === got) : null; if (!mate) return; /* b28: declining is silent — a mass blink with Deadeye unpaired filled the log with 'no soulbond pairing' */ }
     else mate = [...pool].sort((a, z) => ((z.card.orig || z.card).isCommander ? 1 : 0) - ((a.card.orig || a.card).isCommander ? 1 : 0) || this.powerOf(p, z) - this.powerOf(p, a))[0];
     pm.pairedWith = mate.id; mate.pairedWith = pm.id; this.say(`— ${pm.card.name} pairs with ${mate.card.name}`, p); this.refreshStatics();
   }

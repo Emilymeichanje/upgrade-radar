@@ -916,4 +916,67 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    { const g=fresh(); const [me]=g.players; const r=put(g,me,OC('Reconnaissance')); g.curAttackers=[]; ok('Reconnaissance is not offered with none of my creatures attacking',!g.abilityOptions(me,{}).some(o=>o.perm===r),'');
      const a=put(g,me,cr('Knight','Human Knight')); g.curAttackers=[a]; g.phase='combat'; ok('…and is offered when one is',g.abilityOptions(me,{instant:true}).some(o=>o.perm===r)||g.abilityOptions(me,{}).some(o=>o.perm===r),''); }
  }
+
+ { // v118: owner's Peter Parker game — permanent-wide anthems, Bloom Tender, Selvala/Myojin, Ghalta and Mavren, back faces, Absolute Virtue
+   const O=require(__dirname+'/fixtures/owner.json'); const OR=O.cards||O; const OC=(n,x={})=>{const r=OR.find(r=>r[1]===n); if(!r)throw new Error('no '+n); return tagCard({name:r[1],mana:r[2],type:r[3],oracle:r[4],cmc:r[5],power:r[6],toughness:r[7],...x})};
+   const put=(g,pl,c,o={})=>{const b={id:700000+Math.floor(Math.random()*1e6),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false,...o};pl.battlefield.push(b);g.refreshStatics();return b};
+   const cr=(n,t,p=2,q=2,o='',mana='{1}{W}')=>tagCard(mk(n,'Creature — '+t,mana,o,2,String(p),String(q)));
+   // Avacyn
+   { const g=fresh(); const [me,opp]=g.players; const av=put(g,me,OC('Avacyn, Angel of Hope')); const pup=put(g,me,cr('Pup','Dog',1,1)); const rock=put(g,me,tagCard(mk('Rock','Artifact','{2}','',2))); const land=put(g,me,tagCard(mk('Plains','Basic Land — Plains','','',0))); const theirs=put(g,opp,cr('Theirs','Bear'));
+     ok('Avacyn: my other creature, artifact and land are indestructible',g.isIndestructible(pup)&&g.isIndestructible(rock)&&g.isIndestructible(land),JSON.stringify([pup.card.kw,rock.card.kw,land.card.kw]));
+     ok("…an opponent's creature is not",!g.isIndestructible(theirs),'');
+     const big=put(g,opp,cr('Ogre','Ogre',5,5)); await g.fightCombat(opp,big,me,pup,[]); await tick(g); ok('a 1/1 blocker survives lethal combat damage with Avacyn out',me.battlefield.includes(pup),'');
+     await g.destroy(me,rock); ok('destroy does nothing to my artifact',me.battlefield.includes(rock),'');
+     me.battlefield.splice(me.battlefield.indexOf(av),1); g.refreshStatics(); ok('Avacyn gone: indestructible goes away',!g.isIndestructible(pup)&&!g.isIndestructible(rock)&&!g.isIndestructible(land),JSON.stringify([pup.card.kw,rock.card.kw])); }
+   { const g=fresh(); const [me]=g.players; put(g,me,OC("Avacyn's Memorial")); const leg=put(g,me,tagCard(mk('Hero','Legendary Creature — Human','{W}','',1,'2','2'))); const non=put(g,me,cr('Pup','Dog',1,1)); const lrock=put(g,me,tagCard(mk('Crown','Legendary Artifact','{2}','',2)));
+     ok("Avacyn's Memorial: other legendary permanents only",g.isIndestructible(leg)&&g.isIndestructible(lrock)&&!g.isIndestructible(non),JSON.stringify([leg.card.kw,lrock.card.kw,non.card.kw])); }
+   // Bloom Tender / Faeburrow Elder
+   for (const nm of ['Bloom Tender','Faeburrow Elder']) { const g=fresh(); const [me]=g.players; me.human=true; me.ai=null; const bt=put(g,me,OC(nm)); put(g,me,cr('Wh','Bird',1,1,'','{W}')); put(g,me,tagCard(mk('Blue Thing','Enchantment','{U}','',1)));
+     me.pool=[]; const okTap=await g.tapForMana(me,bt,'W'); const got=(me.pool||[]).map(m=>m.c).sort().join(''); const want=nm==='Bloom Tender'?'GUW':'GUW';
+     ok(nm+': one mana of EACH colour among my permanents (G, U, W), not three of one',okTap&&got===want,got); }
+   { const g=fresh(); const [me]=g.players; me.human=true; me.ai=null; const bt=put(g,me,OC('Bloom Tender')); me.pool=[]; await g.tapForMana(me,bt,'G'); ok('Bloom Tender alone: just {G}',(me.pool||[]).map(m=>m.c).join('')==='G',JSON.stringify(me.pool)); }
+   // Selvala + Myojin
+   { const g=fresh(); const [me]=g.players; me.human=true; me.ai=null; let asks=0; g.hooks.humanMay=async()=>{asks++;return true}; put(g,me,OC('Selvala, Heart of the Wilds')); put(g,me,cr('Big','Giant',6,6)); const my=put(g,me,OC('Myojin of Blooming Dawn'),{indestructibleCounter:1});
+     const n0=g.log.length; const perms=me.battlefield.length; await g.runOps(me,[{op:'tokensPerPerm'}],my.card,{perm:my}); await tick(g); const L=g.log.slice(n0).map(x=>x.m);
+     ok('Myojin: one Spirit per permanent I control',me.battlefield.filter(b=>b.card.name==='Spirit'||/Spirit/.test(b.card.type)&&b.card.token).length===perms,JSON.stringify([perms,L[0]]));
+     ok('…and Selvala does not trigger for 1/1 tokens (no stack items, no prompts)',!L.some(m=>/Selvala/.test(m))&&asks===0,JSON.stringify(L.filter(m=>/Selvala/.test(m)).length));
+     const h=me.hand.length; const hu=cr('Huge','Wurm',9,9); const b=await g.enterPerm(me,hu); await g.creatureEntered(me,b); await tick(g); ok('Selvala: the biggest creature entering still draws',me.hand.length===h+1,JSON.stringify([h,me.hand.length])); }
+   // Ghalta and Mavren
+   { const g=fresh(); const [me,opp]=g.players; const gh=put(g,me,OC('Ghalta and Mavren')); const a1=put(g,me,cr('Seven','Giant',7,7)); const a2=put(g,me,cr('Two','Bear',2,2)); const a3=put(g,me,cr('One','Dog',1,1));
+     const modes=gh.card.triggers[0].ops[0].modes; ok('both Ghalta modes have real effects',modes.every(m=>m.ops.length===1&&m.ops[0].op==='b15_ghalta'),JSON.stringify(modes.map(m=>m.ops)));
+     const atk=[gh,a1,a2,a3].map(b=>({attacker:b,defender:opp})); await g.runOps(me,modes[1].ops,gh.card,{perm:gh,atk,defender:opp}); ok('Vampires: one per OTHER attacking creature (3)',me.battlefield.filter(b=>b.card.name==='Vampire').length===3,''+me.battlefield.filter(b=>b.card.name==='Vampire').length);
+     await g.runOps(me,modes[0].ops,gh.card,{perm:gh,atk,defender:opp}); const d=me.battlefield.find(b=>b.card.name==='Dinosaur');
+     ok('Dinosaur: X/X where X = greatest power among other attackers (7), trample, tapped and attacking',!!d&&g.powerOf(me,d)===7&&g.toughOf(me,d)===7&&d.card.kw.includes('trample')&&d.tapped&&atk.some(a=>a.attacker===d&&a.defender===opp),d?JSON.stringify([g.powerOf(me,d),d.card.kw,d.tapped]):'none'); }
+   // Peter Parker // Amazing Spider-Man with Scryfall-shaped data (back cost / stats / picture live on the second face)
+   { const g=fresh(); const [me]=g.players; const r=OR.find(r=>r[1]==='Peter Parker // Amazing Spider-Man'); const pp=tagCard({name:r[1],mana:'{1}{W}',mana2:'{1}{G}{W}{U}',type:r[3],oracle:r[4],cmc:2,power:'0',toughness:'1',power2:'4',toughness2:'4',img:'front.jpg',img2:'back.jpg'});
+     ok('front is Peter Parker 0/1 for {1}{W}',pp.power===0&&pp.toughness===1&&pp.mana.total===2&&pp.name==='Peter Parker // Amazing Spider-Man','');
+     ok('back face known: Amazing Spider-Man 4/4 with its own picture, castable for {1}{G}{W}{U}',!!pp.backFace&&pp.backFace.power===4&&pp.backFace.toughness===4&&pp.backFace.img==='back.jpg'&&!!pp.mdfcBack&&pp.mdfcBack.mana.total===4,JSON.stringify(pp.backFace&&[pp.backFace.power,pp.backFace.img]));
+     const b=put(g,me,pp); await g.runOps(me,[{op:'transform'}],pp,{perm:b}); g.refreshStatics();
+     ok('transformed: name, 4/4, back picture, green-white-blue, vigilance + reach',b.card.name==='Amazing Spider-Man'&&g.powerOf(me,b)===4&&g.toughOf(me,b)===4&&b.card.img==='back.jpg'&&['G','U','W'].every(c=>b.card.colors.includes(c))&&b.card.kw.includes('reach')&&b.card.kw.includes('vigilance'),JSON.stringify([b.card.name,g.powerOf(me,b),b.card.img,b.card.colors,b.card.kw]));
+     const tapped=put(g,me,cr('Elf','Elf',1,1),{tapped:true}); for(const [n,t] of [['Forest','Forest'],['Plains','Plains'],['Island','Island']])await g.landEnters(me,tagCard(mk(n,'Basic Land — '+t,'','',0))); const leg=tagCard(mk('Big Legend','Legendary Creature — Angel','{5}{W}{W}{W}','',8,'8','8')); const nonleg=tagCard(mk('Plain Guy','Creature — Angel','{5}{W}{W}{W}','',8,'8','8')); me.hand.push(leg,nonleg);
+     ok('web-slinging is offered for a legendary coloured spell, not a nonlegendary one',g.altOptions(me,leg,'hand').some(a=>a.kind==='webSling'&&a.cost.total===3)&&!g.altOptions(me,nonleg,'hand').some(a=>a.kind==='webSling'),JSON.stringify(g.altOptions(me,leg,'hand').map(a=>a.kind)));
+     await g.runOps(me,[{op:'transform'}],b.card,{perm:b}); g.refreshStatics(); ok('…and it transforms back to Peter Parker 0/1',g.powerOf(me,b)===0&&g.toughOf(me,b)===1&&b.card.img==='front.jpg',JSON.stringify([b.card.name,g.powerOf(me,b)])); }
+   { const es=tagCard({name:'Esika, God of the Tree // The Prismatic Bridge',mana:'{1}{G}{G}',mana2:'{W}{U}{B}{R}{G}',type:'Legendary Creature — God // Legendary Enchantment',oracle:'Vigilance\n{T}: Add one mana of any color.\n//\nAt the beginning of your upkeep, reveal cards from the top of your library until you reveal a creature or planeswalker card. Put that card onto the battlefield and the rest on the bottom of your library in a random order.',cmc:3,power:'1',toughness:'4'});
+     ok('a modal double-faced card from Scryfall data gets its castable back, and does not "transform"',!!es.mdfcBack&&es.mdfcBack.mana.total===5&&!es.backFace&&es.mdfcBack.isEnchantment&&!es.mdfcBack.isCreature,JSON.stringify([!!es.mdfcBack,!!es.backFace])); }
+   // Absolute Virtue
+   { const g=fresh(); const [me,opp]=g.players; put(g,me,OC('Absolute Virtue')); const L=me.life; const a=put(g,opp,cr('Hitter','Ogre',5,5)); g.active=1; await g.combatPhase(opp,[{attacker:a,defender:me}]); await tick(g);
+     ok("Absolute Virtue: an opponent's creature deals me no combat damage",me.life===L,JSON.stringify([L,me.life]));
+     await g.runOps(opp,[{op:'damage',n:3,to:'each opponent'}],cr('Burn','Elemental'),{}); ok('…nor burn from an opponent',me.life===L&&g.players[2].life===37,JSON.stringify([me.life,g.players[2].life]));
+     ok('…I cannot be chosen as a target by an opponent',!(await g.choosePlayer(opp,cr('X','Elemental'),[me],'t')),''); 
+     const mine=put(g,me,cr('Own','Elemental')); await g.changeLife(me,-2,mine.card); ok('…my own effects still work on me',me.life===L-2,''); }
+ }
+
+ { // v118b: back faces — transform-only cards use the back's stats/picture; a commander's castable back can be cast from the command zone
+   { const t=tagCard({name:'Front Guy // Back Beast',mana:'{1}{G}',type:'Creature — Human // Creature — Beast',oracle:'{2}{G}: Transform this creature.\n//\nTrample',cmc:2,power:'1',toughness:'1',power2:'6',toughness2:'5',img:'f.jpg',img2:'b.jpg'});
+     ok('transform-only card: back face has its own stats and picture',!!t.backFace&&!t.mdfcBack&&t.backFace.power===6&&t.backFace.toughness===5&&t.backFace.img==='b.jpg',JSON.stringify(t.backFace&&[t.backFace.power,t.backFace.toughness,t.backFace.img])); }
+   { const O=require(__dirname+'/fixtures/owner.json'); const r=(O.cards||O).find(r=>r[1]==='Peter Parker // Amazing Spider-Man'); const PP={name:r[1],mana:'{1}{W}',mana2:'{1}{G}{W}{U}',type:r[3],oracle:r[4],cmc:2,power:'0',toughness:'1',power2:'4',toughness2:'4',img:'front.jpg',img2:'back.jpg'};
+     const dk=buildDeck([...Array(33)].map(()=>mk('Forest','Basic Land — Forest','','',0)).concat([...Array(33)].map(()=>mk('Plains','Basic Land — Plains','','',0)),[...Array(33)].map(()=>mk('Island','Basic Land — Island','','',0)),[PP]),[PP.name]);
+     const g=new Game([0,1,2,3].map(i=>({name:'P'+i,deck:i?deck():dk,ai:new AI('expert')})),{seed:5,hooks:{emit:()=>{}}}); g.active=0; g.phase='main1'; g.turn=6; const me=g.players[0]; me.human=true; me.ai=null;
+     for(const n of ['Forest','Plains','Island','Forest','Plains','Island','Forest'])await g.landEnters(me,tagCard(mk(n,'Basic Land — '+n,'','',0)));
+     const c=me.command[0]; g.hooks.humanPayOpt=async({alts})=>alts.find(a=>a.kind==='mdfc'); await g.cast(me,c,'cmd'); while(g.stack.length)await g.resolve(g.stack[g.stack.length-1]); await tick(g);
+     const b=me.battlefield.find(x=>x.card.name==='Amazing Spider-Man');
+     ok('commander back face cast from the command zone: Amazing Spider-Man 4/4 for 4, no Spider token (that is Peter’s trigger)',!!b&&g.powerOf(me,b)===4&&b.card.img==='back.jpg'&&!me.battlefield.some(x=>x.card.name==='Spider')&&me.battlefield.filter(x=>x.card.isLand&&x.tapped).length===4,JSON.stringify(me.battlefield.filter(x=>!x.card.isLand).map(x=>x.card.name)));
+     ok('…it is taxed as that commander',g.cmdTaxOf(me,c)===2,JSON.stringify(me.cmdTaxBy));
+     if(b){ await g.destroy(me,b); await tick(g); ok('…and goes back to the command zone when it dies',me.command.some(x=>x.name===PP.name)&&!me.graveyard.some(x=>/Peter|Spider-Man/.test(x.name)),JSON.stringify([me.command.map(x=>x.name),me.graveyard.map(x=>x.name)])); } }
+ }
  console.log(fails+' failed');})();

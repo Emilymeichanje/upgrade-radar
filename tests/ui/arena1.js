@@ -26,5 +26,12 @@ for(const n of [7,20]){const c=await pg.evaluate(n=>{const U=GoldfishUI.current,
   ok('prepared creature shows a badge only while prepared',!r.before&&/prepared/.test(r.badge||''),JSON.stringify(r));
   ok('reader says it is prepared and names the spell',/prepared/.test(r.now||'')&&/Braingeyser/.test(r.now||''),r.now);
   ok('recording export contains the full text log plus the replay data',r.hasText&&r.hasMoves,JSON.stringify([r.hasText,r.hasMoves])); }
+// v122: Room door indicator on the tile and in the reader
+{ const r=await pg.evaluate(async()=>{const U=GoldfishUI.current,g=U.game,me=U.me;const {tagCard}=Goldfish;const c=tagCard({name:'Charred Foyer // Warped Space',type:'Enchantment — Room // Enchantment — Room',mana:'{3}{R} // {4}{R}{R}',oracle:'At the beginning of your upkeep, exile the top card of your library. You may play it this turn.\n//\nOnce each turn, you may pay {0} rather than pay the mana cost for a spell you cast from exile.',cmc:4});
+  g._roomCast=true;const pm=await g.enterPerm(me,c);g._roomCast=false;g.refreshStatics();U.render();const el=document.querySelector('.gc[data-pid="'+pm.id+'"] .ctr.doors');const one=el?[...el.querySelectorAll('i')].map(i=>i.className+':'+i.textContent.trim()):null;U.preview(pm.card.uid);const now=(U.pv.querySelector('.now')||{}).textContent||'';
+  pm.doors.R=true;pm.card=g.roomView(pm.card.orig,pm.doors);U.render();const el2=document.querySelector('.gc[data-pid="'+pm.id+'"] .ctr.doors');const two=el2?[...el2.querySelectorAll('i')].map(i=>i.className):null;return {one,now,two}});
+  ok('Room tile shows which door is open and which is locked',!!r.one&&/^open:.*Foyer/.test(r.one[0])&&/^shut:.*Space/.test(r.one[1]),JSON.stringify(r.one));
+  ok('reader explains the doors and the unlock cost',/Charred Foyer: door UNLOCKED/.test(r.now)&&/Warped Space: door locked/.test(r.now),r.now);
+  ok('after unlocking, both doors show open',!!r.two&&r.two.every(c=>c==='open'),JSON.stringify(r.two)); }
 ok('arena fx default on',await pg.evaluate(()=>GoldfishUI.current.s.fx==='arena'));
 console.log('errors',errs);await b.close()})();

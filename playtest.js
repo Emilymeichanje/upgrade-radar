@@ -808,6 +808,7 @@ function tagAbilities(card) {
     if (/^when this card dies, shuffle it into its owner's library, then scry 2\.?$/.test(l)) { card.triggers.push({ when: 'dies', zone: 'battlefield', self: true, ops: [{ op: 'cavalierGalesDies' }] }); continue; }
     if (/^when this card enters, you may sacrifice another creature\. when you do, destroy target creature an opponent controls\.?$/.test(l)) { ETB([{ op: 'cavalierNightEtb' }]); continue; } // b13: Cavalier of Night
     if ((m = l.match(/^\{(\d+)\}, \{t\}: you may put an? ([a-z]+) card from your hand onto the battlefield\.?$/))) { AB('{' + m[1] + '}', [{ op: 'putFromHand', what: 'creature', filter: m[2] }], { tap: true, label: 'put a ' + m[2] + ' onto the battlefield' }); continue; } // b13: Belbe's Portal (after the type is chosen)
+    if ((m = l.match(/^draw (three|four|\d+) cards, then put (a|one|two|three|\d+) cards? from your hand on top of your library(?: in any order)?\.?$/)) && !card.isPermanent) { const N = w => ({ a: 1, one: 1, two: 2, three: 3, four: 4 })[w] || +w; card.spellOpsX = [{ op: 'draw', n: N(m[1]) }, { op: 'b13_handToTop', n: N(m[2]) }]; continue; } /* b21: Brainstorm / Brainsurge drew and never put cards back */
     if ((m = l.match(/^choose a creature type\. creatures that aren't of the chosen type get -(\d+)\/-(\d+) until end of turn\.?$/))) { card.spellOpsX = [{ op: 'b13_shrinkOthers', n: +m[1] }]; continue; } // b13: Crippling Fear
     if (/^each player chooses a creature type\. each player returns all creature cards of a type chosen this way from their graveyard to the battlefield\.?$/.test(l)) { card.spellOpsX = [{ op: 'b13_bidding' }]; continue; } // b13: Patriarch's Bidding
     if (/^return any number of target creature cards with total power 10 or less from your graveyard to the battlefield\.?/.test(l)) { card.spellOpsX = [{ op: 'b13_reunion', max: 10 }]; continue; } /* b13: Reunion of the House had no effect */
@@ -4579,7 +4580,7 @@ class Game {
       await this.emit({ type: 'tokens', p, n, card });
       for (const t of p.battlefield.slice(-n)) await this.creatureEntered(p, t);
     }
-    if (card.roles.includes('protect') && card.isInstant && !card.b4NoDoProtect && !(card.spellOps || []).some(o => ['baseTarget', 'protColor', 'kwIt', 'b7_flareFaith', 'protectAll'].includes(o.op))) this.doProtect(p, card); /* b13: cards whose text is modelled no longer also get the generic "protects" */
+    if (card.roles.includes('protect') && card.isInstant && !card.b4NoDoProtect && !(card.spellOps || []).some(o => ['baseTarget', 'protColor', 'kwIt', 'b7_flareFaith', 'protectAll'].includes(o.op) || (o.op === 'pumpT' && (o.kws || []).some(k => k === 'indestructible' || k === 'hexproof')))) this.doProtect(p, card, spell.target); /* b21: Tyvar's Stand protected one creature here and pumped a different one through its own op */ /* b13: cards whose text is modelled no longer also get the generic "protects" */
     if (card.tutor && (!perm || /when(?:ever)? [^.]*enters[^.]*search your library/i.test(card.oracle)) && ![...(card.spellOps || []), ...(card.etbOps || [])].some(o => /^(tutorTo|landToBf|landToHand|tutorAll|tutorTop)$/.test(o.op))) await this.doTutor(p, card, spell);
     if (card.addendum && this.players[this.active] === p && /main/.test(this.phase)) await this.runOps(p, card.addendum, card, {});
     if (card.spellOps) await this.runOps(p, card.spellOps, card, { spell, x: spell.x, kicked: spell.kicked, gift: spell.gift, bargained: spell.bargained, target });
@@ -4616,10 +4617,11 @@ class Game {
 
   }
   /** protection instants (Heroic Intervention, Tamiyo's Safekeeping...): until end of turn */
-  doProtect(p, card) {
+  doProtect(p, card, tgt) {
     const o = card.oracle.toLowerCase();
     let perms;
     if (/permanents you control|creatures you control|each creature you control/.test(o)) perms = p.battlefield.filter(b => /permanents/.test(o) || b.card.isCreature);
+    else if (tgt && tgt.card && p.battlefield.includes(tgt)) perms = [tgt]; /* b21: the spell's own target, when it has one */
     else { const threat = [...this.stack].reverse().find(s => s.target && s.target.card && p.battlefield.includes(s.target)); perms = threat ? [threat.target] : p.battlefield.filter(b => b.card.isCreature).sort((a, b) => b.card.power - a.card.power).slice(0, 1); }
     for (const b of perms) b.protTurn = this.turn;
     this.say(`— protects ${perms.length === 1 ? perms[0].card.name : perms.length + ' permanents'} this turn`, p);
@@ -7192,7 +7194,7 @@ class Game {
       const cands = [...p.hand, ...p.command.filter(c => c.ninjutsu && c.ninjutsu.cmd)].map(c => { const nj = this.ninjutsuOf(p, c); if (!nj) return null; const cost = { ...nj.cost, generic: Math.max(0, nj.cost.generic - red), total: Math.max(0, nj.cost.total - Math.min(red, nj.cost.generic)) }; return this.canPayCost(p, cost) ? { c, cost } : null; }).filter(Boolean);
       if (!cands.length) return;
       let pick = null, swap = null;
-      if (p.human) { if (!this.hooks.humanMay) return; for (const x of cands) { const a = unblocked[0]; if (await this.hooks.humanMay({ p, card: x.c, question: `ninjutsu: return ${a.attacker.card.name} and put ${x.c.name} in attacking?` })) { pick = x; swap = a; break; } } }
+      if (p.human) { if (!this.hooks.humanMay) return; for (const x of cands) { if (await this.hooks.humanMay({ p, card: x.c, question: unblocked.length > 1 ? `ninjutsu ${x.c.name}? (you choose which unblocked attacker returns to hand)` : `ninjutsu: return ${unblocked[0].attacker.card.name} and put ${x.c.name} in attacking?` })) { let a = unblocked[0]; if (unblocked.length > 1) { const back = await this.pickPerm(p, x.c, unblocked.map(u => u.attacker), { dest: 'return to hand (ninjutsu)' }); a = unblocked.find(u => u.attacker === back) || a; } /* b21: the player chooses which unblocked attacker goes back (it used to be the first one — Yuriko herself) */ pick = x; swap = a; break; } } }
       else { const a = [...unblocked].sort((x, y) => this.powerOf(p, x.attacker) - this.powerOf(p, y.attacker))[0]; const best = cands.sort((x, y) => ((y.c.triggers || []).length - (x.c.triggers || []).length) || (y.c.power || 0) - (x.c.power || 0))[0]; if (best && ((best.c.triggers || []).some(t => t.when === 'combatDamage') || (best.c.power || 0) > this.powerOf(p, a.attacker) || a.attacker.card.token)) { pick = best; swap = a; } }
       if (!pick) return;
       this.payCost(p, pick.cost); const back = swap.attacker; p.battlefield.splice(p.battlefield.indexOf(back), 1); if (!back.card.token) p.hand.push(back.card.orig || back.card); await this.leftBattlefield(p, back);

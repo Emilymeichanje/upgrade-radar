@@ -380,6 +380,8 @@ async function newCards(ci){
   const q=`${id} (legal:commander OR date>${todayStr()}) date>=${S.since} ${S.reprints?'':'-is:reprint'} -t:basic -is:funny game:paper`;
   const cards=(await scryPages(q,12)).map(slim);S.scry[key]=cards;return cards; // up to 2100 cards: a big set (Star Trek is 311) plus a few months of others overflowed 700, cutting off late-alphabet names
 }
+/* fetch that gives up: a request that never answers (blocked network, VPN, rate limit) used to hang the playtest on 'Fetching cards…' forever */
+const fetchT=(u,o={},ms=10000)=>{const ac=new AbortController();const t=setTimeout(()=>ac.abort(),ms);return fetch(u,{...o,signal:ac.signal}).finally(()=>clearTimeout(t))};
 // ---------- offline card store: every card ever looked up is kept on this device (IndexedDB) ----------
 const CDB={m:new Map(),ready:null,db:null,TTL:7*864e5,force:false};
 function cdbOpen(){return CDB.ready||(CDB.ready=new Promise(res=>{try{const rq=indexedDB.open('mtg-offline',1);rq.onupgradeneeded=()=>rq.result.createObjectStore('cards');
@@ -387,27 +389,34 @@ function cdbOpen(){return CDB.ready||(CDB.ready=new Promise(res=>{try{const rq=i
   rq.onerror=()=>res(false);rq.onblocked=()=>res(false)}catch(e){res(false)}}))}
 function cdbPut(cards){const t=Date.now();let st=null;try{st=CDB.db&&CDB.db.transaction('cards','readwrite').objectStore('cards')}catch(e){}for(const c of cards){if(!c||!c.name)continue;const k=norm0(c.name),v={c,t};CDB.m.set(k,v);if(st)try{st.put(v,k)}catch(e){}}}
 function cdbGet(name){const k=norm0(name);return CDB.m.get(ALIAS[k]||k)||CDB.m.get(k)||null}
+let FB=null;function cdbFallback(){return FB||(FB=(async()=>{const m=new Map();try{const r=await fetchT('data/cards.json',{},15000);if(r.ok){const j=await r.json();for(const [name,mana,type,oracle,cmc,power,toughness] of j.cards||[])m.set(norm0(name),{name,mana:mana||'',type:type||'',oracle:oracle||'',cmc:cmc||0,power,toughness,img:'',imgN:'',artc:'',img2:'',ci:[],fallback:true})}}catch(e){FB=null}return m})())}
 /* Card data: from this device when it is fresh (or we are offline), from Scryfall otherwise; whatever comes back is stored. opt.fresh forces Scryfall. */
 async function cardsNamed(names,opt={}){await cdbOpen();const out=[],need=[],online=navigator.onLine!==false;
   for(const n of names){const v=cdbGet(n);if(v&&!opt.fresh&&!CDB.force&&(!online||Date.now()-v.t<CDB.TTL))out.push(v.c);else need.push(n)}
-  if(need.length){let got=null;if(online){try{got=await cardsNamedNet(need)}catch(e){got=null}}
-    if(got&&got.length){cdbPut(got);out.push(...got)}
-    for(const n of need){const v=cdbGet(n);if(v&&!out.includes(v.c))out.push(v.c)} /* offline or Scryfall failed: fall back to the stored copy, however old */ }
+  CDB.lastErr='';if(need.length){let fails=0; /* 75 at a time, saving each batch as it arrives; after a failed batch stop asking for 30 s and use what this device has */
+    for(let i=0;i<need.length&&online&&!fails&&Date.now()>(CDB.downUntil||0);i+=75){let got=null;try{got=await cardsNamedNet(need.slice(i,i+75))}catch(e){got=null;fails++;CDB.downUntil=Date.now()+30000; /* don't make every deck wait out its own timeout */ CDB.lastErr=e.name==='AbortError'?'no answer from Scryfall (timed out)':e.message}
+      if(got&&got.length){cdbPut(got);out.push(...got)}}
+    if(!online)CDB.lastErr='offline';else if(!CDB.lastErr&&Date.now()<=(CDB.downUntil||0))CDB.lastErr='Scryfall did not answer a moment ago';
+    for(const n of need){const v=cdbGet(n);if(v&&!out.includes(v.c))out.push(v.c)} /* offline or Scryfall failed: fall back to the stored copy, however old */
+    const miss=need.filter(n=>!cdbGet(n));if(miss.length&&(CDB.lastErr||!online)){const fb=await cdbFallback();const add=[];for(const n of miss){const c=fb.get(norm0(n))||fb.get(ALIAS[norm0(n)]);if(c)add.push(c)}if(add.length){const st=CDB.db&&CDB.db.transaction('cards','readwrite').objectStore('cards');for(const c of add){const v={c,t:0};CDB.m.set(norm0(c.name),v);try{st&&st.put(v,norm0(c.name))}catch(e){}}out.push(...add);CDB.usedFallback=(CDB.usedFallback||0)+add.length}} /* last resort: card text shipped with the app (no pictures); marked stale so the real data replaces it when Scryfall answers */ }
   const seen=new Set();return out.filter(c=>!seen.has(c.name)&&seen.add(c.name));
 }
 async function cardsNamedNet(names){ // batch via /cards/collection (75 per call)
   const out=[];for(let i=0;i<names.length;i+=75){const chunk=names.slice(i,i+75).map(name=>({name}));
-    const r=await fetch('https://api.scryfall.com/cards/collection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifiers:chunk})});
+    let r=await fetchT('https://api.scryfall.com/cards/collection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifiers:chunk})},10000);
+    if(r.status===429||r.status>=500){await sleep(1500);r=await fetchT('https://api.scryfall.com/cards/collection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifiers:chunk})},12000)}
+    if(!r.ok)throw new Error('Scryfall '+r.status); /* was silently returning nothing */
     if(r.ok){const j=await r.json();out.push(...(j.data||[]).map(slim));
       for(const nf of (j.not_found||[]).slice(0,40)){const asked=nf.name||'';if(!asked)continue;const front=asked.split(FACE_SEP)[0];
-        for(const q of [...new Set([asked.replace(FACE_SEP,' // '),asked,front])]){await sleep(110);try{const r2=await fetch('https://api.scryfall.com/cards/named?fuzzy='+encodeURIComponent(q));if(!r2.ok)continue;const c=slim(await r2.json());ALIAS[norm0(asked)]=norm0(c.name);out.push(c);break}catch(e){}}}
+        for(const q of [...new Set([asked.replace(FACE_SEP,' // '),asked,front])]){await sleep(110);try{const r2=await fetchT('https://api.scryfall.com/cards/named?fuzzy='+encodeURIComponent(q),{},6000);if(!r2.ok)continue;const c=slim(await r2.json());ALIAS[norm0(asked)]=norm0(c.name);out.push(c);break}catch(e){}}}
       try{localStorage.setItem('mtgAlias',JSON.stringify(ALIAS))}catch(e){}}
     await sleep(120)}
   return out;
 }
 function slim(c){const f=c.card_faces?.[0]||{},f2=c.card_faces?.[1]||{};return{/* back face of a double-faced card: without these the playtest transformed a card but kept the front's stats and picture */mana2:!c.mana_cost&&f2.mana_cost||'',power2:f2.power,toughness2:f2.toughness,loyalty2:f2.loyalty,img2:f2.image_uris?.small||'',name:c.name,mana:c.mana_cost||f.mana_cost||'',type:c.type_line||f.type_line||'',oracle:c.oracle_text||c.card_faces?.map(x=>x.oracle_text).join('\n//\n')||'',set:c.set_name,setcode:c.set,date:c.released_at,ci:c.color_identity||[],img:c.image_uris?.small||f.image_uris?.small||'',uri:c.scryfall_uri,rank:c.edhrec_rank,price:c.prices?.usd,usd:c.prices?.usd!=null?+c.prices.usd:null,gc:!!c.game_changer,border:c.border_color,fx:c.frame_effects||[],promo:!!c.promo,full:!!c.full_art,cn:c.collector_number,imgN:c.image_uris?.normal||f.image_uris?.normal||'',artc:c.image_uris?.art_crop||f.image_uris?.art_crop||'',loyalty:c.loyalty??f.loyalty,cmc:c.cmc,power:c.power??f.power,toughness:c.toughness??f.toughness,keywords:c.keywords||[]}}
 async function commanderCard(deck){if(S.cmdr[deck.slug])return S.cmdr[deck.slug];
-  try{const r=await fetch('https://api.scryfall.com/cards/named?exact='+encodeURIComponent(deck.name));if(r.ok){S.cmdr[deck.slug]=slim(await r.json());return S.cmdr[deck.slug]}}catch(e){}return null}
+  { const v=cdbGet(deck.name); if(v){S.cmdr[deck.slug]=v.c;return v.c} } /* saved on this device */
+  try{const r=await fetchT('https://api.scryfall.com/cards/named?exact='+encodeURIComponent(deck.name),{},8000);if(r.ok){S.cmdr[deck.slug]=slim(await r.json());cdbPut([S.cmdr[deck.slug]]);return S.cmdr[deck.slug]}}catch(e){}return null}
 
 // ---------- scoring + use case ----------
 function score(card,st,deck,theme){
@@ -1028,20 +1037,21 @@ async function openPlaytest(){
 /** EDHREC popularity (share of decks running a card) for every commander's lists: the AI treats widely played cards as strong */
 function popularityMap(){const m={};for(const c of (S.snap&&S.snap.commanders)||[])for(const v of Object.values(c.lists||{}))for(const x of v){const s=x.p?x.d/x.p:0;if(s>(m[x.n]||0))m[x.n]=s}return m}
 async function staleBuild(){ // b13: a tab left open for hours keeps running an old engine — warn before a game starts on one
-  try{const mine=+(((document.querySelector('script[src*="playtest.js"]')||{}).src||'').match(/v=(\d+)/)||[])[1];const r=await fetch(location.pathname.replace(/[^/]*$/,'')+'index.html',{cache:'no-cache'});if(!r.ok)return null;const live=+((await r.text()).match(/playtest\.js\?v=(\d+)/)||[])[1];return mine&&live&&live>mine?{mine,live}:null}catch(e){return null}}
+  try{const mine=+(((document.querySelector('script[src*="playtest.js"]')||{}).src||'').match(/v=(\d+)/)||[])[1];const r=await fetchT(location.pathname.replace(/[^/]*$/,'')+'index.html',{cache:'no-cache'},5000);if(!r.ok)return null;const live=+((await r.text()).match(/playtest\.js\?v=(\d+)/)||[])[1];return mine&&live&&live>mine?{mine,live}:null}catch(e){return null}}
 async function startGame(cfg){
-  const el=$('#play');el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>';
+  const el=$('#play');el.innerHTML='<div class="empty" id="ptload">Loading cards… <span class="note">(saved on this device first, Scryfall for anything missing)</span></div>';
   { const st=await staleBuild(); if(st){el.innerHTML=`<div class="empty"><b>This tab is running engine v${st.mine}; v${st.live} is deployed.</b><div class="row" style="justify-content:center;margin-top:8px"><button class="chip pri" id="reloadnow">Reload for v${st.live}</button><button class="chip" id="playold">Play on v${st.mine} anyway</button></div></div>`;const go=await new Promise(res=>{$('#reloadnow').onclick=()=>res(true);$('#playold').onclick=()=>res(false)});if(go){location.reload();return}el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>'} }
   if(Goldfish.setPopularity)Goldfish.setPopularity(popularityMap());
   const seats=[],raw=[];const uidBase=Goldfish.uid?Goldfish.uid.get():0;
   for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===cfg.slugs[i]);const list=S.decks[d.slug].list;
+    { const m=$('#ptload'); if(m)m.firstChild.textContent=`Loading deck ${i+1} of 4… `; }
     let cards=[];try{cards=await cardsNamed([...new Set(list)])}catch(e){}
     const byName=new Map(cards.map(c=>[norm(c.name),c]));const cmd=commanderNames(d);
     const full=list.map(n=>byName.get(norm(n))).filter(Boolean);
     let cmdCards=[...cmd].map(n=>byName.get(n)).filter(Boolean);
     if(!cmdCards.length){const cc=S.cmdr[d.slug]||await commanderCard(d);if(cc)cmdCards=[cc]}
     const deckCards=full.filter(c=>!cmd.has(norm(c.name))).concat(cmdCards);const deck=Goldfish.buildDeck(deckCards,cmdCards.map(c=>c.name));
-    if(deck.library.length<40){el.innerHTML=`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards were found on Scryfall. Check the list for typos.</div><button class="chip" id="ptback2">Back to setup</button>`;$('#ptback2').onclick=openPlaytest;return}
+    if(deck.library.length<40){el.innerHTML=CDB.lastErr?`<div class="empty"><b>${esc(d.name)}: could not load this deck.</b> Scryfall did not answer (${esc(CDB.lastErr)}) and only ${deck.library.length} of its cards are saved on this device.<br>When Scryfall is reachable, open <i>Offline</i> on the Decks page and press <i>Download everything</i> — after that the playtest never needs Scryfall.</div><div class="row" style="justify-content:center"><button class="chip pri" id="ptretry">Try again</button><button class="chip" id="ptback2">Back to setup</button></div>`:`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards were found on Scryfall. Check the list for typos.</div><button class="chip" id="ptback2">Back to setup</button>`;$('#ptback2').onclick=openPlaytest;if($('#ptretry'))$('#ptretry').onclick=()=>{CDB.downUntil=0;startGame(cfg)};return}
     const human=i===0&&!cfg.watch;
     const seat={name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'expert'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')};seats.push(seat);
     raw.push({name:seat.name,deckName:seat.deckName,human,level:seat.level,art:seat.art,cmd:cmdCards.map(c=>c.name),cards:deckCards.map(c=>({name:c.name,mana:c.mana,type:c.type,oracle:c.oracle,cmc:c.cmc,power:c.power,toughness:c.toughness,power2:c.power2,toughness2:c.toughness2,mana2:c.mana2,img2:c.img2,loyalty2:c.loyalty2,loyalty:c.loyalty,colors:c.colors,ci:c.ci,img:c.img,imgN:c.imgN,artc:c.artc}))});

@@ -32,6 +32,15 @@ let fails = 0; const ok = (n, c, d) => { console.log((c ? 'PASS ' : 'FAIL ') + n
   ok('the playtest engine loads offline', await pg.evaluate(() => typeof Goldfish !== 'undefined' && typeof GoldfishUI !== 'undefined'));
   ok('nothing reached the network while offline', api === a0 && imgs === i0, JSON.stringify([api - a0, imgs - i0]));
   await ctx.setOffline(false);
+  // ---- online, but Scryfall never answers (blocked network / VPN / rate limit) ----
+  await ctx.unroute(/api\.scryfall\.com\/cards\/collection/); let hung = 0; await ctx.route(/api\.scryfall\.com\/cards\/collection/, r => { hung++; /* never fulfil */ });
+  await pg.reload(); await pg.waitForTimeout(1500);
+  const t0 = Date.now(); const stored = await pg.evaluate(() => MTGOffline.cards(['Bear 1', 'Bear 2', 'Test Land']).then(cs => cs.length)); const dt = Date.now() - t0;
+  ok('cards already on the device load instantly even when Scryfall hangs (no request made)', stored === 3 && dt < 1500, stored + ' cards in ' + dt + ' ms, requests ' + hung);
+  const t1 = Date.now(); const miss = await pg.evaluate(() => MTGOffline.cards(['Never Seen Card', 'Bear 3']).then(cs => cs.map(c => c.name))); const dt1 = Date.now() - t1;
+  ok('an unknown card gives up after the timeout instead of hanging, and what is stored still comes back', miss.length === 1 && miss[0] === 'Bear 3' && dt1 < 14000 && dt1 > 5000, JSON.stringify(miss) + ' in ' + dt1 + ' ms');
+  const fb = await pg.evaluate(() => MTGOffline.cards(['Sol Ring', 'Avacyn, Angel of Hope']).then(cs => cs.map(c => [c.name, c.type, !!c.oracle, !!c.fallback]))); ok('a card that was never stored still loads from the card text shipped with the app', fb.length === 2 && fb.every(x => x[2] && x[3]) && /Artifact/.test((fb.find(x => x[0] === 'Sol Ring') || [])[1] || ''), JSON.stringify(fb));
+  const t2 = Date.now(); await pg.evaluate(() => MTGOffline.cards(['Another Unknown'])); ok('…and the next lookup does not wait again (30 s back-off)', Date.now() - t2 < 1500, (Date.now() - t2) + ' ms');
   console.log('errors', JSON.stringify(errs)); ok('no page errors', errs.length === 0, errs.join(' | '));
   await b.close(); process.exit(fails ? 1 : 0);
 })();

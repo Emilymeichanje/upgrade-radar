@@ -1,0 +1,29 @@
+name: Refresh card data
+on:
+  schedule:
+    - cron: '23 4 * * 2,5'   # Tue & Fri 12:23 Singapore time
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['scripts/build-cards.py', '.github/workflows/cards.yml']
+permissions:
+  contents: write
+  actions: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/build-cards.py
+      - name: Commit if changed, then redeploy the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- data/cards.json; then echo "no change"; exit 0; fi
+          git config user.name "card-data-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/cards.json
+          git commit -m "Refresh card data from Scryfall bulk file"
+          git pull --rebase
+          git push
+          gh workflow run pages.yml --ref main

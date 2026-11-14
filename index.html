@@ -241,6 +241,7 @@ details.sum>summary b{font-family:var(--mono);font-size:1.05rem}
     <label for="since">New since</label><input type="date" id="since">
     <button class="chip" id="addbtn">+ Add deck</button>
     <button class="chip" id="syncbtn" title="Keep your decks in step across devices with a private GitHub Gist">Sync: off</button>
+    <button class="chip" id="offbtn" title="Install this app and download every card so it works with no connection">Offline: off</button>
     <button class="chip" id="checkbtn" title="Check every card in your saved lists against the game engine">Rules check</button>
     <button class="chip" id="bulkbtn" title="Paste several deck exports at once">Bulk lists</button>
     <button class="chip" id="expbtn" title="Download your lists, shortlists and retirements">Export</button><button class="chip" id="exptxt" title="Download the Oracle text of every card in all your decks (for the engine audit)">Export card text</button>
@@ -253,6 +254,7 @@ details.sum>summary b{font-family:var(--mono);font-size:1.05rem}
   <div id="addpanel" class="panel" hidden></div>
   <div id="bulkpanel" class="panel" hidden></div>
   <div id="syncpanel" class="panel" hidden></div>
+  <div id="offpanel" class="panel" hidden></div>
   <div id="checkpanel" class="panel" hidden></div>
 </div></header>
 
@@ -316,12 +318,12 @@ function themeRoles(deck){const set=new Set();for(const t of (deck.tags||[]))for
 // ---------- snapshot ----------
 async function loadSnapshot(){
   const r=await fetch('data/snapshot.json');S.snap=await r.json();buildIndex();
-  $('#status').innerHTML=`<span>EDHREC snapshot <b>${esc(S.snap.date)}</b></span><span>Scryfall: live</span><span id="livest">EDHREC live: checking…</span><button class="chip" id="refresh" title="Fetch the latest EDHREC lists and Scryfall cards (new sets, previews)">↻ Refresh data</button><button class="chip" id="pricego" title="Re-fetch TCGplayer prices for every saved list (otherwise weekly)">↻ Refresh prices</button><span id="refst"></span>`;
+  $('#status').innerHTML=`<span>EDHREC snapshot <b>${esc(S.snap.date)}</b></span><span>${navigator.onLine===false?'<b style="color:var(--warn)">Offline</b> — using saved data':'Scryfall: live'}</span><span id="livest">EDHREC live: checking…</span><button class="chip" id="refresh" title="Fetch the latest EDHREC lists and Scryfall cards (new sets, previews)">↻ Refresh data</button><button class="chip" id="pricego" title="Re-fetch TCGplayer prices for every saved list (otherwise weekly)">↻ Refresh prices</button><span id="refst"></span>`;
   $('#refresh').onclick=refreshData;
   $('#pricego').onclick=async()=>{const b=$('#pricego');if(b.disabled||P.busy)return;b.disabled=true;b.textContent='↻ pricing…';try{await refreshPrices(true)}finally{b.disabled=false;b.textContent='↻ Refresh prices'}};
 }
 // Refresh: drop every in-memory EDHREC/Scryfall result and refetch past the browser cache, so new sets and EDHREC updates appear without reloading
-async function refreshData(){const b=$('#refresh');if(b.disabled)return;b.disabled=true;$('#refst').textContent='refreshing…';
+async function refreshData(){const b=$('#refresh');if(b.disabled)return;if(navigator.onLine===false){$('#refst').textContent='offline — connect to refresh';return}for(const v of CDB.m.values())v.t=0; /* treat stored card data as stale so it is re-fetched */ b.disabled=true;$('#refst').textContent='refreshing…';
   try{S.live={};S.scry={};S.fresh=true;
     try{const r=await fetch('data/snapshot.json',{cache:'no-cache'});if(r.ok){S.snap=await r.json();buildIndex();if(S.cur)S.cur=S.index.find(x=>x.slug===S.cur.slug)||S.cur;}}catch(e){}
     if(S.cur){await liveEdh(S.cur);await renderTab();}
@@ -378,7 +380,22 @@ async function newCards(ci){
   const q=`${id} (legal:commander OR date>${todayStr()}) date>=${S.since} ${S.reprints?'':'-is:reprint'} -t:basic -is:funny game:paper`;
   const cards=(await scryPages(q,12)).map(slim);S.scry[key]=cards;return cards; // up to 2100 cards: a big set (Star Trek is 311) plus a few months of others overflowed 700, cutting off late-alphabet names
 }
-async function cardsNamed(names){ // batch via /cards/collection (75 per call)
+// ---------- offline card store: every card ever looked up is kept on this device (IndexedDB) ----------
+const CDB={m:new Map(),ready:null,db:null,TTL:7*864e5,force:false};
+function cdbOpen(){return CDB.ready||(CDB.ready=new Promise(res=>{try{const rq=indexedDB.open('mtg-offline',1);rq.onupgradeneeded=()=>rq.result.createObjectStore('cards');
+  rq.onsuccess=()=>{CDB.db=rq.result;try{const tx=CDB.db.transaction('cards');const cur=tx.objectStore('cards').openCursor();cur.onsuccess=()=>{const c=cur.result;if(c){CDB.m.set(c.key,c.value);c.continue()}};tx.oncomplete=()=>res(true);tx.onerror=()=>res(false)}catch(e){res(false)}};
+  rq.onerror=()=>res(false);rq.onblocked=()=>res(false)}catch(e){res(false)}}))}
+function cdbPut(cards){const t=Date.now();let st=null;try{st=CDB.db&&CDB.db.transaction('cards','readwrite').objectStore('cards')}catch(e){}for(const c of cards){if(!c||!c.name)continue;const k=norm0(c.name),v={c,t};CDB.m.set(k,v);if(st)try{st.put(v,k)}catch(e){}}}
+function cdbGet(name){const k=norm0(name);return CDB.m.get(ALIAS[k]||k)||CDB.m.get(k)||null}
+/* Card data: from this device when it is fresh (or we are offline), from Scryfall otherwise; whatever comes back is stored. opt.fresh forces Scryfall. */
+async function cardsNamed(names,opt={}){await cdbOpen();const out=[],need=[],online=navigator.onLine!==false;
+  for(const n of names){const v=cdbGet(n);if(v&&!opt.fresh&&!CDB.force&&(!online||Date.now()-v.t<CDB.TTL))out.push(v.c);else need.push(n)}
+  if(need.length){let got=null;if(online){try{got=await cardsNamedNet(need)}catch(e){got=null}}
+    if(got&&got.length){cdbPut(got);out.push(...got)}
+    for(const n of need){const v=cdbGet(n);if(v&&!out.includes(v.c))out.push(v.c)} /* offline or Scryfall failed: fall back to the stored copy, however old */ }
+  const seen=new Set();return out.filter(c=>!seen.has(c.name)&&seen.add(c.name));
+}
+async function cardsNamedNet(names){ // batch via /cards/collection (75 per call)
   const out=[];for(let i=0;i<names.length;i+=75){const chunk=names.slice(i,i+75).map(name=>({name}));
     const r=await fetch('https://api.scryfall.com/cards/collection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({identifiers:chunk})});
     if(r.ok){const j=await r.json();out.push(...(j.data||[]).map(slim));
@@ -470,6 +487,47 @@ async function syncNow(){if(!syncTok())return false;if(syncing){await syncing.ca
     if(changedLocal){buildIndex();if(!$('#home').hidden)renderHome()}
     syncStatus('Synced '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+' · '+Object.keys(merged).length+' decks');return true})();
   try{return await syncing}catch(e){syncStatus(e.message,true);return false}finally{syncing=null}}
+// ---------- offline pack: the app itself (service worker) + every card's data and pictures ----------
+const OFF={busy:false,stop:false,msg:'',sw:null,install:null};
+const offCfg=()=>{try{return JSON.parse(lsGet('offline')||'null')||{}}catch(e){return {}}};
+const offSave=o=>lsSet('offline',JSON.stringify({...offCfg(),...o}));
+const imgKey=u=>{try{const x=new URL(u);return x.origin+x.pathname}catch(e){return u}};
+function offNames(){const m=new Map();for(const [k,n] of allListNames())m.set(k,n);for(const d of S.index){for(const n of [d.name,d.realName].filter(Boolean))if(!m.has(norm(n)))m.set(norm(n),n)}return [...m.values()]}
+function offUrls(cards){const u=new Set();const cmd=new Set(S.index.flatMap(d=>[...commanderNames(d)]));
+  for(const c of cards){for(const x of [c.img,c.imgN||(c.img||'').replace('/small/','/normal/'),c.img2,(c.img2||'').replace('/small/','/normal/')])if(x)u.add(x);if(cmd.has(norm(c.name))&&(c.artc||c.img))u.add(c.artc||c.img.replace('/small/','/art_crop/'))}
+  for(const d of S.index)for(const x of [d.art,d.img])if(x&&/scryfall/.test(x))u.add(x);return [...u]}
+function offStatus(t){if(t!=null)OFF.msg=t;const c=offCfg(),b=$('#offbtn');if(b){b.textContent='Offline: '+(OFF.busy?'downloading…':c.done?(navigator.onLine===false?'in use':'ready'):c.on?'partial':'off');b.style.color=navigator.onLine===false?'var(--warn)':''}const m=$('#offstate');if(m)m.textContent=OFF.msg}
+async function offUsage(){try{const e=await navigator.storage.estimate();return e.usage?Math.round(e.usage/1048576)+' MB used on this device':''}catch(e){return ''}}
+/* Downloads what is missing: card data for every card in every deck, then small + large pictures (front and back faces) and commander art. Safe to re-run; picks up where it stopped. */
+async function offDownload(quiet){if(OFF.busy)return;if(navigator.onLine===false){offStatus('You are offline — connect to download.');return}
+  OFF.busy=true;OFF.stop=false;offSave({on:true});offStatus('Preparing…');
+  try{try{if(navigator.storage&&navigator.storage.persist)await navigator.storage.persist()}catch(e){}
+    const names=offNames();const cards=[];for(let i=0;i<names.length&&!OFF.stop;i+=150){offStatus(`Card data ${Math.min(i+150,names.length)}/${names.length}…`);try{cards.push(...await cardsNamed(names.slice(i,i+150)))}catch(e){}}
+    const urls=offUrls(cards);const cache=await caches.open('mtg-img-v1');const have=new Set((await cache.keys()).map(r=>r.url));const todo=urls.filter(u=>!have.has(imgKey(u)));
+    let done=0,fail=0;const total=todo.length;const work=async()=>{while(todo.length&&!OFF.stop){const u=todo.pop();try{let r;try{r=await fetch(u,{mode:'cors',credentials:'omit'})}catch(e){if(navigator.onLine===false)throw e;r=await fetch(u,{mode:'no-cors'})} /* fall back to an opaque copy if the image host sends no CORS header */ if(r.ok||r.type==='opaque')await cache.put(imgKey(u),r);else{fail++;OFF.err='HTTP '+r.status}}catch(e){fail++;OFF.err=e.message;if(navigator.onLine===false){OFF.stop=true}}done++;if(done%10===0||!todo.length)offStatus(`Pictures ${done}/${total}${fail?' · '+fail+' failed':''}…`)}};
+    if(total)await Promise.all([0,1,2,3,4,5].map(work));
+    if(navigator.serviceWorker&&navigator.serviceWorker.controller)navigator.serviceWorker.controller.postMessage('refresh-shell');
+    const complete=!OFF.stop&&!fail&&cards.length>0;offSave({on:true,done:complete,at:new Date().toISOString(),cards:cards.length,imgs:urls.length-todo.length-fail,want:urls.length});
+    offStatus((complete?`Ready for offline play: ${cards.length} cards, ${urls.length} pictures.`:OFF.stop?`Stopped — ${urls.length-todo.length-fail}/${urls.length} pictures saved. Run it again to finish.`:`${fail} picture${fail===1?'':'s'} failed (${OFF.err||'network'}) — run it again to retry.`)+' '+await offUsage());
+  }catch(e){offStatus('Download failed: '+e.message)}finally{OFF.busy=false;offStatus();if(!$('#offpanel').hidden&&!quiet)toggleOff(true)}}
+async function offClear(){OFF.stop=true;try{await caches.delete('mtg-img-v1')}catch(e){}offSave({done:false,imgs:0});offStatus('Pictures removed from this device. Card data and your decks are untouched.');toggleOff(true)}
+function toggleOff(open){const p=$('#offpanel');p.hidden=!open;if(!open)return;const c=offCfg(),sw='serviceWorker' in navigator;
+  p.innerHTML=`<h3>Offline app</h3>
+   <p>${sw?'This app is saved on this device and opens without a connection. When you are online it updates itself.':'This browser cannot install the app for offline use — open it in Chrome, Edge, Brave or Safari.'}</p>
+   <p><b>Cards:</b> ${c.on?`${c.cards||0} cards · ${c.imgs||0} of ${c.want||'?'} pictures saved${c.at?' · last run '+new Date(c.at).toLocaleString([], {dateStyle:'medium',timeStyle:'short'}):''}`:'nothing downloaded yet'}. Downloading everything is roughly 200–300 MB for ~2,000 cards — use Wi‑Fi. New cards you add are fetched automatically the next time you are online.</p>
+   <p><b>Your decks:</b> kept on this device; <i>Sync</i> ${syncTok()?'is on, so a new phone or PC gets them as soon as you connect it':'is off — turn it on to move decks to a new device automatically'}. <i>Export</i> / <i>Import</i> remain as the manual backup.</p>
+   <p class="note">Needs a connection even when installed: EDHREC picks, New cards, prices, Refresh data.</p>
+   <div class="row">${OFF.busy?'<button class="chip" id="offstop">Stop</button>':`<button class="chip" id="offgo">${c.on?'Update / resume download':'Download everything'}</button>`}${OFF.install?'<button class="chip" id="offinst">Install app</button>':''}${c.on?'<button class="chip" id="offclr">Remove pictures</button>':''}<button class="chip" id="offclose">Close</button><span class="note" id="offstate">${esc(OFF.msg)}</span></div>`;
+  $('#offclose').onclick=()=>toggleOff(false);if($('#offgo'))$('#offgo').onclick=()=>{offDownload();toggleOff(true)};if($('#offstop'))$('#offstop').onclick=()=>{OFF.stop=true};if($('#offclr'))$('#offclr').onclick=()=>{if(confirm('Remove all downloaded card pictures from this device?'))offClear()};
+  if($('#offinst'))$('#offinst').onclick=async()=>{const ev=OFF.install;OFF.install=null;try{ev.prompt();await ev.userChoice}catch(e){}toggleOff(true)}}
+function offInit(){if(!('serviceWorker' in navigator)||!/^https?:$/.test(location.protocol)){offStatus();return}
+  navigator.serviceWorker.register('sw.js').then(r=>{OFF.sw=r}).catch(()=>{});
+  window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();OFF.install=e;if(!$('#offpanel').hidden)toggleOff(true)});
+  window.addEventListener('online',()=>{offStatus();const c=offCfg();if(c.on)setTimeout(()=>offDownload(true),3000)});window.addEventListener('offline',()=>offStatus('Offline — using what is saved on this device.'));
+  offStatus();const c=offCfg();
+  if(c.on&&navigator.onLine!==false)setTimeout(()=>offDownload(true),8000); /* top up quietly: new cards since the last run */
+  else if(!c.on&&!c.asked&&Object.values(S.decks).some(d=>d.list&&d.list.length)){offSave({asked:true});toggleOff(true)} /* first visit with decks: offer the download once */ }
+window.MTGOffline={download:q=>offDownload(q),cards:n=>cardsNamed(n),state:()=>({...offCfg(),busy:OFF.busy,msg:OFF.msg,stored:CDB.m.size})}; /* for tests and the console */
 function toggleSync(open){const p=$('#syncpanel');p.hidden=!open;if(!open)return;const on=!!syncTok();
   p.innerHTML=`<h3>Sync across devices</h3>
    <p class="note">Your decks are kept in one <b>secret Gist</b> on your GitHub account. Each device merges with it whenever you save or come back to the page; if the same deck was edited on two devices, the newer edit wins.</p>
@@ -855,7 +913,7 @@ async function renderTab(){
       if(S.tab==='kept'){cards=await cardsNamed(Object.keys(kept))}
       else cards=await cardsNamed(names.slice(0,150));
     }
-  }catch(e){if(stale())return;pane.innerHTML=`<div class="empty">Scryfall request failed (${esc(e.message)}). Try again in a moment.</div>`;return}
+  }catch(e){if(stale())return;pane.innerHTML=navigator.onLine===false?`<div class="empty">You are offline. This tab needs a connection — your saved lists and the playtest table still work.</div>`:`<div class="empty">Scryfall request failed (${esc(e.message)}). Try again in a moment.</div>`;return}
   if(stale())return;
   const rows=cards.filter(c=>!own.has(norm(c.name))&&c.name!==d.name&&(S.tab==='kept'||!dismissed[c.name])).map(c=>{const s=st[norm(c.name)]||null;const sc=score(c,s,d,theme);return{c,s,sc}}).sort((a,b)=>b.sc.s-a.sc.s);
   const head=S.tab==='new'?`<div class="status"><span>Printed on or after <b>${esc(S.since)}</b> in ${esc(ciKey(d.ci||[]))} identity: <b>${rows.length}</b> cards</span><label class="note"><input type="checkbox" id="rep" ${S.reprints?'checked':''}> include reprints</label></div>`:S.tab==='kept'?`<div class="status"><span>Cards you kept for ${esc(d.name)}</span></div>`:`<div class="status"><span>EDHREC's lists for this commander, ranked by fit; cards already in your list are hidden</span></div>`;
@@ -1037,7 +1095,7 @@ function wire(){
   $('#cmode').onchange=()=>{S.cmode=$('#cmode').value;syncF();toHome()};
   $('#fclear').onclick=()=>{S.colors.clear();S.brackets=new Set(['2','3','4','cEDH']);syncF();toHome()};syncF();
   $('#q').oninput=()=>{S.q=$('#q').value.trim().toLowerCase();if((S.cur||!$('#play').hidden)&&S.q){showView('home')}renderHome()};
-  $('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-rep').onclick=()=>openReplays();$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#exptxt').onclick=exportCardText;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#checkbtn').onclick=()=>toggleCheck($('#checkpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
+  $('#offbtn').onclick=()=>toggleOff($('#offpanel').hidden);$('#addbtn').onclick=()=>toggleAdd($('#addpanel').hidden);$('#nav-play').onclick=openPlaytest;$('#nav-rep').onclick=()=>openReplays();$('#nav-decks').onclick=()=>{if(PT.table){PT.table.aborted=true;PT.table=null}showView('home');renderHome()};$('#expbtn').onclick=exportData;$('#exptxt').onclick=exportCardText;$('#syncbtn').onclick=()=>toggleSync($('#syncpanel').hidden);$('#checkbtn').onclick=()=>toggleCheck($('#checkpanel').hidden);$('#bulkbtn').onclick=()=>toggleBulk($('#bulkpanel').hidden);$('#impfile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
   let sortSaved=null,themeSaved=null;try{sortSaved=localStorage.getItem('sort');themeSaved=localStorage.getItem('theme')}catch(e){}
   S.sort=sortSaved||'name';$('#sort').value=S.sort;$('#sort').onchange=()=>{S.sort=$('#sort').value;try{localStorage.setItem('sort',S.sort)}catch(e){}renderHome()};
   const applyTheme=t=>{if(t==='system')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);$('#theme').textContent='Theme: '+t};
@@ -1065,7 +1123,7 @@ async function resolveCommanders(){ // colors + art from Scryfall, one batched c
   renderHome();
 }
 (async()=>{wire();try{await loadSnapshot()}catch(e){$('#status').innerHTML='<span>Snapshot failed to load.</span>';return}
-  renderHome();await Promise.all([initDb().then(()=>syncTok()&&Promise.race([syncNow(),new Promise(r=>setTimeout(r,10000))])),resolveCommanders()]);renderHome();syncStatus(S.syncMsg||'',S.syncErr);applyCmdrPrints();refreshPrices();if(location.hash==='#playtest')openPlaytest();else if(location.hash==='#replays')openReplays();
+  renderHome();await Promise.all([initDb().then(()=>syncTok()&&Promise.race([syncNow(),new Promise(r=>setTimeout(r,10000))])),resolveCommanders()]);renderHome();syncStatus(S.syncMsg||'',S.syncErr);offInit();applyCmdrPrints();refreshPrices();if(location.hash==='#playtest')openPlaytest();else if(location.hash==='#replays')openReplays();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&syncTok())syncNow()});
   window.addEventListener('hashchange',()=>{if(location.hash==='#playtest'&&$('#play').hidden)openPlaytest();else if(location.hash==='#playtest'&&PT.table&&!PT.table.aborted){/* back from a live game: the table asks first */}else if(!location.hash.startsWith('#playtest')&&!$('#play').hidden){setTimeout(()=>{if(location.hash.startsWith('#playtest'))return;if(PT.table){PT.table.aborted=true;if(PT.table.sfx)PT.table.sfx.musicStop();PT.table=null}showView('home');renderHome()},0)}});})();
 })();

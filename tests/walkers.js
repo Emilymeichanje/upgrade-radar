@@ -1014,4 +1014,26 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      ok('Aether Gale: I pick the targets (lands are not offered, my own permanents are)',!!pool&&pool.includes('My Guy')&&pool.includes('Their Rock')&&!pool.includes('Forest'),JSON.stringify(pool));
      ok('…and only the ones I picked return to hand',!me.battlefield.includes(own)&&!opp.battlefield.includes(t2)&&opp.battlefield.includes(t1)&&opp.battlefield.includes(t3)&&me.hand.some(c=>c.name==='My Guy'),''); }
  }
+
+ { // v120: owner's second Rootha game — Ashling's Command modes, Pyrohemia / Elspeth no longer sweep on cast
+   const O=require(__dirname+'/fixtures/owner.json'); const OR=O.cards||O; const OC=(n,x={})=>{const r=OR.find(r=>r[1]===n); if(!r)throw new Error('no '+n); return tagCard({name:r[1],mana:r[2],type:r[3],oracle:r[4],cmc:r[5],power:r[6],toughness:r[7],...x})};
+   const put=(g,pl,c,o={})=>{const b={id:500000+Math.floor(Math.random()*1e6),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false,...o};pl.battlefield.push(b);g.refreshStatics();return b};
+   const cr=(n,t,p=2,q=2,o='',mana='{1}{W}')=>tagCard(mk(n,'Creature — '+t,mana,o,2,String(p),String(q)));
+   const base=()=>{const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; g.hooks.humanMay=async()=>true; return [g,me]};
+   const ac=OC("Ashling's Command"); const M=ac.modes.map(m=>m.card);
+   ok("Ashling's Command: all four modes have effects",M.every(c=>c.spellOps&&c.spellOps.length),JSON.stringify(M.map(c=>c.spellOps)));
+   { const [g,me]=base(); const big=put(g,me,{...cr('Elemental','Elemental',8,8),token:true}); const small=put(g,me,{...cr('Elemental','Elemental',5,5),token:true}); const bear=put(g,me,cr('Bear','Bear',9,9));
+     let pool=null; g.hooks.humanSearch=async c=>{pool=c.pool;return [c.pool.find(x=>x.power===5)]}; await g.resolve({id:1,kind:'spell',card:ac,caster:me,owner:me,zone:'hand',modes:[M[0],M[1]]}); await tick(g);
+     ok('copy mode: I choose which Elemental (non-Elementals are not offered)',!!pool&&pool.length===2&&pool.every(c=>/Elemental/.test(c.type)),JSON.stringify(pool&&pool.map(c=>c.name+c.power)));
+     ok('…and I get a copy of the one I picked',me.battlefield.filter(b=>b.card.name==='Elemental'&&b.card.power===5).length===2&&me.battlefield.filter(b=>b.card.name==='Elemental').length===3,JSON.stringify(me.battlefield.map(b=>b.card.name+b.card.power))); }
+   { const [g,me]=base(); const [,o1,o2]=g.players; const mine=put(g,me,cr('Mine','Bear',1,1)); const a=put(g,o1,cr('A','Elf',2,2)); const a2=put(g,o1,cr('A2','Ogre',4,4)); const b=put(g,o2,cr('B','Elf',1,1));
+     g.hooks.humanChoosePlayer=async c=>c.players.find(q=>q===o1)||c.players[0]; const n0=g.log.length; await g.resolve({id:2,kind:'spell',card:ac,caster:me,owner:me,zone:'hand',modes:[M[2],M[3]]}); await tick(g);
+     ok("damage mode: 2 damage only to the chosen player's creatures",!o1.battlefield.includes(a)&&o1.battlefield.includes(a2)&&o2.battlefield.includes(b)&&me.battlefield.includes(mine),JSON.stringify(g.log.slice(n0).map(x=>x.m)));
+     ok('Treasure mode: the chosen player gets two Treasures',o1.battlefield.filter(x=>x.card.name==='Treasure').length===2,JSON.stringify(g.players.map(q=>q.battlefield.filter(x=>x.card.name==='Treasure').length))); }
+   for (const nm of ['Pyrohemia',"Elspeth, Sun's Champion"]) { const [g,me]=base(); const opp=g.players[1]; const w=put(g,opp,cr('Weenie','Elf',1,1)); const f=put(g,opp,cr('Fatty','Giant',6,6)); const c=OC(nm); const n0=g.log.length; await g.resolve({id:3,kind:'spell',card:c,caster:me,owner:me,zone:'hand'}); await tick(g);
+     ok(nm+': casting it destroys nothing',opp.battlefield.includes(w)&&opp.battlefield.includes(f)&&me.battlefield.some(b=>b.card.name===nm),JSON.stringify(g.log.slice(n0).map(x=>x.m))); }
+   { const [g,me]=base(); const opp=g.players[1]; const w=put(g,opp,cr('Weenie','Elf',1,1)); const py=put(g,me,OC('Pyrohemia')); const L=g.players.map(q=>q.life); await g.runOps(me,py.card.abilities[0].ops,py.card,{perm:py}); await tick(g);
+     ok('Pyrohemia ability: 1 damage to each creature AND each player',!opp.battlefield.includes(w)&&g.players.every((q,i)=>q.life===L[i]-1),JSON.stringify(g.players.map(q=>q.life))); }
+   { const [g,me]=base(); const opp=g.players[1]; const w=put(g,opp,cr('Weenie','Elf',1,1)); const c=tagCard(mk('Day of Judgment','Sorcery','{2}{W}{W}','Destroy all creatures.',4)); await g.resolve({id:4,kind:'spell',card:c,caster:me,owner:me,zone:'hand'}); await tick(g); ok('a real sweeper spell still sweeps',!opp.battlefield.includes(w),''); }
+ }
  console.log(fails+' failed');})();

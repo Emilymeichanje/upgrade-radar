@@ -7485,7 +7485,12 @@ class Game {
     }
     if (snap.rngS != null && this.rng && this.rng.st) this.rng.st.s = snap.rngS; // b10: rewind the RNG with the state
   }
+  /** b34: CR 800.4j — if the active player leaves the game during their turn, the turn continues to its completion without an active player. The end step still happens, so 'at the beginning of the next end step' effects of the other players (Avacyn, Angel of Horror's returns, blink returns, 'each end step' triggers) fire in THAT turn; they used to wait for the following player's end step. */
   async takeTurn(p) {
+    await this.takeTurn0(p);
+    if (p.dead && !this.winner && this.alive().length > 1 && this.phase !== 'end') { this.say(`— ${p.name} is out: the turn finishes without an active player (end step)`, p); await this.endStep(p); }
+  }
+  async takeTurn0(p) {
     if (p.b12_tax) p.b12_tax = null; // b12: "until your next turn"
     for (const q of this.players) for (const b of q.battlefield) if (b.b18_detain && b.b18_detain.by === p) b.b18_detain = null; // b18: detain lasts until the detainer's next turn
     await this.beginTurn(p); if (p.dead || this.winner) return;
@@ -7553,6 +7558,9 @@ class Game {
       else await p.ai.mainPhase(this, p, true);
       if (this.winner || p.dead || this.turnEndedTurn === this.turn) return;
     }
+    await this.endStep(p);
+  }
+  async endStep(p) {
     this.phase = 'end';
     for (const q of this.players) for (const b of [...q.battlefield]) if (b.warpTurn === this.turn) { q.battlefield.splice(q.battlefield.indexOf(b), 1); await this.emit({ type: 'destroy', owner: q, perm: b, quiet: true }); const c = b.card.orig || b.card; q.exile.push(c); (q.exileCast = q.exileCast || []).push({ card: c, free: false, owner: q, turn: this.turn, notBefore: this.turn + 1, forever: true }); this.say(`— ${c.name} is exiled (warp); it can be cast from exile later`, q); await this.leftBattlefield(q, b); }
     for (const r of (this.endToHand || []).splice(0)) { const o = this.players.find(q => q.graveyard.includes(r.card)); if (!o) continue; o.graveyard.splice(o.graveyard.indexOf(r.card), 1); o.hand.push(r.card); this.say(`— ${r.card.name} returns to ${o.name}'s hand`, o); }
@@ -7560,7 +7568,7 @@ class Game {
     for (const u of (this.endUntaps || []).splice(0)) { if (u.p.dead) continue; const ls = u.p.battlefield.filter(b => b.card.isLand && b.tapped).sort((a, z) => ((z.card.produces || []).length) - ((a.card.produces || []).length)).slice(0, u.n); for (const b of ls) b.tapped = false; if (ls.length) this.say(`— untaps ${ls.length} land${ls.length === 1 ? "" : "s"} (end step)`, u.p); }
     for (const r of (this.endReturns || []).splice(0)) { const zone = r.fromGy ? (r.owner || r.p).graveyard : r.p.exile; const i = zone.indexOf(r.card); if (i < 0) continue; zone.splice(i, 1); const pm = await this.enterPerm(r.p, r.card, { tapped: !!r.tapped }); this.say(`— ${r.card.name} returns to the battlefield`, r.p); if (pm) { if (pm.card.etbOps) await this.runOps(r.p, pm.card.etbOps, pm.card, { perm: pm }); await this.creatureEntered(r.p, pm); } }
     if (p.necro && p.necro.length) { const cs = p.necro.splice(0); for (const c of cs) { const i = p.exile.indexOf(c); if (i >= 0) { p.exile.splice(i, 1); p.hand.push(c); } } this.say(`— puts ${cs.length} card${cs.length === 1 ? '' : 's'} into hand (Necropotence)`, p); }
-    await this.fireTriggers(p, 'end'); if (p.dead || this.winner) return;
+    await this.fireTriggers(p, 'end'); if (this.winner || this.alive().length <= 1) return;
     for (const q of this.alive()) for (const b of [...q.battlefield]) { if (b.neutral) continue; for (const tr of b.card.triggers || []) { if (tr.when !== 'eachEnd') continue; if (tr.eCond === 'lost4' && !this.players.some(x => x.lostTurn === this.turn && (x.lostThisTurn || 0) >= 4)) continue; if (tr.eCond === 'noCreatures' && this.alive().some(x => x.battlefield.some(y => y.card.isCreature))) continue; if (tr.eCond === 'madeToken' && q.tokenTurn !== this.turn) continue; if (tr.eCond === 'oppMoreCreatures' && (p === q || p.battlefield.filter(y => y.card.isCreature).length <= q.battlefield.filter(y => y.card.isCreature).length)) continue; if (tr.eCond === 'b8_oppMoreLands' && (p === q || p.battlefield.filter(y => y.card.isLand).length <= q.battlefield.filter(y => y.card.isLand).length)) continue; this.say(`— ${b.card.name} end step trigger`, q); await this.runTrig(q, b, tr, { perm: b }); } }
     await this.priorityRound('end', p);
   }

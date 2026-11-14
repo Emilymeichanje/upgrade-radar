@@ -1308,5 +1308,11 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
    // v135: discover — an instant or sorcery may be kept instead of cast
    { const [g,me]=base(); const sp=tagCard(mk('Held Trick','Instant','{1}{G}','Draw a card.',2)); me.library.push(sp); let q=null; g.hooks.humanMay=async x=>{q=x.question; return false}; await g.runOps(me,[{op:'discover',n:4}],cr('Src','Bear'),{}); ok('discover on an instant asks, and declining puts it into my hand',!!q&&/Discover: cast Held Trick/.test(q)&&me.hand.includes(sp),JSON.stringify(q));
      const [g2,me2]=base(); const pc=cr('Free Bear','Bear',2,2); me2.library.push(pc); let q2=null; g2.hooks.humanMay=async x=>{q2=x.question; return true}; await g2.runOps(me2,[{op:'discover',n:4}],cr('Src','Bear'),{}); while(g2.stack.length){const o=g2.stack.pop(); await g2.resolve(o)} ok('discover on a permanent casts it without asking',q2===null&&me2.battlefield.some(b=>b.card===pc),JSON.stringify([q2,me2.battlefield.map(b=>b.card.name).slice(-2)])); }
+   // v138: the active player dies on their own turn — the turn still has its end step (Avacyn, Angel of Horror's return fires that turn)
+   { const J=require(__dirname+'/../data/cards.json'); const DC=n=>{const r=J.cards.find(r=>r[0]===n); return tagCard({name:r[0],mana:r[1],type:r[2],oracle:r[3],cmc:r[4],power:r[5]??undefined,toughness:r[6]??undefined})};
+     const g=fresh(); const me=g.players[0], dying=g.players[1]; const av=DC('Avacyn, Angel of Horror');
+     const gone=tagCard(mk('Returning Knight','Creature — Knight','{1}{B}','',2,'2','2')); me.exile.push(gone); (g.endReturns=g.endReturns||[]).push({p:me,card:gone});
+     g.active=1; const orig=g.takeTurn0.bind(g); g.takeTurn0=async p=>{ g.phase='main1'; await g.kill(p,'test'); }; await g.takeTurn(dying); g.takeTurn0=orig; await tick(g);
+     ok('a card waiting for "the beginning of the next end step" returns in the turn its active player died, not a turn later',dying.dead&&me.battlefield.some(b=>b.card===gone),JSON.stringify(g.log.slice(-4).map(x=>x.m))); }
  }
  console.log(fails+' failed');})();

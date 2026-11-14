@@ -63,8 +63,10 @@ def main():
         print('bulk download failed, keeping the old file:', e, file=sys.stderr); return 1
     rows = {}
     for c in bulk:
-        if c.get('object') != 'card' or c.get('layout') in SKIP_LAYOUT or c.get('set_type') in SKIP_SETTYPE: continue
-        if 'paper' not in (c.get('games') or ['paper']): continue
+        if c.get('object') != 'card' or c.get('layout') in SKIP_LAYOUT or c.get('set_type') in ('token', 'minigame'): continue
+        playable = (c.get('legalities') or {}).get('commander') in ('legal', 'banned', 'restricted')
+        # the printing Scryfall picks for a card can be a digital or commemorative one (Strip Mine, Lotus Petal, Scrubland): keep anything Commander-playable
+        if not playable and ('paper' not in (c.get('games') or ['paper']) or c.get('set_type') in SKIP_SETTYPE): continue
         if not c.get('name') or not c.get('id'): continue
         rows[c['name'].lower()] = row(c)
     if len(rows) < 20000 and not os.environ.get('BULK_FILE'):

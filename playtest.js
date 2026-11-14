@@ -4613,7 +4613,7 @@ class Game {
     if (spell.alt === 'awaken') await this.runOps(p, [{ op: 'earthbend', n: (card.awaken || {}).n || 3, awaken: true }], card, {});
     if (pm && spell.alt === 'mutate') { this.say(`— ${card.name} mutates`, p); for (const tr of card.triggers || []) if (tr.when === 'mutates') await this.runOps(p, tr.ops, card, { perm: pm }); }
     if (pm && card.ravenous) { const x = spell.x || 0; if (x) { pm.counters = (pm.counters || 0) + x; this.say(`— ravenous: ${x} +1/+1 counters`, p); if (x >= 5) await this.draw(p, 1); } }
-    if (pm && card.soulbond) { const mate = p.battlefield.find(b => b !== pm && b.card.isCreature && !b.pairedWith); if (mate) { pm.pairedWith = mate.id; mate.pairedWith = pm.id; this.say(`— ${card.name} pairs with ${mate.card.name}`, p); } }
+    /* b23: soulbond pairing moved to soulbondCheck (called from creatureEntered) — the player chooses the partner, and an unpaired soulbond creature can pair with a creature that enters later */
     if (pm && card.kicker && card.kicker.offspring && spell.kicks) await this.runOps(p, [{ op: 'tokenCopyOf', n: 1, pt: [1, 1] }], card, { perm: pm });
     if (pm) { await this.creatureEntered(p, pm); await this.permEntered(p, pm); }
 
@@ -5154,6 +5154,11 @@ class Game {
           const lands = p.battlefield.filter(b => b.card.isLand).length, wantLand = lands < 4 && !p.hand.some(c => c.isLand);
           const score = c => c.isLand ? (wantLand ? 10 : -2) : (p.ai ? p.ai.castValueRaw(this, p, c) : c.cmc) - Math.max(0, c.cmc - lands - 1) * 2;
           if (op.shuffle && top.every(c => score(c) < 1)) { shuffle(p.library, this.rng); this.say('— looks at the top cards and shuffles', p); break; }
+          if (p.human && this.hooks.humanSearch && !this.shortcutting) { // b23: the player looks at the cards and orders them (Sensei's Divining Top 'did nothing': it sorted them silently)
+            if (op.shuffle && this.hooks.humanMay && await this.hooks.humanMay({ p, card: src, question: `Top of your library: ${top.map(c => c.name).join(', ')}. Shuffle your library instead of ordering them?` })) { shuffle(p.library, this.rng); this.say('— looks at the top cards and shuffles', p); break; }
+            const rest = [...top], order = [];
+            while (rest.length > 1) { const c = ([].concat(await this.hooks.humanSearch({ p, card: src, pool: [...rest], n: 1, dest: order.length ? 'arrange2' : 'arrange1', must: true }) || []))[0]; const pick = c && rest.includes(c) ? c : rest[0]; order.push(pick); rest.splice(rest.indexOf(pick), 1); }
+            order.push(rest[0]); p.library.splice(-top.length, top.length, ...order.slice().reverse()); this.say(`— looks at the top ${top.length} cards and puts them back in an order of their choice`, p); break; }
           const sorted = [...top].sort((a, b) => score(a) - score(b)); p.library.splice(-top.length, top.length, ...sorted);
           this.say(`— rearranges the top ${top.length} cards`, p); break;
         }
@@ -6697,7 +6702,18 @@ class Game {
   }
   /** a creature entered: fire "whenever a creature enters" triggers everywhere */
   async gyEnterTriggers(p, perm) { for (const c of [...p.graveyard]) { const g = c.gyEnterTrig; if (!g || !matchesFilter(perm.card, g.filter) || !this.canPayCost(p, g.cost)) continue; const go = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: c, question: `pay to return ${c.name} from your graveyard?` })) : true; if (!go) continue; this.payCost(p, g.cost); p.graveyard.splice(p.graveyard.indexOf(c), 1); const pm = await this.enterPerm(p, c); this.say(`— ${c.name} returns from the graveyard`, p); if (pm) { if (pm.card.etbOps) await this.trigger(p, pm, pm.card.etbOps, { perm: pm }, 'ETB'); } } }
-  async creatureEntered(p, perm) { return this.held(() => this._creatureEntered(p, perm)); }
+  /** b23: Soulbond — when this or another creature enters and both are unpaired, you MAY pair them. The player picks the partner (or none); it used to grab the first creature on the battlefield. */
+  async soulbondCheck(p, pm) {
+    if (!pm || !pm.card || !pm.card.isCreature || pm.pairedWith != null || !p.battlefield.includes(pm)) return;
+    const un = p.battlefield.filter(b => b !== pm && b.card.isCreature && b.pairedWith == null && !b.neutral);
+    const pool = pm.card.soulbond ? un : un.filter(b => b.card.soulbond);
+    if (!pool.length) return;
+    let mate = null;
+    if (p.human && this.hooks.humanSearch && !this.shortcutting) { const got = ([].concat(await this.hooks.humanSearch({ p, card: pm.card, pool: pool.map(b => b.card), n: 1, dest: 'soulbond' }) || []))[0]; mate = got ? pool.find(b => b.card === got) : null; if (!mate) { this.say(`— ${pm.card.name}: no soulbond pairing`, p); return; } }
+    else mate = [...pool].sort((a, z) => ((z.card.orig || z.card).isCommander ? 1 : 0) - ((a.card.orig || a.card).isCommander ? 1 : 0) || this.powerOf(p, z) - this.powerOf(p, a))[0];
+    pm.pairedWith = mate.id; mate.pairedWith = pm.id; this.say(`— ${pm.card.name} pairs with ${mate.card.name}`, p); this.refreshStatics();
+  }
+  async creatureEntered(p, perm) { return this.held(async () => { await this.soulbondCheck(p, perm); return this._creatureEntered(p, perm); }); }
   async _creatureEntered(p, perm) {
     if (!this._gyEnt) { this._gyEnt = true; try { await this.gyEnterTriggers(p, perm); } finally { this._gyEnt = false; } }
     if (!perm || !perm.card.isCreature) return;

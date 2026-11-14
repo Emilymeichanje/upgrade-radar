@@ -616,16 +616,22 @@ class Table {
   aimedAtMe(obj) { const me = this.me, t = obj.target; if (!t) return false; return t === me || (t.card && this.game.ownerOf(t) === me) || (t.spell && t.spell.caster === me); }
   shouldStop(ctx) {
     const me = this.me, g = this.game;
+    // b30: options with no timing value never justify a stop on their own (Lembas's 'sacrifice: gain 3 life' was the only option in 38 prompts of one game)
+    const trivial = o => o.kind === 'ability' && o.ab && (o.ab.mana || (o.ab.sacSelf && (o.ab.ops || []).length && (o.ab.ops || []).every(x => ['gain', 'draw', 'scry'].includes(x.op))));
+    if (this.s.stops !== 'all') { const real = ctx.options.filter(o => !trivial(o)); if (!real.length) return false; ctx = { ...ctx, options: real }; }
     if (ctx.step === 'stack') {
       const top0 = ctx.stack[ctx.stack.length - 1];
       if (this.passOwnTrigTurn === g.turn && ctx.stack.every(o => o.caster === me && o.trig)) return false; // b13: "Pass my triggers this turn" applies even with Stops: all / nothing to respond with
       // a triggered ability on top (yours or theirs): stop if you can do something real in response — crack a fetch, copy it, counter it, kill the source
       if (top0 && top0.trig && this.s.stops !== 'minimal' && !(this.passUntilTurn && ctx.active !== me) && ctx.options.some(o => !(o.ab && o.ab.mana))) {
         if (top0.caster !== me || this.s.stops === 'all') return true;
-        // your own trigger with nothing of theirs on the stack: ask once per source per turn (Shared Animosity fires per attacker), never after "pass my triggers"
-        if (ctx.stack.some(o => o.caster !== me)) return true;
+        // b30: your OWN trigger. Asked once per source per turn as before, but a pass now covers every trigger that was on the stack when you passed (you saw them all, and a copy effect can target any of them) — unless something NEW becomes available, e.g. Peregrine Drake untaps lands and Strionic Resonator is now affordable. A Brago blink that put ten enter triggers on the stack used to ask about most of them.
+        const canCopy = ctx.options.some(o => o.kind === 'ability' && o.ab && (o.ab.ops || []).some(x => x.op === 'copyTrigger' || x.op === 'copyLastAbility'));
+        if (ctx.stack.some(o => o.caster !== me) && !canCopy) return false; /* my trigger sitting on top of their spell (Rhystic Study): the decision that matters is about THEIR spell, and that prompt comes as soon as my trigger resolves */
         if (this.passOwnTrigTurn === g.turn) return false;
-        const key = g.turn + ':' + (top0.card && top0.card.name); this.ownTrigSeen = this.ownTrigSeen || new Set(); if (this.ownTrigSeen.has(key)) return false; this.ownTrigSeen.add(key); return true;
+        const sig = ctx.options.map(o => o.kind + ':' + o.card.name + ':' + ((o.ab && o.ab.label) || ''));
+        if (this.passedObjs && this.passedObjs.has(top0.id) && sig.every(x => this.passedSig.has(x))) return false;
+        const key = g.turn + ':' + (top0.card && top0.card.name); this.ownTrigSeen = this.ownTrigSeen || new Set(); if (this.ownTrigSeen.has(key) && sig.every(x => (this.passedSig || new Set()).has(x))) return false; this.ownTrigSeen.add(key); this._ownTrigAsk = true; return true;
       }
       const theirs = ctx.stack.filter(o => o.caster !== me); if (!theirs.length) return this.s.stops === 'all';
       if (ctx.stack[ctx.stack.length - 1].caster === me && this.s.stops !== 'all') return false; // you just acted: keep going unless someone answers
@@ -642,14 +648,18 @@ class Table {
     const hasCast = ctx.options.some(o => o.kind === 'cast'), hasFetch = ctx.options.some(o => o.kind === 'fetch' || o.kind === 'ability');
     const inCombat = ctx.attacks && (ctx.active === me || ctx.attacks.some(a => a.defender === me));
     const hasCombatAbility = ctx.options.some(o => o.kind === 'ability' && !(o.ab && o.ab.mana) && !(o.ab && o.ab.label === 'equip'));
-    if ((hasCast || (hasCombatAbility && inCombat)) && ((ctx.step === 'end' && ctx.active !== me) || ((ctx.step === 'declareAttackers' || ctx.step === 'declareBlockers') && inCombat))) return true;
+    const defending = ctx.attacks && ctx.attacks.some(a => a.defender === me), myBlocked = ctx.active === me && ctx.blocks && ctx.attacks && ctx.attacks.some(a => ctx.blocks.has && ctx.blocks.has(a.attacker)); /* b30: on my own turn the only combat stop is after blockers, and only when one of my attackers was blocked */
+    if ((hasCast || (hasCombatAbility && inCombat)) && ((ctx.step === 'end' && ctx.active !== me) || ((ctx.step === 'declareAttackers' || ctx.step === 'declareBlockers') && defending) || (ctx.step === 'declareBlockers' && myBlocked))) return true;
     if (hasFetch && ((ctx.step === 'end' && g.after(ctx.active)[0] === me) || (ctx.active === me && ctx.step === 'upkeep'))) return true;
     return false;
   }
+  /** remember what was on the stack and what I could have done when I passed on my own trigger */
+  notePriorityPass(ctx) { const trivial = o => o.kind === 'ability' && o.ab && (o.ab.mana || (o.ab.sacSelf && (o.ab.ops || []).length && (o.ab.ops || []).every(x => ['gain', 'draw', 'scry'].includes(x.op)))); this.passedObjs = new Set((ctx.stack || []).map(o => o.id)); this.passedSig = new Set((ctx.options || []).filter(o => !trivial(o)).map(o => o.kind + ':' + o.card.name + ':' + ((o.ab && o.ab.label) || ''))); }
   humanPriority(ctx) {
-    if (!this.shouldStop(ctx)) return Promise.resolve(null);
+    this._ownTrigAsk = false; if (!this.shouldStop(ctx)) return Promise.resolve(null);
+    const ownAsk = this._ownTrigAsk; this._ownTrigAsk = false;
     this.ff = false; this.sfx.play('prompt');
-    return new Promise(res => { this.prompt = { kind: 'priority', ...ctx, res: v => { this.prompt = null; this.mode = null; this.render(); res(v); } }; this.render(); });
+    return new Promise(res => { this.prompt = { kind: 'priority', ...ctx, res: v => { if (ownAsk && !v) this.notePriorityPass(ctx); this.prompt = null; this.mode = null; this.render(); res(v); } }; this.render(); });
   }
   /** a yes/no style choice nested inside whatever is resolving; restores any outer prompt afterwards */
   ask(kind, ctx) {
@@ -1203,7 +1213,7 @@ class Table {
         prm = `<div class="prm"><h4>${esc(P.card.name)}: choose ${P.n > 1 ? 'up to ' + P.n + ' cards' : 'a card'} to ${dest}${fromLib ? ` (${P.pool.length} match${P.pool.length === 1 ? '' : 'es'} in your library)` : ''}</h4>
           <input class="sfind" placeholder="Filter by name…" oninput="GoldfishUI.current.filterSearch(this.value)" autocomplete="off">
           <div class="sgrid">${grid}</div>
-          <div class="gt-ctl">${P.dest === 'sylvan' ? `<button class="chip pri" data-act="search-go">${P.sel.length >= P.n ? `Put ${P.sel.length} back — pay 0 life` : `Put ${P.sel.length} back — pay ${4 * (P.n - P.sel.length)} life`}</button>` : ''}${!peek && P.n === 1 && this.touch ? `<button class="chip pri" data-act="search-go" ${P.sel.length ? '' : 'disabled'}>${P.sel.length ? 'Choose ' + esc(short(P.sel[0].name)) : 'Tap a card, then confirm'}</button>` : ''}${peek ? `<button class="chip pri" data-act="search-go">${P.sel.length ? `Done — ${P.sel.length} to the ${P.dest === 'scry' ? 'bottom' : 'graveyard'}, rest stay on top` : `Keep ${P.pool.length === 1 ? 'it' : 'all'} on top`}</button>` : P.n > 1 && P.dest !== 'sylvan' ? `<button class="chip pri" data-act="search-go">Done (${P.sel.length}/${P.n})</button>` : ''}${fromLib ? `<button class="chip" data-act="search-none">Find nothing</button>` : peek || P.must ? '' : `<button class="chip" data-act="search-none">Skip</button>`}<span class="msg">Hover a card to read it${P.n > 1 || peek ? '; click to select or unselect' : '; click to choose'}.</span></div></div>`; }
+          <div class="gt-ctl">${P.dest === 'sylvan' ? `<button class="chip pri" data-act="search-go">${P.sel.length >= P.n ? `Put ${P.sel.length} back — pay 0 life` : `Put ${P.sel.length} back — pay ${4 * (P.n - P.sel.length)} life`}</button>` : ''}${!peek && P.n === 1 && this.touch ? `<button class="chip pri" data-act="search-go" ${P.sel.length ? '' : 'disabled'}>${P.sel.length ? 'Choose ' + esc(short(P.sel[0].name)) : 'Tap a card, then confirm'}</button>` : ''}${peek ? `<button class="chip pri" data-act="search-go">${P.sel.length ? `Done — ${P.sel.length} to the ${P.dest === 'scry' ? 'bottom' : 'graveyard'}, rest stay on top` : `Keep ${P.pool.length === 1 ? 'it' : 'all'} on top`}</button>` : P.n > 1 && P.dest !== 'sylvan' ? `<button class="chip pri" data-act="search-go">Done (${P.sel.length}/${P.n})</button>` : ''}${fromLib ? `<button class="chip" data-act="search-none">Find nothing</button>` : peek || P.must ? '' : `<button class="chip${P.dest === 'resolve first' ? ' pri' : ''}" data-act="search-none">${P.dest === 'resolve first' ? 'Rest in any order' : 'Skip'}</button>`}<span class="msg">Hover a card to read it${P.n > 1 || peek ? '; click to select or unselect' : '; click to choose'}.</span></div></div>`; }
       else if (P.kind === 'may') prm = `<div class="prm"><h4>${esc(P.card.name)}: ${esc(P.question || 'use this optional trigger?')}</h4>${P.cards ? `<div class="opts">${P.cards.map(c => `<div class="opt" style="cursor:default">${c.img ? `<img src="${esc(big(c.img))}" alt="${esc(c.name)}">` : esc(c.name)}</div>`).join('')}</div>` : ''}<div class="gt-ctl">${P.ok ? '<button class="chip pri" data-act="may-yes">OK</button>' : '<button class="chip pri" data-act="may-yes">Yes</button><button class="chip" data-act="may-no">No</button>'}</div></div>`;
       else if (P.kind === 'choice') prm = `<div class="prm"><h4>${esc(P.question || (P.card ? P.card.name + ': choose' : 'Choose'))}</h4><div class="gt-ctl">${(P.options || []).map((o, i) => `<button class="chip pri" data-act="pick-choice" data-i="${i}">${esc(String(o))}</button>`).join('')}${P.list ? `<input class="sfind" id="choice-free" list="choice-list" placeholder="Search every type in your deck…" autocomplete="off" onkeydown="if(event.key==='Enter'&&this.value.trim())GoldfishUI.current.prompt.res(this.value.trim())"><datalist id="choice-list">${P.list.map(o => `<option value="${esc(String(o))}">`).join('')}</datalist><button class="chip" data-act="choice-go">Choose</button>` : P.free ? `<input class="sfind" id="choice-free" placeholder="Other…" autocomplete="off" onkeydown="if(event.key==='Enter'&&this.value.trim())GoldfishUI.current.prompt.res(this.value.trim())">` : ''}</div>${P.list ? `<div class="note">Tap a common type, or type/search any of the ${P.list.length} creature types in this deck (any other name works too).</div>` : ''}</div>`;
       else if (P.kind === 'player') prm = `<div class="prm"><h4>${esc(P.why)}</h4><div class="gt-ctl">${P.players.map(q => `<button class="chip ${q === me ? '' : 'pri'}" data-act="pick-player" data-p="${q.i}">${esc(short(q.name))} (${q.graveyard.length} card${q.graveyard.length === 1 ? '' : 's'}${q.graveyard.filter(c => c.isCreature).length ? ', ' + q.graveyard.filter(c => c.isCreature).length + ' creatures' : ''})</button>`).join('')}</div></div>`;

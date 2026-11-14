@@ -19,9 +19,15 @@ def load_bulk():
         return json.load(open(os.environ['BULK_FILE'], encoding='utf-8'))
     lst = json.load(get('https://api.scryfall.com/bulk-data'))
     meta = next((x for x in lst.get('data') or [] if x.get('type') == 'oracle_cards'), None)
-    if not meta or not meta.get('download_uri'):
+    if not meta:
         raise RuntimeError('no oracle_cards entry in /bulk-data: ' + json.dumps(lst)[:300])
-    return json.load(get(meta['download_uri'], 600))
+    print('bulk entry:', json.dumps(meta))
+    url = meta.get('download_uri')
+    if not url and meta.get('uri'):  # the list no longer carries the file address: ask the entry itself, then its file form
+        one = json.load(get(meta['uri']))
+        print('bulk entry (direct):', json.dumps(one)[:600])
+        url = one.get('download_uri') or meta['uri'] + '?format=file'
+    return json.load(get(url, 600))
 
 def row(c):
     faces = c.get('card_faces') or []

@@ -88,7 +88,12 @@ function overloadOps(txt) {
   if ((m = t.match(/^(?:this spell|[a-z' ,]+) deals (\d+) damage to target (creature|creature or planeswalker|player|opponent|any target)/))) { const each = parseOps(t.replace(/\btarget\b/g, 'each')); if (each.length) return each; return [{ op: 'damageEach', n: +m[1] }]; }
   return /destroy target creature/.test(t) ? [{ op: 'destroyAll', how: 'destroy', what: 'creatures' }] : [{ op: 'bounceAllOpp' }];
 }
-function parseOps(t) {
+function parseOps(t) { // b25: 'scry N, then draw' must scry first (Lembas, Preordain-style text drew before the scry)
+  const ops = parseOps0(t);
+  if (Array.isArray(ops) && typeof t === 'string' && /\bscry (?:\d+|x|one|two|three)[^.]*?(?:, then|\. then) (?:you )?draw/i.test(t)) { const d = ops.findIndex(o => o.op === 'draw'), sc = ops.findIndex(o => o.op === 'scry'); if (d >= 0 && sc > d) { const [x] = ops.splice(sc, 1); ops.splice(d, 0, x); } }
+  return ops;
+}
+function parseOps0(t) {
   const ops = []; let m; let caveGain = 0;
   /* b18 (execution sweep): modal bullets and "whenever you attack" effects that parsed to nothing */
   { const T = t.trim().replace(/\.$/, '');
@@ -390,7 +395,7 @@ function parseOps(t) {
   if (/each player discards their hand, then draws (seven|that many|cards equal)/.test(t)) ops.push({ op: 'wheel', n: /seven/.test(t) ? 7 : 0 });
   else if ((m = t.match(/each player draws (a|two|three|\d+) cards?/))) ops.push({ op: 'drawEach', n: numOf(m[1]) });
   if ((m = t.match(/target player draws (a|two|three|\d+) cards?(?: and (?:you )?loses? (\d+) life)?/))) { ops.push({ op: 'draw', n: numOf(m[1]) }); if (m[2]) ops.push({ op: 'lose', n: +m[2] }); }
-  if ((m = t.match(/untap up to (one|two|three|four|five|\d+) lands/))) ops.push({ op: 'untapLands', n: numOf(m[1]) });
+  if ((m = t.match(/untap up to (one|two|three|four|five|six|seven|\d+) lands/))) ops.push({ op: 'untapLands', n: numOf(m[1]) }); /* b25: six / seven — Great Whale and Palinchron did nothing on entering */
   else if (/untap all lands you control/.test(t)) ops.push({ op: 'untapLands', n: 99 });
   if (/untap all (nonland permanents|creatures|artifacts) you control/.test(t)) ops.push({ op: 'untapAll', what: t.match(/untap all (nonland permanents|creatures|artifacts) you control/)[1] });
   if (/there is an additional combat phase|additional combat phase after this/.test(t) && !ops.some(o => o.op === 'extraCombat')) ops.push({ op: 'extraCombat' });
@@ -2522,7 +2527,7 @@ function tagCard(c) {
   const isPerm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
   if (isPerm && r.includes('removal') && !(card.statics && card.statics.auraNeutralize)) { // b13: a permanent is cast-time removal only when the destroy/exile/damage text is its own ETB (Shriekmaw, O-Ring) — not when it sits in a "whenever" trigger (Aura Shards, The Tarrasque) or an activated ability (Hopeful Initiate, Venat)
     const RM = /destroy (?:another |up to one )?target|exile target (creature|permanent|nonland|artifact|enchantment)|deals? \d+ damage to (any target|target creature)|fight|target creature gets -\d\/-\d|return target (creature|nonland permanent)( you don't control| an opponent controls)? to its owner|shuffles it into (its|their) library|on the bottom of (its|their) owner's library/;
-    const ok = o.split('\n').some(l => { const i = l.search(RM); if (i < 0) return false; if (/^(whenever|at the beginning)/.test(l)) return false; if (/:/.test(l.slice(0, i)) && !/^when /.test(l)) return false; if (/you may (sacrifice|pay|discard)[^.]*\. (when|if) you do/.test(l)) return false; /* Ruthless Lawbringer: optional cost, handled by its ETB op */ return true; });
+    const ok = o.split('\n').some(l => { const i = l.search(RM); if (i < 0) return false; if (/^(whenever|at the beginning)/.test(l)) return false; if (!/target/.test(l) || /^when this card (?:is put into a graveyard|dies|leaves the battlefield)/.test(l)) return false; /* b25: Lembas — 'when this is put into a graveyard from the battlefield, its owner shuffles it into their library' is not removal and targets nothing; the table was asking for an opposing creature before it could be cast */ if (/:/.test(l.slice(0, i)) && !/^when /.test(l)) return false; if (/you may (sacrifice|pay|discard)[^.]*\. (when|if) you do/.test(l)) return false; /* Ruthless Lawbringer: optional cost, handled by its ETB op */ return true; });
     if (!ok) r.splice(r.indexOf('removal'), 1);
   }
   if (isPerm && r.includes('removal') && card.etbOps && card.etbOps.some(x => x.op === 'damage' && /target/.test(x.to || ''))) r.splice(r.indexOf('removal'), 1); // b13: Annie Joins Up — ETB damage is the removal; the cast-time removal path was a second 5 damage
@@ -4201,10 +4206,16 @@ class Game {
     const names = new Set(p.battlefield.filter(b => !b.neutral).map(b => ((b.card.orig || b.card).name || '').toLowerCase()));
     const has = n => names.has(n.toLowerCase()) || names.has(n.toLowerCase().split(' // ')[0]);
     const covered = new Set(native.flatMap(x => x.pieces.map(n => n.toLowerCase()))); if (native.some(x => x.id === 'esper')) for (const b of p.battlefield) if (b.card.backFace && this.b11_isEsper(b.card.backFace) || this.b11_isEsper(b.card)) { covered.add(((b.card.orig || b.card).name || '').toLowerCase()); }
-    for (const r of COMBOS) { const [a, b, , result] = r; if (!has(a) || !has(b)) continue; if (covered.has(a.toLowerCase()) && covered.has(b.toLowerCase())) continue; if (covered.has(a.toLowerCase()) && /mana/i.test(result) || covered.has(b.toLowerCase()) && /mana/i.test(result)) continue;
+    for (const r of COMBOS) { const [a, b, , result] = r; if (!has(a) || !has(b)) continue; if ([a, b].some(n => /^strionic resonator$/i.test(n))) { const other = /^strionic resonator$/i.test(a) ? b : a; if (!this.stack.some(o => o.kind === 'ability' && o.src && ((o.src.orig || o.src).name || '').toLowerCase() === other.toLowerCase())) continue; } /* b25: Strionic Resonator copies a trigger that is on the stack — with an empty stack (any main phase) there is nothing to loop, so the combo is not offered (Brago + Resonator was shown in a post-combat main phase) */ if (covered.has(a.toLowerCase()) && covered.has(b.toLowerCase())) continue; if (covered.has(a.toLowerCase()) && /mana/i.test(result) || covered.has(b.toLowerCase()) && /mana/i.test(result)) continue;
       const res = String(result); const win = /(infinite|near-infinite) (damage|lifeloss|life loss|life drain|drain|mill)(?! .*self)|win the game/i.test(res) && !/self-?mill/i.test(res);
-      const mana = !win && /infinite (?:[a-z]+ )?mana(?! value)/i.test(res);
-      native.push({ id: 'cs:' + a + '|' + b, kind: win ? 'win' : mana ? 'mana' : 'value', pieces: [a, b], ready: true, colors: mana ? (/colorless/i.test(res) ? ['C'] : ['W', 'U', 'B', 'R', 'G', 'C']) : null, label: res, source: 'Commander Spellbook' }); }
+      let mana = !win && /infinite (?:[a-z]+ )?mana(?! value)/i.test(res), colors = mana ? (/colorless/i.test(res) ? ['C'] : ['W', 'U', 'B', 'R', 'G', 'C']) : null, label = res;
+      if (!win && !mana && /blink/i.test(res)) { // b25: a blink loop on a creature that untaps lands when it enters (Deadeye Navigator + Peregrine Drake / Great Whale / Palinchron) nets mana every loop — the list only says 'infinite blinking', so declaring it gave no mana to play the loop out with
+        const pcs = [a, b].map(n => p.battlefield.find(x => !x.neutral && ((x.card.orig || x.card).name || '').toLowerCase().split(' // ')[0] === n.toLowerCase().split(' // ')[0]));
+        const unt = pcs.map(x => x && ((x.card.orig || x.card).etbOps || []).find(o => o.op === 'untapLands' && !o.atEnd)).find(Boolean);
+        const lands = p.battlefield.filter(l => l.card.isLand && !l.neutral); const srcs = this.manaSrcs(p).filter(s2 => s2.b && lands.includes(s2.b));
+        const made = lands.map(l => Math.max(0, ...srcs.filter(s2 => s2.b === l).map(s2 => s2.amount || 1))).sort((x, y) => y - x).slice(0, unt ? unt.n : 0).reduce((x, y) => x + y, 0);
+        if (unt && pcs.some(x => x && x.card.statics && x.card.statics.deadeye) && made >= 3) { mana = true; colors = [...new Set(srcs.flatMap(s2 => s2.colors || []))]; if (!colors.length) colors = ['C']; label = res + ' + Infinite mana'; } }
+      native.push({ id: 'cs:' + a + '|' + b, kind: win ? 'win' : mana ? 'mana' : 'value', pieces: [a, b], ready: true, colors, label, source: 'Commander Spellbook' }); }
     return native;
   }
   availableCombos(p) { if (!p || p.dead || this.winner) return []; return this.b11_listCombos(p).filter(c => !(c.kind === 'mana' && p.infMana && p.infMana.turn === this.turn)); }
@@ -4469,6 +4480,7 @@ class Game {
       if (!this.canFlash(q, c) || !this.castMode(q, c, 'hand', { instant: true })) continue;
       if (c.roles.includes('counter') && !this.stack.some(o => o.kind !== 'ability' && o.caster !== q && counterHits(c, o.card) && !this.isUncounterable(o))) continue;
       if (c.redirect && !this.redirectable(q)) continue;
+      if (this.noLegalTarget(q, c)) continue; // b25
       out.push({ kind: 'cast', card: c, zone: 'hand' });
     }
     out.push(...this.gyCastOptions(q, { instant: true }), ...this.abilityOptions(q, { instant: true }));
@@ -4626,7 +4638,7 @@ class Game {
     if (pm && card.ravenous) { const x = spell.x || 0; if (x) { pm.counters = (pm.counters || 0) + x; this.say(`— ravenous: ${x} +1/+1 counters`, p); if (x >= 5) await this.draw(p, 1); } }
     /* b23: soulbond pairing moved to soulbondCheck (called from creatureEntered) — the player chooses the partner, and an unpaired soulbond creature can pair with a creature that enters later */
     if (pm && card.kicker && card.kicker.offspring && spell.kicks) await this.runOps(p, [{ op: 'tokenCopyOf', n: 1, pt: [1, 1] }], card, { perm: pm });
-    if (pm) { await this.creatureEntered(p, pm); await this.permEntered(p, pm); }
+    if (pm) { pm.b25_rm = true; /* cast: its enter-removal was resolved above with the target chosen on cast */ await this.creatureEntered(p, pm); await this.permEntered(p, pm); }
 
   }
   /** protection instants (Heroic Intervention, Tamiyo's Safekeeping...): until end of turn */
@@ -4660,18 +4672,37 @@ class Game {
   }
   // ---------- triggers ----------
   /** b13: a permanent's own "when this enters, (you may) destroy/exile target …" when it enters without being cast (token copies, myriad, blink, reanimation) */
+  /** b25: Hideaway N on a nonland permanent (Watcher for Tomorrow) was never run: look at the top N, exile one face down (the player picks), the rest go to the bottom. Runs on every entry, so a flicker hides a fresh card after the old one went to hand. */
+  async hideawayEnter(p, pm) {
+    const card = pm && pm.card; if (!card || !card.hideaway || card.isLand || pm.hideaway || !p.battlefield.includes(pm)) return;
+    if (this.etbSuppressed && this.etbSuppressed(p, pm)) return;
+    const top = p.library.splice(-Math.min(card.hideaway, p.library.length)).reverse(); if (!top.length) return;
+    let pick = null;
+    if (p.human && this.hooks.humanSearch && !this.shortcutting) pick = ([].concat(await this.hooks.humanSearch({ p, card, pool: [...top], n: 1, dest: 'hideaway', must: true }) || []))[0];
+    if (!pick || !top.includes(pick)) { const val = c => p.ai ? p.ai.castValueRaw(this, p, c) : c.cmc; pick = [...top].sort((a, b) => val(b) - val(a))[0]; }
+    p.exile.push(pick); pm.hideaway = pick; const rest = top.filter(c => c !== pick); shuffle(rest, this.rng); p.library.unshift(...rest);
+    this.say(`— ${card.name}: hideaway ${card.hideaway} — exiles a card face down, the rest go to the bottom`, p);
+  }
   async etbRemoval(p, pm) {
-    const card = pm.card; if (!card || !card.roles || !card.roles.includes('removal') || card.isInstant || card.isSorcery) return;
-    const m = (card.oracle || '').match(/^when this (?:creature|card|permanent) enters, (you may )?(destroy|exile) (?:up to one )?(?:another )?target ([a-z ,\/]+?)(?: an opponent controls)?\.?$/im); if (!m) return;
-    const may = !!m[1], how = m[2].toLowerCase(), f = m[3].toLowerCase(); const oppOnly = /an opponent controls/i.test(m[0]);
+    // b25: runs for EVERY entry that was not a cast (flicker, blink, reanimation, token copies) — Cloudshift on Reflector Mage did nothing because only a few entry paths called this. Once per entry (pm.b25_rm).
+    if (!pm || pm.b25_rm || !p.battlefield.includes(pm)) return; pm.b25_rm = true;
+    const card = pm.card; if (!card || !card.roles || card.isInstant || card.isSorcery) return;
+    if (this.etbSuppressed && this.etbSuppressed(p, pm)) return;
+    // 'when this enters, (you may) search your library …' kept as card.tutor (Recruiter of the Guard, Tribute Mage) only ran on cast
+    if (card.tutor && /when(?:ever)? [^.]*enters[^.]*search your library/i.test(card.oracle || '') && !(card.etbOps || []).some(o => /^(tutorTo|landToBf|landToHand|tutorAll|tutorTop)$/.test(o.op))) { this.say(`— ${card.name} enters: searches the library`, p); await this.doTutor(p, card, null); }
+    if (!card.roles.includes('removal')) return;
+    if ((card.etbOps || []).some(o => /destroy|exile|bounce|tuck|fight|damage/i.test(o.op))) return; // its enter-removal is a real ETB op (Shriekmaw, Banisher Priest): that already ran — don't remove twice
+    const O = (card.oracle || '').replace(/^(.*?) — /gm, '');
+    const m = O.match(/^when (?:this (?:creature|card|permanent|artifact|enchantment)|[A-Z][^,\n]{0,40}?) enters, (you may )?(destroy|exile|return) (?:up to one )?(?:another )?target ([a-z ,\/]+?)(?: an opponent controls| you don't control)?( to its owner's hand)?(?:\.|$)/im); if (!m || (m[2].toLowerCase() === 'return' && !m[4])) return;
+    const may = !!m[1], how = m[2].toLowerCase() === 'return' ? 'bounce' : m[2].toLowerCase(), f = m[3].toLowerCase(); const oppOnly = /an opponent controls|you don't control/i.test(m[0]);
     const typeOk = b => f.split(/ or |, /).some(t => matchesFilter(b.card, t.trim().replace(/^non/, 'non')) || (t.trim() === 'permanent') || (t.trim() === 'nonland permanent' && !b.card.isLand));
     const ok = b => typeOk(b) && b !== pm && this.targetOk(card, b, p) && !(how === 'destroy' && this.isIndestructible(b));
     let t = null;
     if (p.ai) { const r = p.ai.bestTarget(this, p, ok); t = r ? r.perm : null; }
-    else { const pool = [...this.oppPerms(p, ok), ...(oppOnly ? [] : p.battlefield.filter(b => ok(b) && b !== pm))]; if (!pool.length) return; const c = (await this.chooseFromList(p, card, pool.map(b => b.card), 1, 'target'))[0]; t = pool.find(b => b.card === c) || null; }
+    else { const pool = [...this.oppPerms(p, ok), ...(oppOnly ? [] : p.battlefield.filter(b => ok(b) && b !== pm))]; if (!pool.length) { this.say(`— ${card.name} enters: no target`, p); return; } const c = (await this.chooseFromList(p, card, pool.map(b => b.card), 1, 'target'))[0]; t = pool.find(b => b.card === c) || null; }
     if (!t) { if (!may) this.say(`— ${card.name}: no target`, p); return; }
-    const o = this.ownerOf(t); if (!o) return; this.say(`— ${card.name} enters: ${how === 'exile' ? 'exiles' : 'destroys'} ${t.card.name}`, p);
-    if (how === 'exile') await this.exilePerm(o, t); else await this.destroy(o, t);
+    const o = this.ownerOf(t); if (!o) return; this.say(`— ${card.name} enters: ${how === 'exile' ? 'exiles' : how === 'bounce' ? 'returns to hand' : 'destroys'} ${t.card.name}`, p);
+    if (how === 'exile') await this.exilePerm(o, t); else if (how === 'bounce') { t.owner = o.i; await this.bounce(o, t, p); if (card.b1_reflector) this.b1_reflectorLock(p, t); } else await this.destroy(o, t);
   }
   async exilePerm(o, t) { if (!o.battlefield.includes(t)) return; o.battlefield.splice(o.battlefield.indexOf(t), 1); await this.emit({ type: 'destroy', owner: o, perm: t, quiet: true }); const c = t.card.orig || t.card; if (!t.card.token) await this.toZone(o, c, 'exile'); await this.leftBattlefield(o, t); await this.exiledFromBf(o, t); }
   copyBonus(p) { return p.battlefield.filter(b => b.card.statics && b.card.statics.copyPlus && !b.neutral).length; }
@@ -4871,6 +4902,26 @@ class Game {
       if (c.isPlaneswalker && o.battlefield.some(x => x.card.statics && x.card.statics.pwHexproof && !x.neutral && (!x.chosenType || matchesFilter(c, x.chosenType)))) return false; }
     if (src && this.protectedFrom(b, src)) return false; return true; }
   allPerms(f) { return this.alive().flatMap(q => q.battlefield.filter(f)); }
+  /** b25: an instant or sorcery whose only targets are creatures can't be cast when there is no legal creature for one of them (Cloudshift and Swords to Plowshares were offered in every 'Respond?' prompt on an empty board). Deliberately narrow: anything with 'up to', 'any target', modes, or a target that is not plainly a creature on the battlefield is left alone. */
+  noLegalTarget(q, c) {
+    if (!c || !(c.isInstant || c.isSorcery) || (c.modes && c.modes.length) || c.redirect) return false;
+    const o = (c.oracle || '').toLowerCase().replace(/\([^)]*\)/g, '');
+    const ts = o.match(/target [^.,;:]*/g) || [];
+    if (!ts.length || /up to|any number of|any target|choose (?:one|two|up)/.test(o)) return false;
+    let own = false, opp = false, any = false;
+    for (const t of ts) {
+      if (/^target (?:creature|permanent)s?(?: card| spell| or | token)|^target (?:creatures|player|opponent|spell)/.test(t) || / or /.test(t.slice(0, 34))) return false;
+      if (/^target (?:nontoken |attacking |blocking |tapped |untapped |legendary |nonlegendary )?creature you control\b/.test(t)) own = true;
+      else if (/^target (?:nontoken |attacking |blocking |tapped |untapped |legendary |nonlegendary )?creature (?:an opponent controls|you don't control)\b/.test(t)) opp = true;
+      else if (/^target (?:nontoken |tapped |untapped |legendary |nonlegendary )?creature\b/.test(t)) any = true;
+      else return false;
+    }
+    const cr = b => b.card.isCreature && !b.phased;
+    if (own && !q.battlefield.some(b => cr(b))) return true;
+    if (opp && !this.oppPerms(q, cr).length) return true;
+    if (any && !q.battlefield.some(cr) && !this.oppPerms(q, cr).length) return true;
+    return false;
+  }
   /** re-read a permanent's card with different text (sagas gaining abilities, classes levelling up) */
   retag(card, oracle) {
     const base = card.orig || card;
@@ -5131,12 +5182,7 @@ class Game {
           const pool = p.battlefield.filter(b => ok(b) && b !== ctx.perm); if (!pool.length) break;
           let v; if (p.human) { const pick = (await this.chooseFromList(p, src, pool.map(b => b.card), 1, 'flicker'))[0]; v = pool.find(b => b.card === pick); } else v = [...pool].sort((a, b) => ((b.card.etbOps ? 5 : 0) + (b.tapped ? 1 : 0)) - ((a.card.etbOps ? 5 : 0) + (a.tapped ? 1 : 0)))[0];
           if (!v) break; if (op.n > 1 && !ctx.flickerDepth) await this.runOps(p, [{ ...op, n: op.n - 1 }], src, { ...ctx, flickerDepth: 1, perm: v });
-          const base = v.card.orig || v.card; p.battlefield.splice(p.battlefield.indexOf(v), 1); await this.emit({ type: 'destroy', owner: p, perm: v, quiet: true });
-          if (v.card.token) { this.say(`— ${v.card.name} is exiled (tokens don't return)`, p); break; }
-          const pm = await this.enterPerm(p, base, { summoning: base.isCreature }); this.say(`— flickers ${base.name}`, p); if (!pm) break;
-          await this.emit({ type: 'resolve', p, card: base, perm: pm });
-          if (pm.card.etbOps) for (let k = this.etbTimes(p, pm); k > 0; k--) await this.trigger(p, pm, pm.card.etbOps, { perm: pm }, 'ETB');
-          await this.creatureEntered(p, pm); break;
+          this.say(`— flickers ${v.card.name}`, p); await this.blinkNow(p, v, src); break; /* b25: one blink routine — this copy skipped leave-the-battlefield triggers (Watcher for Tomorrow's hidden card), exile triggers, attached Auras/Equipment falling off, and non-creature enter triggers */
         }
         case 'impulse': { const top = p.library.splice(-Math.min(op.n, p.library.length)).reverse(); for (const c of top) { c.impulse = op.next ? { pTurn: (p.turnCount || 0) + 1 } : { turn: this.turn }; p.hand.push(c); } this.say(`— exiles ${top.map(c => c.name).join(', ') || 'nothing'} (may play ${op.next ? 'until the end of next turn' : 'this turn'})`, p); break; }
         case 'pumpAll': { const n = op.n === 'creatures' ? p.battlefield.filter(b => b.card.isCreature).length : op.n; p.pumpUntilEOT = (p.pumpUntilEOT || 0) + n; if (op.kws && op.kws.length) p.kwEOT = new Set([...(p.kwEOT || []), ...op.kws]); this.refreshStatics(); this.say(`— creatures get +${n}/+${n}${op.kws && op.kws.length ? ' and ' + op.kws.join(', ') : ''} this turn`, p); break; }
@@ -6725,7 +6771,7 @@ class Game {
     else mate = [...pool].sort((a, z) => ((z.card.orig || z.card).isCommander ? 1 : 0) - ((a.card.orig || a.card).isCommander ? 1 : 0) || this.powerOf(p, z) - this.powerOf(p, a))[0];
     pm.pairedWith = mate.id; mate.pairedWith = pm.id; this.say(`— ${pm.card.name} pairs with ${mate.card.name}`, p); this.refreshStatics();
   }
-  async creatureEntered(p, perm) { return this.held(async () => { await this.soulbondCheck(p, perm); return this._creatureEntered(p, perm); }); }
+  async creatureEntered(p, perm) { return this.held(async () => { await this.hideawayEnter(p, perm); await this.etbRemoval(p, perm); await this.soulbondCheck(p, perm); return this._creatureEntered(p, perm); }); }
   async _creatureEntered(p, perm) {
     if (!this._gyEnt) { this._gyEnt = true; try { await this.gyEnterTriggers(p, perm); } finally { this._gyEnt = false; } }
     if (!perm || !perm.card.isCreature) return;
@@ -6747,7 +6793,7 @@ class Game {
       for (let k = this.etbTimes(q, perm) * this.trigTimes(q, b, 'enter', perm); k > 0; k--) (this.trigOk()) && await this.trigger(q, b, tr.ops, { perm: b, entered: perm, enteredOwner: p }, 'enters');
     }
   }
-  async permEntered(p, perm) { return this.held(() => this._permEntered(p, perm)); }
+  async permEntered(p, perm) { return this.held(async () => { await this.etbRemoval(p, perm); return this._permEntered(p, perm); }); }
   async _permEntered(p, perm) {
     if (!perm) return;
     if (!this._kodamaPut) for (const k of p.battlefield.filter(b => b !== perm && b.card.statics && b.card.statics.kodama && !b.neutral)) await this.runOps(p, [{ op: 'kodama', mv: perm.card.cmc || 0 }], k.card, { perm: k });
@@ -7008,7 +7054,7 @@ class Game {
   legalActions(q) {
     if (q.dead) return [];
     const out = [];
-    for (const c of q.hand) if (this.canFlash(q, c) && (!c.roles.includes('counter') || (c.modes && c.modes.some(m => m.card && !(m.card.roles || []).includes('counter')))) && /* b13: Dawn Charm-style modal cards with a counter mode still offer their other modes */ !(c.redirect && !this.redirectable(q)) && this.castMode(q, c, 'hand', { instant: true })) out.push({ kind: 'cast', card: c });
+    for (const c of q.hand) if (this.canFlash(q, c) && (!c.roles.includes('counter') || (c.modes && c.modes.some(m => m.card && !(m.card.roles || []).includes('counter')))) && /* b13: Dawn Charm-style modal cards with a counter mode still offer their other modes */ !(c.redirect && !this.redirectable(q)) && !this.noLegalTarget(q, c) && this.castMode(q, c, 'hand', { instant: true })) out.push({ kind: 'cast', card: c });
     for (const b of q.battlefield) if (b.card.fetch && this.canActivate(q, b)) out.push({ kind: 'fetch', perm: b, card: b.card });
     out.push(...this.gyCastOptions(q, { instant: true }), ...this.abilityOptions(q, { instant: true }));
     { const top = q.library[q.library.length - 1]; // b13: Bolas's Citadel / Mystic Forge: an instant (or flash card) on top of the library is castable at instant speed

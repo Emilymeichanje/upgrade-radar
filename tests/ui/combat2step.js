@@ -30,6 +30,15 @@ ok('Cancel returns to main 1 with Attack still available',back.phase==='main1'&&
 // v123: a second tap/click landing on Attack right after a picker closes must not start combat (Lightning Greaves equip → combat)
 { const g1=await pg.evaluate(()=>{const U=GoldfishUI.current;U.pickClosedAt=Date.now();document.querySelector('[data-act=attack]').click();return U.turnPhase+':'+U.myTurn+':'+(U.mode&&U.mode.kind)});
   ok('a click on Attack within half a second of a picker closing is ignored',g1==='main1:true:null',g1); await pg.waitForTimeout(650); }
+// v136: something aimed at my permanent + any instant-speed option (a sacrifice outlet) stops me, even while passing to my turn or on Stops: minimal
+{ const r=await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game,me=U.me,opp=g.players[1];const mine={id:987654,card:Goldfish.tagCard({name:'My Commander',type:'Legendary Creature — Angel',mana:'{3}{W}{W}',oracle:'Flying',cmc:5,power:'4',toughness:'4'}),tapped:false,counters:0};me.battlefield.push(mine);
+  const rift=Goldfish.tagCard({name:'Cyclonic Rift',type:'Instant',mana:'{1}{U}',oracle:"Return target nonland permanent you don't control to its owner's hand.",cmc:2});const obj={id:55555,kind:'spell',card:rift,caster:opp,target:mine};
+  const seer={kind:'ability',card:{name:'Viscera Seer',roles:[]},ab:{ops:[{op:'scry'}],label:''}};const ctx=()=>({step:'stack',stack:[obj],options:[seer],active:opp});const keep=[U.s.stops,U.passUntilTurn];const out={};
+  U.s.stops='smart';U.passUntilTurn=false;out.smart=U.shouldStop(ctx());U.passUntilTurn=true;out.passing=U.shouldStop(ctx());U.passUntilTurn=false;U.s.stops='minimal';out.minimal=U.shouldStop(ctx());
+  obj.target=opp.battlefield[0]||null;U.s.stops='smart';U.passUntilTurn=true;out.notMine=U.shouldStop(ctx());
+  U.s.stops=keep[0];U.passUntilTurn=keep[1];me.battlefield.splice(me.battlefield.indexOf(mine),1);return out});
+  ok("a removal spell aimed at my permanent stops me when I have a sacrifice outlet — on smart stops, while passing to my turn, and on minimal stops",r.smart===true&&r.passing===true&&r.minimal===true,JSON.stringify(r));
+  ok('…but not for a spell aimed at someone else while I am passing to my turn',r.notMine===false,JSON.stringify(r)); }
 const trigBefore=await pg.evaluate(()=>GoldfishUI.current.game.log.filter(x=>/Gandalf, Party Guest triggers/.test(x.m)).length);
 await pg.click('[data-act=attack]');
 await pg.waitForFunction(()=>GoldfishUI.current.mode&&GoldfishUI.current.mode.kind==='attack',null,{timeout:10000}).catch(()=>{});

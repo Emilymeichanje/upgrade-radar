@@ -638,9 +638,10 @@ class Table {
       if (ctx.stack[ctx.stack.length - 1].caster === me && this.s.stops !== 'all') return false; // you just acted: keep going unless someone answers
       const aimed = theirs.some(o => this.aimedAtMe(o) || g.threatTo(me, o).length);
       const answers = ctx.options.some(o => o.kind === 'cast' && (o.card.roles.includes('counter') || o.card.redirect || o.card.roles.includes('protect')));
-      if (this.passUntilTurn && ctx.active !== me) return aimed && answers; // even when skipping, stop if something is aimed at you and you can answer it
+      const canReact = ctx.options.some(o => o.kind === 'cast' || o.kind === 'fetch' || (o.kind === 'ability' && !(o.ab && o.ab.mana))); /* b33: a sacrifice outlet, a flicker or any instant is a real response to something aimed at your permanent — not only counterspells and protection (Cyclonic Rift on a commander with Viscera Seer out went by without a prompt) */
+      if (this.passUntilTurn && ctx.active !== me) return aimed && canReact; // even when skipping to your turn, stop if something is aimed at you and you can do anything about it
       if (this.s.stops === 'all') return true;
-      if (this.s.stops === 'minimal') return answers && (aimed || ctx.options.some(o => o.kind === 'cast' && o.card.roles.includes('counter')));
+      if (this.s.stops === 'minimal') return (aimed && canReact) || (answers && ctx.options.some(o => o.kind === 'cast' && o.card.roles.includes('counter')));
       return answers || aimed;
     }
     if (this.passUntilTurn && ctx.active !== me) return false;

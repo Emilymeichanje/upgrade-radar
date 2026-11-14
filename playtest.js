@@ -1565,7 +1565,7 @@ function tagAbilities(card) {
     if (/^when this card enters, put a \+1\/\+1 counter on each of up to two target creatures/.test(l)) { ETB([{ op: 'counters', n: 1, to: 'target creature', preferOther: true }, { op: 'counters', n: 1, to: 'target creature', preferOther: true, second: true }]); continue; }
     if (/^if one or more counters would be put on an artifact or creature you control, that many plus one of each of those kinds of counters are put on that permanent instead/.test(l)) { ST('counterPlus', 1); continue; }
     if (/^if you would get one or more counters, you get that many plus one of each of those kinds of counters instead/.test(l)) { ST('playerCounterPlus', 1); continue; }
-    if (/^this card's power is equal to the number of creatures in your party/.test(l)) { ST('lords', [{ self: true, p: 1, per: 'party' }]); continue; }
+    if (/^this card's power is equal to the number of creatures in your party/.test(l)) { ST('lords', [{ self: true, p: 1, per: 'party' }]); card.b22_starBase = 0; continue; }
     if (/^when this card enters, exile target spell\. it becomes plotted/.test(l)) { ETB([{ op: 'bounceSpell', plot: true }]); continue; }
     if (/^spells your opponents cast from graveyards or from exile cost \{2\} more to cast/.test(l)) { ST('taxGyExile', 2); continue; }
     if ((m = l.match(/^(noncreature spells|creature spells|artifact spells|spells|instant and sorcery spells|activated abilities)( your opponents cast| you cast)? costs? \{(\d)\} more to (cast|activate)\.?$/))) { ST('tax', [...((card.__lateS || {}).tax || []), { what: m[1], who: m[2] ? (/opponents/.test(m[2]) ? 'opp' : 'you') : 'all', n: +m[3] }]); continue; }
@@ -1589,7 +1589,7 @@ function tagAbilities(card) {
     if (/^after this main phase, there are two additional combat phases/.test(l)) { card.spellOpsX = [{ op: 'extraCombat' }, { op: 'extraCombat' }, ...(card.spellOpsX || [])]; continue; }
     if (/^cast this spell only during combat on an opponent's turn/.test(l)) { card.castOnlyOppCombat = true; continue; }
     if (/^goad all creatures your opponents control\. until your next turn, those creatures can't block/.test(l)) { card.spellOpsX = [{ op: 'goadAll', noBlock: true }]; continue; }
-    if (/^this card's power is equal to the number of artifacts your opponents control/.test(l)) { ST('lords', [{ self: true, p: 1, per: 'oppArtifacts' }]); continue; }
+    if (/^this card's power is equal to the number of artifacts your opponents control/.test(l)) { ST('lords', [{ self: true, p: 1, per: 'oppArtifacts' }]); card.b22_starBase = 0; continue; } /* b22: '*' was read as a base of 2 on top of the count (Avalanche hit for 11 with 7 artifacts and Jetmir's +2) */
     if (/^\+1: put a \+1\/\+1 counter on up to one target creature\. it gains indestructible until end of turn/.test(l)) { PW('+1', [{ op: 'counters', n: 1, to: 'target creature', addTempKw: 'indestructible' }]); continue; }
     if (/^−2: whenever one or more nontoken creatures attack this turn, create that many 1\/1 white soldier creature tokens that are tapped and attacking/.test(l)) { PW('−2', [{ op: 'basriMinus' }]); continue; }
     if (/^activated abilities of artifacts can't be activated/.test(l)) { ST('ouphe', true); continue; }
@@ -1667,7 +1667,7 @@ function tagAbilities(card) {
     if (/^when you attack with three or more creatures, transform this card/.test(l)) { TR('attack', [{ op: 'transform' }], { who: 'you', minAttackers: 3 }); continue; }
     if (/^when this card enters, each opponent loses life equal to the number of vampires you control\. you gain life equal to the life lost this way/.test(l)) { ETB([{ op: 'drain', n: { $: 'count', f: 'vampire' }, each: true, gainLost: true }]); continue; }
     if (/^whenever one or more nontoken vampires you control attack, create a 1\/1 white vampire creature token with lifelink/.test(l)) { TR('attack', [{ op: 'tokens', n: 1, pt: [1, 1], kw: ['lifelink'], types: 'Vampire', tcolors: ['W'] }], { who: 'you', oneOrMore: true, attackerFilter: 'nontoken vampire' }); continue; }
-    if (/^this card's power is equal to 1 plus the number of card types among cards in your opponents' graveyards/.test(l)) { ST('lords', [{ self: true, p: 1, per: 'oppGyTypes' }]); continue; }
+    if (/^this card's power is equal to 1 plus the number of card types among cards in your opponents' graveyards/.test(l)) { ST('lords', [{ self: true, p: 1, per: 'oppGyTypes' }]); card.b22_starBase = 1; continue; }
     if ((m = l.match(/^renew — ((?:\{[^}]+\})+), exile this card from your graveyard: put a flying counter, a deathtouch counter, and a lifelink counter on target creature/))) { card.abilities.push({ zone: 'graveyard', label: 'renew', cost: manaInfo(m[1].toUpperCase()), exileSelf: true, speed: 'sorcery', ops: [{ op: 'kwCounters', kws: ['flying', 'deathtouch', 'lifelink'] }] }); continue; }
     if (/^whenever a vampire you control deals combat damage to a player, put a \+1\/\+1 counter on it/.test(l)) { card.triggers.push({ when: 'combatDamage', zone: 'battlefield', who: 'a creature you control', attackerFilter: 'vampire', ops: [{ op: 'counterOnAttacker' }] }); continue; }
     if (/^when this card enters, you may sacrifice another creature\. when you do, destroy target nonland permanent/.test(l)) { ETB([{ op: 'sacThenDestroy' }]); continue; }
@@ -2276,7 +2276,7 @@ function tagAbilities(card) {
       if (ops.length) card.triggers.push({ when: 'landfall', zone: fromGy ? 'graveyard' : 'battlefield', ops, may: /you may/.test(m[1]) }); continue; }
     if ((m = l.match(/^whenever one or more other creatures die, (.+?)\. this ability triggers only once each turn/))) { const ops = parseOps(m[1]); if (ops.length) card.triggers.push({ when: 'dies', zone: 'battlefield', another: true, yours: false, nontoken: false, oncePerTurn: true, ops }); continue; }
     if ((m = l.match(/^whenever (this card or )?(another |a )?(nontoken )?creature (you control )?dies, (.+)$/))) { const ops = parseOps(m[5]); if (ops.length) card.triggers.push({ when: 'dies', zone: 'battlefield', self: !!m[1], another: m[2] === 'another ', yours: !!m[4], nontoken: !!m[3], ops }); continue; }
-    if ((m = l.match(/^whenever an opponent casts (?:a |an |their first )?([a-z ]*?)spell(?: each turn)?, (?:you may )?(.+?)(?: unless that player pays \{(\d+|x)\})?\.?$/))) { const ops = parseOps(m[2]); if (ops.length) card.triggers.push({ when: 'oppCast', zone: 'battlefield', filter: m[1].trim(), firstEach: /their first/.test(l), ops, tax: m[3] ? (m[3] === 'x' ? 'power' : +m[3]) : 0 }); continue; }
+    if ((m = l.match(/^whenever an opponent casts (?:a |an |their first )?([a-z ]*?)spell(?: each turn)?, (?:you may )?(.+?)(?: unless that player pays \{(\d+|x)\}(?:, where x is [^.]*)?)?\.?$/))) { /* b22: ', where X is this creature's power' made the tax unreadable — Esper Sentinel drew for free every time */ const ops = parseOps(m[2]); if (ops.length) card.triggers.push({ when: 'oppCast', zone: 'battlefield', filter: m[1].trim(), firstEach: /their first/.test(l), ops, tax: m[3] ? (m[3] === 'x' ? 'power' : +m[3]) : 0 }); continue; }
     if ((m = l.match(/^whenever a player casts (?:a |an )?([a-z ]*?)spell, (.+)$/))) { const ops = parseOps(m[2]); if (ops.length) card.triggers.push({ when: 'anyCast', zone: 'battlefield', filter: m[1].trim(), ops }); continue; }
     if ((m = l.match(/^whenever an opponent draws a card(?:, if it isn't that player's turn)?, (.+)$/))) {
       const t2 = m[1]; let ops = parseOps(t2);
@@ -2317,6 +2317,7 @@ function tagAbilities(card) {
   _wbMark();
   tagStatic(card, lines);
   _thrMark(); if (card.hasThr) card.triggersAll = card.triggers.slice();
+  if (card.b22_starBase != null) card.power = card.b22_starBase; /* b22: power '*' set by 'power is equal to …' starts from 0 (or 1), not the generic guess of 2 */
   if (card.__lateS) Object.assign(card.statics, card.__lateS); if (card.__lateR) card.reducers.push(...card.__lateR); if (card.__lateA) card.anthems.push(...card.__lateA); if (card.__lateE) card.equip = card.__lateE;
   if (card.__b6post) { for (const f of card.__b6post) f(card); delete card.__b6post; } // b6: card-specific post-parse fixes
   tagModes(card, lines);
@@ -3210,6 +3211,7 @@ class Game {
       if (s.kind === 'led') { const i = p.battlefield.indexOf(s.b); if (i >= 0) { p.graveyard.push(...p.hand); p.hand = []; p.battlefield.splice(i, 1); p.graveyard.push(s.b.card); this.say(`— discards their hand and sacrifices ${s.b.card.name} for mana`, p); } continue; }
       const b = s.b; if (s.b6noTap) b.b6m01Turn = this.turn; else b.tapped = true; const S = b.card.statics || {}; if (s.b4also) s.b4also.tapped = true;
       if (b.tapped && b.card.isCreature) this._tappedQueue = [...(this._tappedQueue || []), b];
+      if (b.card.isArtifact) for (const o of this.opponentsOf(p)) for (const av of o.battlefield.filter(x => x.card.statics && x.card.statics.avalanche && !x.neutral)) (this.pendingLife = this.pendingLife || []).push([p, -1, av.card]); /* b22: tapping an artifact for mana is activating an ability of it (Avalanche of Sector 7 only pinged for equip and the like) */
       if (/^\{T\}, Pay 1 life: Add \{B\}\. Put a hatchling counter on this land\./.test(b.card.oracle || '')) { (b.ck = b.ck || {}).hatchling = (b.ck.hatchling || 0) + 1; p.life -= 1; }
       if (b.card.isCreature && !b.card.isLand && b.tyvarTurn !== this.turn && p.battlefield.some(x => x.card.statics && x.card.statics.tyvarMana && !x.neutral)) { b.tyvarTurn = this.turn; b.counters = (b.counters || 0) + this.counterAmt(p, s.amount || 1); }
       if (b.card.grandSummon) { p.grandTurn = this.turn; p.grandN = (p.grandN || 0) + b.card.grandSummon; }

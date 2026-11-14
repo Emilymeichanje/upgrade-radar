@@ -397,6 +397,7 @@ async function cardsNamed(names,opt={}){await cdbOpen();const out=[],need=[],onl
     for(let i=0;i<need.length&&online&&!fails&&Date.now()>(CDB.downUntil||0);i+=75){let got=null;try{got=await cardsNamedNet(need.slice(i,i+75))}catch(e){got=null;fails++;CDB.downUntil=Date.now()+30000; /* don't make every deck wait out its own timeout */ CDB.lastErr=e.name==='AbortError'?'no answer from Scryfall (timed out)':e.message}
       if(got&&got.length){cdbPut(got);out.push(...got)}}
     if(!online)CDB.lastErr='offline';else if(!CDB.lastErr&&Date.now()<=(CDB.downUntil||0))CDB.lastErr='Scryfall did not answer a moment ago';
+    if(CDB.lastErr&&online&&!CDB.packTried&&need.some(n=>{const v=cdbGet(n);return !v||v.c.fallback||!v.c.img})){CDB.packTried=true;try{CDB.packGot=await packPull()}catch(e){}} /* Scryfall would not answer: read the card pack another of your devices saved to Sync */
     for(const n of need){const v=cdbGet(n);if(v&&!out.includes(v.c))out.push(v.c)} /* offline or Scryfall failed: fall back to the stored copy, however old */
     const miss=need.filter(n=>!cdbGet(n));if(miss.length&&(CDB.lastErr||!online)){const fb=await cdbFallback();const add=[];for(const n of miss){const c=fb.get(norm0(n))||fb.get(ALIAS[norm0(n)]);if(c)add.push(c)}if(add.length){const st=CDB.db&&CDB.db.transaction('cards','readwrite').objectStore('cards');for(const c of add){const v={c,t:0};CDB.m.set(norm0(c.name),v);try{st&&st.put(v,norm0(c.name))}catch(e){}}out.push(...add);CDB.usedFallback=(CDB.usedFallback||0)+add.length}} /* last resort: card text shipped with the app (no pictures); marked stale so the real data replaces it when Scryfall answers */ }
   const seen=new Set();return out.filter(c=>!seen.has(c.name)&&seen.add(c.name));
@@ -496,6 +497,15 @@ async function syncNow(){if(!syncTok())return false;if(syncing){await syncing.ca
     if(changedLocal){buildIndex();if(!$('#home').hidden)renderHome()}
     syncStatus('Synced '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+' · '+Object.keys(merged).length+' decks');return true})();
   try{return await syncing}catch(e){syncStatus(e.message,true);return false}finally{syncing=null}}
+// ---------- card pack in the Sync gist: a device that CAN reach Scryfall publishes card data + picture addresses; a device that can't reads them from GitHub and then only needs the picture server ----------
+const PACK_FILE='mtg-cards.json';
+const packSlim=c=>({name:c.name,mana:c.mana,mana2:c.mana2||undefined,type:c.type,oracle:c.oracle,cmc:c.cmc,power:c.power,toughness:c.toughness,power2:c.power2,toughness2:c.toughness2,loyalty:c.loyalty,loyalty2:c.loyalty2,img:c.img,imgN:c.imgN,img2:c.img2||undefined,artc:c.artc,ci:c.ci,uri:c.uri,rank:c.rank,date:c.date,set:c.set,setcode:c.setcode,keywords:c.keywords});
+const strHash=t=>{let h=5381;for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;return (h>>>0).toString(36)};
+async function packPush(){if(!syncTok()||navigator.onLine===false)return false;const names=offNames();const seen=new Set();const cs=[];for(const n of names){const v=cdbGet(n);if(v&&!v.c.fallback&&v.c.img&&!seen.has(v.c.name)){seen.add(v.c.name);cs.push(v.c)}}
+  if(!cs.length||cs.length<names.length*0.9)return false;const sig=cs.length+':'+strHash(cs.map(c=>c.name).sort().join('|'));if(lsGet('pack-sig')===sig)return false;
+  const found=await findGist();if(!found)return false;const r=await gh('/gists/'+found.id,{method:'PATCH',soft:true,body:JSON.stringify({files:{[PACK_FILE]:{content:JSON.stringify({at:new Date().toISOString(),cards:cs.map(packSlim)})}}})});if(r&&r.ok){lsSet('pack-sig',sig);return true}return false}
+async function packPull(){if(!syncTok()||navigator.onLine===false)return 0;const found=await findGist();const f=found&&found.gist.files&&found.gist.files[PACK_FILE];if(!f)return 0;let txt=f.content;if(f.truncated||!txt)txt=await (await fetchT(f.raw_url,{cache:'no-store'},30000)).text();
+  const j=JSON.parse(txt||'{}');const add=(j.cards||[]).filter(c=>{const v=cdbGet(c.name);return c&&c.name&&(!v||v.c.fallback||!v.c.img)});if(add.length)cdbPut(add);return add.length}
 // ---------- offline pack: the app itself (service worker) + every card's data and pictures ----------
 const OFF={busy:false,stop:false,msg:'',sw:null,install:null};
 const offCfg=()=>{try{return JSON.parse(lsGet('offline')||'null')||{}}catch(e){return {}}};
@@ -512,12 +522,13 @@ async function offDownload(quiet){if(OFF.busy)return;if(navigator.onLine===false
   OFF.busy=true;OFF.stop=false;offSave({on:true});offStatus('Preparing…');
   try{try{if(navigator.storage&&navigator.storage.persist)await navigator.storage.persist()}catch(e){}
     const names=offNames();const cards=[];for(let i=0;i<names.length&&!OFF.stop;i+=150){offStatus(`Card data ${Math.min(i+150,names.length)}/${names.length}…`);try{cards.push(...await cardsNamed(names.slice(i,i+150)))}catch(e){}}
-    const urls=offUrls(cards);const cache=await caches.open('mtg-img-v1');const have=new Set((await cache.keys()).map(r=>r.url));const todo=urls.filter(u=>!have.has(imgKey(u)));
+    try{await packPush()}catch(e){}
+    const noPic=cards.filter(c=>!c.img).length;const urls=offUrls(cards);const cache=await caches.open('mtg-img-v1');const have=new Set((await cache.keys()).map(r=>r.url));const todo=urls.filter(u=>!have.has(imgKey(u)));
     let done=0,fail=0;const total=todo.length;const work=async()=>{while(todo.length&&!OFF.stop){const u=todo.pop();try{let r;try{r=await fetch(u,{mode:'cors',credentials:'omit'})}catch(e){if(navigator.onLine===false)throw e;r=await fetch(u,{mode:'no-cors'})} /* fall back to an opaque copy if the image host sends no CORS header */ if(r.ok||r.type==='opaque')await cache.put(imgKey(u),r);else{fail++;OFF.err='HTTP '+r.status}}catch(e){fail++;OFF.err=e.message;if(navigator.onLine===false){OFF.stop=true}}done++;if(done%10===0||!todo.length)offStatus(`Pictures ${done}/${total}${fail?' · '+fail+' failed':''}…`)}};
     if(total)await Promise.all([0,1,2,3,4,5].map(work));
     if(navigator.serviceWorker&&navigator.serviceWorker.controller)navigator.serviceWorker.controller.postMessage('refresh-shell');
-    const complete=!OFF.stop&&!fail&&cards.length>0;offSave({on:true,done:complete,at:new Date().toISOString(),cards:cards.length,imgs:urls.length-todo.length-fail,want:urls.length});
-    offStatus((complete?`Ready for offline play: ${cards.length} cards, ${urls.length} pictures.`:OFF.stop?`Stopped — ${urls.length-todo.length-fail}/${urls.length} pictures saved. Run it again to finish.`:`${fail} picture${fail===1?'':'s'} failed (${OFF.err||'network'}) — run it again to retry.`)+' '+await offUsage());
+    const complete=!OFF.stop&&!fail&&cards.length>0&&!noPic;offSave({on:true,done:complete,at:new Date().toISOString(),cards:cards.length,imgs:urls.length-todo.length-fail,want:urls.length});
+    offStatus((complete?`Ready for offline play: ${cards.length} cards, ${urls.length} pictures.`:noPic&&!fail&&!OFF.stop?`${noPic} card${noPic===1?' has':'s have'} no picture address yet because Scryfall did not answer (${CDB.lastErr||'unknown'}). ${syncTok()?'Open the dashboard on a device where Scryfall works — it publishes them to Sync and this device picks them up.':'Turn on Sync, or try again later.'}`:OFF.stop?`Stopped — ${urls.length-todo.length-fail}/${urls.length} pictures saved. Run it again to finish.`:`${fail} picture${fail===1?'':'s'} failed (${OFF.err||'network'}) — run it again to retry.`)+' '+await offUsage());
   }catch(e){offStatus('Download failed: '+e.message)}finally{OFF.busy=false;offStatus();if(!$('#offpanel').hidden&&!quiet)toggleOff(true)}}
 async function offClear(){OFF.stop=true;try{await caches.delete('mtg-img-v1')}catch(e){}offSave({done:false,imgs:0});offStatus('Pictures removed from this device. Card data and your decks are untouched.');toggleOff(true)}
 function toggleOff(open){const p=$('#offpanel');p.hidden=!open;if(!open)return;const c=offCfg(),sw='serviceWorker' in navigator;
@@ -535,8 +546,9 @@ function offInit(){if(!('serviceWorker' in navigator)||!/^https?:$/.test(locatio
   window.addEventListener('online',()=>{offStatus();const c=offCfg();if(c.on)setTimeout(()=>offDownload(true),3000)});window.addEventListener('offline',()=>offStatus('Offline — using what is saved on this device.'));
   offStatus();const c=offCfg();
   if(c.on&&navigator.onLine!==false)setTimeout(()=>offDownload(true),8000); /* top up quietly: new cards since the last run */
-  else if(!c.on&&!c.asked&&Object.values(S.decks).some(d=>d.list&&d.list.length)){offSave({asked:true});toggleOff(true)} /* first visit with decks: offer the download once */ }
-window.MTGOffline={download:q=>offDownload(q),cards:n=>cardsNamed(n),state:()=>({...offCfg(),busy:OFF.busy,msg:OFF.msg,stored:CDB.m.size})}; /* for tests and the console */
+  else if(!c.on&&!c.asked&&Object.values(S.decks).some(d=>d.list&&d.list.length)){offSave({asked:true,on:true});toggleOff(true);if(navigator.onLine!==false)setTimeout(()=>offDownload(),4000)} /* first visit with decks: start the full download straight away (owner's choice: everything up front) and show the panel */
+  setInterval(()=>{const c=offCfg();if(c.on&&!c.done&&!OFF.busy&&navigator.onLine!==false){CDB.packTried=false;CDB.downUntil=0;offDownload(true)}},300000); /* not complete yet: try again every 5 minutes */ }
+window.MTGOffline={download:q=>offDownload(q),packPush:()=>packPush(),packPull:()=>packPull(),cards:n=>cardsNamed(n),state:()=>({...offCfg(),busy:OFF.busy,msg:OFF.msg,stored:CDB.m.size})}; /* for tests and the console */
 function toggleSync(open){const p=$('#syncpanel');p.hidden=!open;if(!open)return;const on=!!syncTok();
   p.innerHTML=`<h3>Sync across devices</h3>
    <p class="note">Your decks are kept in one <b>secret Gist</b> on your GitHub account. Each device merges with it whenever you save or come back to the page; if the same deck was edited on two devices, the newer edit wins.</p>

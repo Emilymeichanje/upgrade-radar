@@ -979,4 +979,39 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      ok('…it is taxed as that commander',g.cmdTaxOf(me,c)===2,JSON.stringify(me.cmdTaxBy));
      if(b){ await g.destroy(me,b); await tick(g); ok('…and goes back to the command zone when it dies',me.command.some(x=>x.name===PP.name)&&!me.graveyard.some(x=>/Peter|Spider-Man/.test(x.name)),JSON.stringify([me.command.map(x=>x.name),me.graveyard.map(x=>x.name)])); } }
  }
+
+ { // v119: owner's Rootha game — scry/surveil lands, rituals fetching lands, nonlegendary copies, legend-rule labels, Plargg and Nassari, Aether Gale
+   const O=require(__dirname+'/fixtures/owner.json'); const OR=O.cards||O; const OC=(n,x={})=>{const r=OR.find(r=>r[1]===n); if(!r)throw new Error('no '+n); return tagCard({name:r[1],mana:r[2],type:r[3],oracle:r[4],cmc:r[5],power:r[6],toughness:r[7],...x})};
+   const put=(g,pl,c,o={})=>{const b={id:600000+Math.floor(Math.random()*1e6),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false,...o};pl.battlefield.push(b);g.refreshStatics();return b};
+   const cr=(n,t,p=2,q=2,o='',mana='{1}{W}')=>tagCard(mk(n,'Creature — '+t,mana,o,2,String(p),String(q)));
+   const base=()=>{const g=fresh(); const me=g.players[0]; me.human=true; me.ai=null; g.hooks.humanMay=async()=>true; return [g,me]};
+   for (const [nm,word] of [['Temple of Epiphany','scry'],['Temple of Malady','scry'],['Zhalfirin Void','scry'],['Commercial District','surveil']]) { const [g,me]=base(); let asked=null; g.hooks.humanSearch=async c=>{asked=c;return c.pool.slice(0,1)}; const c=OC(nm); me.hand.push(c); const top=me.library[me.library.length-1]; const n0=g.log.length; await g.playLand(me,c); await tick(g);
+     ok(nm+': '+word+' 1 when it enters, and I am asked',!!asked&&asked.pool.length===1&&asked.pool[0]===top&&g.log.slice(n0).some(x=>new RegExp(word+' 1').test(x.m))&&(word==='scry'?me.library[0]===top:me.graveyard.includes(top)),JSON.stringify(g.log.slice(n0).map(x=>x.m))); }
+   { const g=fresh(); const me=g.players[0]; const c=OC('Temple of Triumph'); me.hand.push(c); const n0=g.log.length; await g.playLand(me,c); await tick(g); ok('AI scries with its Temple too',g.log.slice(n0).some(x=>/scry 1/.test(x.m)),''); }
+   for (const nm of ['Seething Song','Big Score']) { const [g,me]=base(); g.hooks.humanSearch=async c=>c.pool.slice(0,c.n||1); const c=OC(nm); const lands=me.battlefield.filter(b=>b.card.isLand).length; const n0=g.log.length; await g.resolve({id:1,kind:'spell',card:c,caster:me,owner:me,zone:'hand'}); await tick(g);
+     ok(nm+': no land is fetched',me.battlefield.filter(b=>b.card.isLand).length===lands&&!g.log.slice(n0).some(x=>/fetches/.test(x.m)),JSON.stringify(g.log.slice(n0).map(x=>x.m))); }
+   { const [g,me]=base(); g.hooks.humanSearch=async c=>c.pool.slice(0,c.n||1); const c=tagCard(mk('Rampant Growth','Sorcery','{1}{G}','Search your library for a basic land card, put that card onto the battlefield tapped, then shuffle.',2)); const lands=me.battlefield.filter(b=>b.card.isLand).length; await g.resolve({id:2,kind:'spell',card:c,caster:me,owner:me,zone:'hand'}); await tick(g); ok('a real land-ramp spell still fetches',me.battlefield.filter(b=>b.card.isLand).length===lands+1,''); }
+   // Ember Island Production
+   { const [g,me]=base(); const opp=g.players[1]; const ro=put(g,me,OC('Rootha, Mastering the Moment')); const eip=OC('Ember Island Production'); const modes=eip.modes.map(m=>m.card.spellOps);
+     ok('both Ember Island modes parse as nonlegendary copies with set stats',modes[0][0].nonlegendary&&!modes[0][0].opp&&modes[0][0].pt.join()==='4,4'&&modes[1][0].opp&&modes[1][0].pt.join()==='2,2',JSON.stringify(modes));
+     g.hooks.humanSearch=async c=>c.pool.slice(0,1); const n0=g.log.length; await g.runOps(me,modes[0],eip,{}); await tick(g); await g.sba(); const tk=me.battlefield.find(b=>b.card.token&&/Rootha/.test(b.card.name));
+     ok('copy of my legendary commander: a 4/4 nonlegendary Hero token, and the original stays (no legend rule)',!!tk&&!tk.card.isLegendary&&g.powerOf(me,tk)===4&&g.toughOf(me,tk)===4&&/Hero/.test(tk.card.type)&&!/Legendary/.test(tk.card.type)&&me.battlefield.includes(ro)&&!g.log.slice(n0).some(x=>/legend rule/.test(x.m)),JSON.stringify([tk&&tk.card.type,g.log.slice(n0).map(x=>x.m)]));
+     const th=put(g,opp,cr('Their Guy','Ogre',6,6)); await g.runOps(me,modes[1],eip,{}); await tick(g); const co=me.battlefield.find(b=>b.card.token&&b.card.name==='Their Guy');
+     ok("second mode copies an opponent's creature as a 2/2 Coward",!!co&&g.powerOf(me,co)===2&&/Coward/.test(co.card.type),co?co.card.type:'none'); }
+   { const [g,me]=base(); const ro=put(g,me,OC('Rootha, Mastering the Moment')); let pool=null; g.hooks.humanSearch=async c=>{pool=c.pool;return c.pool.slice(0,1)}; await g.runOps(me,OC('Quantum Misalignment').spellOpsX||OC('Quantum Misalignment').spellOps,OC('Quantum Misalignment'),{}); await tick(g); await g.sba();
+     ok('Quantum Misalignment may copy a legendary creature; the token is not legendary and both stay',!!pool&&pool.some(c=>/Rootha/.test(c.name))&&me.battlefield.filter(b=>/Rootha/.test(b.card.name)).length===2&&me.battlefield.includes(ro),JSON.stringify(pool&&pool.map(c=>c.name))); }
+   // legend rule labels
+   { const [g,me]=base(); const a=put(g,me,OC('Rootha, Mastering the Moment')); const b=put(g,me,{...OC('Rootha, Mastering the Moment'),token:true}); let tags=null; g.hooks.humanSearch=async c=>{tags=c.pool.map(x=>x.pickTag);return [c.pool.find(x=>!x.token)]}; await g.sba();
+     ok('legend rule prompt labels the original and the token copy',!!tags&&tags.includes('original')&&tags.includes('token copy')&&me.battlefield.includes(a)&&!me.battlefield.includes(b)&&!a.card.pickTag,JSON.stringify(tags)); }
+   // Plargg and Nassari
+   { const [g,me]=base(); const pn=put(g,me,OC('Plargg and Nassari')); const mine=cr('Mine','Bear'); me.library.push(mine); const tops=[]; g.players.slice(1).forEach((q,i)=>{const c=tagCard(mk('Opp Spell '+i,'Creature — Ogre','{'+(i+3)+'}','',i+3,'3','3')); q.library.push(c); tops.push(c)});
+     let offered=null; g.hooks.humanSearch=async c=>{offered=c.pool.map(x=>x.name);return [c.pool.find(x=>x.name==='Mine')]}; const n0=g.log.length; await g.runOps(me,[{op:'plargg'}],pn.card,{perm:pn}); while(g.stack.length)await g.resolve(g.stack[g.stack.length-1]); await tick(g); const L=g.log.slice(n0).map(x=>x.m);
+     ok('Plargg and Nassari: the exiled cards are logged; the opponent removes the most expensive; I choose among the rest',L.some(m=>/exiled: /.test(m))&&L.some(m=>/picks Opp Spell 2/.test(m))&&!!offered&&offered.length===3&&!offered.includes('Opp Spell 2'),JSON.stringify([offered,L.slice(0,3)]));
+     ok('…only what I chose is cast',me.battlefield.some(b=>b.card.name==='Mine')&&!me.battlefield.some(b=>/Opp Spell/.test(b.card.name)),JSON.stringify(me.battlefield.map(b=>b.card.name))); }
+   // Aether Gale
+   { const [g,me]=base(); const opp=g.players[1]; const own=put(g,me,cr('My Guy','Bear')); const t1=put(g,opp,cr('T1','Ogre')); const t2=put(g,opp,cr('T2','Ogre')); const t3=put(g,opp,tagCard(mk('Their Rock','Artifact','{2}','',2))); const land=put(g,opp,tagCard(mk('Forest','Basic Land — Forest','','',0)));
+     let pool=null; g.hooks.humanSearch=async c=>{pool=c.pool.map(x=>x.name);return c.pool.filter(x=>x.name==='My Guy'||x.name==='T2')}; await g.runOps(me,OC('Aether Gale').spellOps,OC('Aether Gale'),{}); await tick(g);
+     ok('Aether Gale: I pick the targets (lands are not offered, my own permanents are)',!!pool&&pool.includes('My Guy')&&pool.includes('Their Rock')&&!pool.includes('Forest'),JSON.stringify(pool));
+     ok('…and only the ones I picked return to hand',!me.battlefield.includes(own)&&!opp.battlefield.includes(t2)&&opp.battlefield.includes(t1)&&opp.battlefield.includes(t3)&&me.hand.some(c=>c.name==='My Guy'),''); }
+ }
  console.log(fails+' failed');})();

@@ -4068,6 +4068,7 @@ class Game {
   async pickStackObj(p, src, pool, verb) {
     if (!pool.length) return null; if (pool.length === 1 && p.ai) return pool[0];
     if (p.ai) return [...pool].sort((a, b) => p.ai.opsValue(this, p, b.ab.ops) - p.ai.opsValue(this, p, a.ab.ops))[0];
+    for (const o of pool) if (o.card && o.card.uid == null) o.card.uid = UID++; /* b26: an ability on the stack is shown as a pseudo-card with no id, so the picker could not tell which one was clicked — Strionic Resonator's 'choose a card to copy' showed Brago's trigger and ignored the click */
     const c = (await this.chooseFromList(p, src, pool.map(o => o.card), 1, verb))[0]; return pool.find(o => o.card === c) || null;
   }
   /** CR 707.10: a copy of an ability is put on the stack above the original and resolves first */

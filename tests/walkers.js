@@ -1257,5 +1257,10 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      plan={soul:'Recruiter of the Guard'}; const dn3=me.battlefield.find(b=>b.card.name==='Deadeye Navigator'); await g.doAction(me,blinkOf(dn3)); await tick(g); plan={soul:'Deadeye Navigator'}; const small=cr('Tiny Tutor Target','Soldier',1,1); me.library.unshift(small); g.hooks.humanSearch=(prev=>async q=>q.pool.includes(small)?[small]:prev(q))(g.hooks.humanSearch); const rc=me.battlefield.find(b=>b.card.name==='Recruiter of the Guard'); const ro=blinkOf(rc); if(ro){await g.doAction(me,ro); await tick(g);}
      ok('…then switching to Recruiter of the Guard and blinking it searches the library',!!ro&&me.hand.includes(small),JSON.stringify(g.log.slice(-6).map(x=>x.m)));
      Goldfish.setCombos([]); }
+   // v129: Strionic Resonator — the trigger on the stack must be clickable in the picker (it needs an id)
+   { const J=require(__dirname+'/../data/cards.json'); const DC=n=>{const r=J.cards.find(r=>r[0]===n); return tagCard({name:r[0],mana:r[1],type:r[2],oracle:r[3],cmc:r[4],power:r[5]??undefined,toughness:r[6]??undefined})};
+     const [g,me]=base(); await lands(g,me,2,'Island'); const brago=put(g,me,DC('Brago, King Eternal')); const sr=put(g,me,DC('Strionic Resonator')); const tr=brago.card.triggers.find(t=>t.when==='combatDamage'); const obj={id:8e6,kind:'ability',trig:true,card:{name:'Brago, King Eternal — combatDamage',type:'Ability',roles:[],colors:[],oracle:'',kw:[],isAbility:true,src:brago.card},src:brago.card,caster:me,ab:{ops:tr.ops},ctx:{perm:brago}}; g.stack.push(obj);
+     let seen=null; g.hooks.humanSearch=async q=>{ if(q.dest==='copy'){seen=q.pool.map(c=>c.uid); return [q.pool[0]]} return q.pool.slice(0,1)}; const ab=sr.card.abilities.find(a=>a.ops.some(o=>o.op==='copyTrigger')); await g.runOps(me,ab.ops,sr.card,{perm:sr});
+     ok("Strionic Resonator: the trigger offered for copying has an id the picker can click, and choosing it puts a copy on the stack",!!seen&&seen.length===1&&Number.isFinite(seen[0])&&g.stack.length===2,JSON.stringify([seen,g.stack.length])); g.stack.length=0; }
  }
  console.log(fails+' failed');})();

@@ -5,7 +5,7 @@ Row: [name, mana, type, oracle, cmc, power, toughness, scryfall_id, extra]; extr
   l loyalty · ci colour identity · m2/p2/t2/l2 back-face mana, power, toughness, loyalty · b 1 when the back face has its own picture.
 A failed download leaves the old file untouched; rows the bulk file does not have are kept.
 BULK_FILE=path reads a local copy instead of downloading (used by the tests)."""
-import json, os, sys, datetime, urllib.request
+import json, os, sys, gzip, datetime, urllib.request
 P = 'data/cards.json'
 UA = {'User-Agent': 'mtg-dashboard-cards/1.0', 'Accept': 'application/json'}
 SKIP_LAYOUT = {'token', 'double_faced_token', 'emblem', 'art_series', 'planar', 'scheme', 'vanguard', 'augment', 'host'}
@@ -16,18 +16,24 @@ def get(url, timeout=120):
 
 def load_bulk():
     if os.environ.get('BULK_FILE'):
-        return json.load(open(os.environ['BULK_FILE'], encoding='utf-8'))
+        return read_cards(open(os.environ['BULK_FILE'], 'rb').read())
     lst = json.load(get('https://api.scryfall.com/bulk-data'))
     meta = next((x for x in lst.get('data') or [] if x.get('type') == 'oracle_cards'), None)
     if not meta:
         raise RuntimeError('no oracle_cards entry in /bulk-data: ' + json.dumps(lst)[:300])
-    print('bulk entry:', json.dumps(meta))
-    url = meta.get('download_uri')
-    if not url and meta.get('uri'):  # the list no longer carries the file address: ask the entry itself, then its file form
-        one = json.load(get(meta['uri']))
-        print('bulk entry (direct):', json.dumps(one)[:600])
-        url = one.get('download_uri') or meta['uri'] + '?format=file'
-    return json.load(get(url, 600))
+    print('bulk entry:', json.dumps(meta)[:400])
+    # Scryfall now publishes the bulk file as gzipped JSON lines (jsonl_download_uri); older entries had a plain JSON array (download_uri)
+    if meta.get('jsonl_download_uri'):
+        return read_cards(get(meta['jsonl_download_uri'], 600).read())
+    if meta.get('download_uri'):
+        return read_cards(get(meta['download_uri'], 600).read())
+    raise RuntimeError('bulk entry has no download address')
+
+def read_cards(raw):
+    if raw[:2] == b'\x1f\x8b': raw = gzip.decompress(raw)
+    txt = raw.decode('utf-8').strip()
+    if txt.startswith('['): return json.loads(txt)
+    return [json.loads(l) for l in txt.split('\n') if l.strip().startswith('{')]
 
 def row(c):
     faces = c.get('card_faces') or []

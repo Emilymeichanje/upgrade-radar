@@ -384,8 +384,8 @@ async function newCards(ci){
 const fetchT=(u,o={},ms=10000)=>{const ac=new AbortController();const t=setTimeout(()=>ac.abort(),ms);return fetch(u,{...o,signal:ac.signal}).finally(()=>clearTimeout(t))};
 // ---------- offline card store: every card ever looked up is kept on this device (IndexedDB) ----------
 const CDB={m:new Map(),ready:null,db:null,TTL:7*864e5,force:false};
-function cdbOpen(){return CDB.ready||(CDB.ready=new Promise(res=>{try{const rq=indexedDB.open('mtg-offline',1);rq.onupgradeneeded=()=>rq.result.createObjectStore('cards');
-  rq.onsuccess=()=>{CDB.db=rq.result;try{const tx=CDB.db.transaction('cards');const cur=tx.objectStore('cards').openCursor();cur.onsuccess=()=>{const c=cur.result;if(c){CDB.m.set(c.key,c.value);c.continue()}};tx.oncomplete=()=>res(true);tx.onerror=()=>res(false)}catch(e){res(false)}};
+function cdbOpen(){return CDB.ready||(CDB.ready=new Promise(res=>{setTimeout(()=>res(false),4000); /* some privacy browsers never answer an IndexedDB request: carry on without the device store */ try{const rq=indexedDB.open('mtg-offline',1);rq.onupgradeneeded=()=>rq.result.createObjectStore('cards');
+  rq.onsuccess=()=>{CDB.db=rq.result;try{const tx=CDB.db.transaction('cards');const cur=tx.objectStore('cards').openCursor();cur.onsuccess=()=>{const c=cur.result;if(c){CDB.m.set(c.key,c.value);c.continue()}};tx.oncomplete=()=>res(true);tx.onerror=()=>res(false);tx.onabort=()=>res(false)}catch(e){res(false)}};
   rq.onerror=()=>res(false);rq.onblocked=()=>res(false)}catch(e){res(false)}}))}
 function cdbPut(cards){const t=Date.now();let st=null;try{st=CDB.db&&CDB.db.transaction('cards','readwrite').objectStore('cards')}catch(e){}for(const c of cards){if(!c||!c.name)continue;const k=norm0(c.name),v={c,t};CDB.m.set(k,v);if(st)try{st.put(v,k)}catch(e){}}}
 function cdbGet(name){const k=norm0(name);return CDB.m.get(ALIAS[k]||k)||CDB.m.get(k)||null}
@@ -401,7 +401,7 @@ async function cardsNamed(names,opt={}){await cdbOpen();const out=[],need=[],onl
     if(!online)CDB.lastErr='offline';else if(!CDB.lastErr&&Date.now()<=(CDB.downUntil||0))CDB.lastErr='Scryfall did not answer a moment ago';
     if(CDB.lastErr&&online&&!CDB.packTried&&need.some(n=>{const v=cdbGet(n);return !v||v.c.fallback||!v.c.img})){CDB.packTried=true;try{CDB.packGot=await packPull()}catch(e){}} /* Scryfall would not answer: read the card pack another of your devices saved to Sync */
     for(const n of need){const v=cdbGet(n);if(v&&!out.includes(v.c))out.push(v.c)} /* offline or Scryfall failed: fall back to the stored copy, however old */
-    const miss=need.filter(n=>!cdbGet(n));if(miss.length&&(CDB.lastErr||!online)){const fb=await cdbFallback();const add=[];for(const n of miss){const c=fb.get(norm0(n))||fb.get(ALIAS[norm0(n)]);if(c)add.push(c)}if(add.length){const st=CDB.db&&CDB.db.transaction('cards','readwrite').objectStore('cards');for(const c of add){const v={c,t:0};CDB.m.set(norm0(c.name),v);try{st&&st.put(v,norm0(c.name))}catch(e){}}out.push(...add);CDB.usedFallback=(CDB.usedFallback||0)+add.length}} /* last resort: card text shipped with the app (no pictures); marked stale so the real data replaces it when Scryfall answers */ }
+    const miss=need.filter(n=>!cdbGet(n));if(miss.length&&(CDB.lastErr||!online)){const fb=await cdbFallback();const add=[];for(const n of miss){const c=fb.get(norm0(n))||fb.get(ALIAS[norm0(n)]);if(c)add.push(c)}if(add.length){let st=null;try{st=CDB.db&&CDB.db.transaction('cards','readwrite').objectStore('cards')}catch(e){}for(const c of add){const v={c,t:0};CDB.m.set(norm0(c.name),v);try{st&&st.put(v,norm0(c.name))}catch(e){}}out.push(...add);CDB.usedFallback=(CDB.usedFallback||0)+add.length}} /* last resort: card text shipped with the app (no pictures); marked stale so the real data replaces it when Scryfall answers */ }
   const seen=new Set();return out.filter(c=>!seen.has(c.name)&&seen.add(c.name));
 }
 async function cardsNamedNet(names){ // batch via /cards/collection (75 per call)
@@ -1052,16 +1052,26 @@ async function openPlaytest(){
 function popularityMap(){const m={};for(const c of (S.snap&&S.snap.commanders)||[])for(const v of Object.values(c.lists||{}))for(const x of v){const s=x.p?x.d/x.p:0;if(s>(m[x.n]||0))m[x.n]=s}return m}
 async function staleBuild(){ // b13: a tab left open for hours keeps running an old engine — warn before a game starts on one
   try{const mine=+(((document.querySelector('script[src*="playtest.js"]')||{}).src||'').match(/v=(\d+)/)||[])[1];const r=await fetchT(location.pathname.replace(/[^/]*$/,'')+'index.html',{cache:'no-cache'},5000);if(!r.ok)return null;const live=+((await r.text()).match(/playtest\.js\?v=(\d+)/)||[])[1];return mine&&live&&live>mine?{mine,live}:null}catch(e){return null}}
+/* The loader says which step it is on and counts seconds, so a stuck screen identifies itself: a counter that stops = the page is frozen in that step; a counter that keeps running = waiting on that step. Any error is shown instead of leaving the loading text up forever. */
+const PAGE_BUILD='2026-11-14e';let ptTick=null,ptT0=0,ptStepName='';
+function ptStep(t){ptStepName=t;const m=$('#ptstep');if(m)m.textContent=t;return new Promise(r=>setTimeout(r,30))} /* the short pause lets the text paint before a heavy step */
 async function startGame(cfg){
-  const el=$('#play');el.innerHTML='<div class="empty" id="ptload">Loading cards… <span class="note">(saved on this device first, Scryfall for anything missing)</span></div>';
+  try{await startGame0(cfg)}catch(e){const el=$('#play');el.innerHTML=`<div class="empty"><b>The game could not start.</b><br>Step: ${esc(ptStepName)}<br>${esc(String(e&&e.message||e))}<br><span class="note" style="white-space:pre-wrap;text-align:left;display:block">${esc(String(e&&e.stack||'').split('\n').slice(0,6).join('\n'))}</span><span class="note">page ${PAGE_BUILD} · send a screenshot of this</span></div><div class="row" style="justify-content:center"><button class="chip pri" id="ptretry">Try again</button><button class="chip" id="ptback2">Back to setup</button></div>`;$('#ptback2').onclick=openPlaytest;$('#ptretry').onclick=()=>startGame(cfg)}
+  finally{clearInterval(ptTick);ptTick=null}
+}
+async function startGame0(cfg){
+  const el=$('#play');el.innerHTML=`<div class="empty" id="ptload">Loading cards… <span class="note">(saved on this device first, Scryfall for anything missing)</span><br><span class="note"><span id="ptstep">starting</span> · <span id="ptsec">0</span> s · page ${PAGE_BUILD}</span></div>`;
+  ptT0=Date.now();clearInterval(ptTick);ptTick=setInterval(()=>{const m=$('#ptsec');if(m)m.textContent=Math.round((Date.now()-ptT0)/1000)},500);await ptStep('checking for a newer version');
   { const st=await staleBuild(); if(st){el.innerHTML=`<div class="empty"><b>This tab is running engine v${st.mine}; v${st.live} is deployed.</b><div class="row" style="justify-content:center;margin-top:8px"><button class="chip pri" id="reloadnow">Reload for v${st.live}</button><button class="chip" id="playold">Play on v${st.mine} anyway</button></div></div>`;const go=await new Promise(res=>{$('#reloadnow').onclick=()=>res(true);$('#playold').onclick=()=>res(false)});if(go){location.reload();return}el.innerHTML='<div class="empty">Fetching cards from Scryfall…</div>'} }
   if(Goldfish.setPopularity)Goldfish.setPopularity(popularityMap());
   const seats=[],raw=[],short=[];const uidBase=Goldfish.uid?Goldfish.uid.get():0;
-  for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===cfg.slugs[i]);const list=S.decks[d.slug].list;
+  for(let i=0;i<4;i++){const d=S.index.find(x=>x.slug===cfg.slugs[i]);const list=((d&&S.decks[d.slug])||{}).list||[];
     { const m=$('#ptload'); if(m)m.firstChild.textContent=`Loading deck ${i+1} of 4… `; }
+    if(!d)throw new Error('deck '+(i+1)+' ('+cfg.slugs[i]+') is not in the deck index');if(!S.decks[d.slug]||!S.decks[d.slug].list)throw new Error((d.display||d.name)+' has no saved card list');
+    await ptStep(`${d.display||d.name}: looking up ${new Set(list).size} cards`);
     let cards=[];const uniq=[...new Set(list)];
     { /* never sit on this screen: after 25 s take whatever this device and the card file shipped with the app have */
-      const slow=setTimeout(()=>{const m=$('#ptload');if(m)m.lastChild.textContent='(Scryfall is slow to answer — using the copies saved on this device)'},6000);
+      const slow=setTimeout(()=>{const m=$('#ptload .note');if(m)m.textContent='(Scryfall is slow to answer — using the copies saved on this device)'},6000);
       try{cards=await Promise.race([cardsNamed(uniq),new Promise(r=>setTimeout(()=>r(null),25000))])}catch(e){cards=null}clearTimeout(slow);
       if(!cards){CDB.lastErr=CDB.lastErr||'no answer in 25 seconds';CDB.downUntil=Date.now()+180000;cards=[];const fb=await Promise.race([cdbFallback(),new Promise(r=>setTimeout(()=>r(new Map()),8000))]);for(const n of uniq){const v=cdbGet(n);const c=v?v.c:fb.get(norm0(n))||fb.get(ALIAS[norm0(n)]);if(c)cards.push(c)}} }
     const byName=new Map(cards.map(c=>[norm(c.name),c]));const cmd=commanderNames(d);
@@ -1069,13 +1079,15 @@ async function startGame(cfg){
     const full=list.map(n=>byName.get(norm(n))).filter(Boolean);
     { const miss=uniq.filter(n=>!byName.get(norm(n))); if(miss.length) short.push({name:d.display||d.name,miss,n:list.filter(n=>!byName.get(norm(n))).length}); }
     let cmdCards=[...cmd].map(n=>byName.get(n)).filter(Boolean);
-    if(!cmdCards.length){const cc=S.cmdr[d.slug]||await commanderCard(d);if(cc)cmdCards=[cc]}
+    if(!cmdCards.length){await ptStep(`${d.display||d.name}: finding the commander`);const cc=S.cmdr[d.slug]||await Promise.race([commanderCard(d),new Promise(r=>setTimeout(()=>r(null),10000))]);if(cc)cmdCards=[cc]}
+    await ptStep(`${d.display||d.name}: reading ${full.length} cards`);
     const deckCards=full.filter(c=>!cmd.has(norm(c.name))).concat(cmdCards);const deck=Goldfish.buildDeck(deckCards,cmdCards.map(c=>c.name));
     if(deck.library.length<40){el.innerHTML=CDB.lastErr?`<div class="empty"><b>${esc(d.name)}: could not load this deck.</b> Scryfall did not answer (${esc(CDB.lastErr)}) and only ${deck.library.length} of its cards are saved on this device.<br>When Scryfall is reachable, open <i>Offline</i> on the Decks page and press <i>Download everything</i> — after that the playtest never needs Scryfall.</div><div class="row" style="justify-content:center"><button class="chip pri" id="ptretry">Try again</button><button class="chip" id="ptback2">Back to setup</button></div>`:`<div class="empty">${esc(d.name)}: only ${deck.library.length} cards were found on Scryfall. Check the list for typos.</div><button class="chip" id="ptback2">Back to setup</button>`;$('#ptback2').onclick=openPlaytest;if($('#ptretry'))$('#ptretry').onclick=()=>{CDB.downUntil=0;startGame(cfg)};return}
     const human=i===0&&!cfg.watch;
     const seat={name:(human?'You · ':'AI · ')+(d.display||d.name).split(',')[0],deckName:d.display||d.name,deck,human,level:human?null:(cfg.levels[i]||'expert'),art:d.art||(cmdCards[0]&&cmdCards[0].img||'').replace('/small/','/art_crop/')};seats.push(seat);
     raw.push({name:seat.name,deckName:seat.deckName,human,level:seat.level,art:seat.art,cmd:cmdCards.map(c=>c.name),cards:deckCards.map(c=>({name:c.name,mana:c.mana,type:c.type,oracle:c.oracle,cmc:c.cmc,power:c.power,toughness:c.toughness,power2:c.power2,toughness2:c.toughness2,mana2:c.mana2,img2:c.img2,loyalty2:c.loyalty2,loyalty:c.loyalty,colors:c.colors,ci:c.ci,img:c.img,imgN:c.imgN,artc:c.artc}))});
   }
+  await ptStep('checking combos');
   const pm=popularityMap(),inDecks=new Set(raw.flatMap(r=>r.cards.map(c=>c.name))),pop={};for(const n of inDecks)if(pm[n]!=null)pop[n]=pm[n];
   // two-card infinite combos (Commander Spellbook) whose pieces are both in one of the decks at the table
   let combos=[];try{await Promise.race([loadCombos(),new Promise(r=>setTimeout(r,4000))]);if(CB.m){const seen=new Set();for(const r of raw){const ns=new Set(r.cards.map(c=>norm(c.name)).concat(r.cards.map(c=>norm(c.name.split(' // ')[0]))));for(const n of ns)for(const row of CB.m.get(n)||[]){const k=row[0]+'|'+row[1];if(seen.has(k))continue;if((ns.has(norm(row[0]))||ns.has(norm(row[0].split(' // ')[0])))&&(ns.has(norm(row[1]))||ns.has(norm(row[1].split(' // ')[0])))){seen.add(k);combos.push(row.slice(0,5))}}}}}catch(e){}
@@ -1083,6 +1095,7 @@ async function startGame(cfg){
   const shortSig=JSON.stringify(short);if(short.length&&!cfg.shortOk&&PT.shortSig!==shortSig){ /* b20: say so when a deck is playing short — a 90-card Teval game was played without anyone being told ten cards never loaded */
     el.innerHTML=`<div class="empty" id="ptshort"><b>Some cards could not be loaded${CDB.lastErr?' — Scryfall did not answer ('+esc(CDB.lastErr)+')':''}.</b><br>${short.map(x=>`<b>${esc(x.name)}</b>: ${x.n} card${x.n===1?'':'s'} missing — ${esc(x.miss.slice(0,40).join(', '))}${x.miss.length>40?'…':''}`).join('<br>')}<br><span class="note">Playing anyway uses the decks without these cards. Names that never load are usually typos in the saved list.</span></div><div class="row" style="justify-content:center"><button class="chip pri" id="ptretry">Try again</button><button class="chip" id="ptshortgo">Play anyway</button><button class="chip" id="ptback2">Back to setup</button></div>`;
     $('#ptback2').onclick=openPlaytest;$('#ptretry').onclick=()=>{CDB.downUntil=0;CDB.packTried=false;startGame(cfg)};$('#ptshortgo').onclick=()=>{PT.shortSig=shortSig;startGame({...cfg,shortOk:true})};return} /* asked once per set of missing cards, not before every game */
+  await ptStep('setting up the table');
   el.innerHTML='';PT.table=GoldfishUI.start(el,seats,{onExit:openPlaytest,onRematch:()=>startGame(cfg),cfg,rawSeats:raw,uidBase,pop,combos});
 }
 

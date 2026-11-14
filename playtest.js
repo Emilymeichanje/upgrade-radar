@@ -58,6 +58,7 @@ const numOf = s => NUMX[s] || parseInt(s) || 1;
 const HANDLED = [];
 const GRANT_GAUNTLET = [{ zone: 'battlefield', label: '0 (Gauntlet)', loyalty: 0, cost: { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0, x: false }, speed: 'sorcery', ops: [{ op: 'proliferate' }] }, { zone: 'battlefield', label: '−12 (Gauntlet)', loyalty: -12, cost: { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0, x: false }, speed: 'sorcery', ops: [{ op: 'extraTurn' }] }];
 const GRANT_LURKER = [{ zone: 'battlefield', label: '+2 (Lurker)', loyalty: 2, cost: { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0, x: false }, speed: 'sorcery', ops: [{ op: 'damage', n: 1, to: 'each opponent' }, { op: 'gain', n: 1 }] }];
+const SHROUD_DESTS = new Set(['target', 'bounce', 'destroy', 'exile', 'tap', 'tap or untap', 'give protection', 'return to hand', 'enchant']);
 const GRANT_DEADEYE = { zone: 'battlefield', label: 'blink (soulbond)', cost: { generic: 1, pips: { W: 0, U: 1, B: 0, R: 0, G: 0 }, total: 2, x: false }, speed: 'instant', ops: [{ op: 'blinkSelfNow' }] };
 const SEARCHY = new Set(['tutorTo', 'landToBf', 'landToHand', 'tutorAll', 'landTax', 'tutorTopColorless7', 'sanctum', 'taintedPact', 'heraldTop']);
 const handles = (...res) => { HANDLED.push(...res); };
@@ -4068,8 +4069,8 @@ class Game {
   async pickStackObj(p, src, pool, verb) {
     if (!pool.length) return null; if (pool.length === 1 && p.ai) return pool[0];
     if (p.ai) return [...pool].sort((a, b) => p.ai.opsValue(this, p, b.ab.ops) - p.ai.opsValue(this, p, a.ab.ops))[0];
-    for (const o of pool) if (o.card && o.card.uid == null) o.card.uid = UID++; /* b26: an ability on the stack is shown as a pseudo-card with no id, so the picker could not tell which one was clicked — Strionic Resonator's 'choose a card to copy' showed Brago's trigger and ignored the click */
-    const c = (await this.chooseFromList(p, src, pool.map(o => o.card), 1, verb))[0]; return pool.find(o => o.card === c) || null;
+    for (const o of pool) if (o.card) { if (o.card.uid == null) o.card.uid = UID++; if (o.card.isAbility) o.card.pickTag = 'ability on the stack'; } /* b26: an ability on the stack is shown as a pseudo-card with no id, so the picker could not tell which one was clicked — Strionic Resonator's 'choose a card to copy' showed Brago's trigger and ignored the click */
+    const c = (await this.chooseFromList(p, src, pool.map(o => o.card), 1, verb === 'copy' ? 'copyab' : verb))[0]; return pool.find(o => o.card === c) || null;
   }
   /** CR 707.10: a copy of an ability is put on the stack above the original and resolves first */
   copyAbilityObj(p, o) {
@@ -4895,6 +4896,7 @@ class Game {
   /** pick a permanent: AI by value (opponents' for harmful effects, own otherwise), humans from a list */
   async pickPerm(p, src, pool, { harmful = false, dest = 'target' } = {}) {
     pool = pool.filter(b => !(harmful && this.ownerOf(b) !== p && (b.card.kw.includes('hexproof') || b.card.kw.includes('shroud'))));
+    if (SHROUD_DESTS.has(dest)) pool = pool.filter(b => !(b.card.kw || []).includes('shroud')); /* b29: shroud stops its controller's own spells and abilities too (a creature wearing Lightning Greaves could be targeted by its owner's pump, blink, bounce, Aura…). Choices that don't target — sacrifice, soulbond, legend rule, counters moved by a non-targeting effect — are untouched */
     if (!pool.length) return null;
     let pick = null;
     if (p.human) { const c = (await this.chooseFromList(p, src, pool.map(b => b.card), 1, dest))[0]; pick = pool.find(b => b.card === c) || null; }
@@ -5111,9 +5113,9 @@ class Game {
         }
         case 'bounceAllOpp': { const ok = b => op.what === 'creature' ? b.card.isCreature : op.what === 'permanent' ? true : !b.card.isLand; for (const q of (op.all ? this.alive() : this.opponentsOf(p))) for (const b of [...q.battlefield].filter(ok)) await this.bounce(q, b, p); this.say(`— returns every ${op.what || 'nonland permanent'} ${op.all ? 'on the battlefield' : 'its opponents control'} to hand`, p); break; }
         case 'attach': {
-          const mine = p.battlefield.filter(b => b.card.isCreature && b !== ctx.perm && (!ctx.equipFilter || (ctx.equipFilter === 'commander' ? b.card.isCommander : b.card.isLegendary))); if (!mine.length || !ctx.perm) break;
+          const mine = p.battlefield.filter(b => b.card.isCreature && b !== ctx.perm && !(b.card.kw || []).includes('shroud') /* b29: equip targets — a shrouded creature can't take another Equipment */ && (!ctx.equipFilter || (ctx.equipFilter === 'commander' ? b.card.isCommander : b.card.isLegendary))); if (!mine.length || !ctx.perm) break;
           let t = null;
-          if (p.ai) t = p.ai.bestEquipTarget(this, p, ctx.perm);
+          if (p.ai) { t = p.ai.bestEquipTarget(this, p, ctx.perm); if (t && !mine.includes(t)) t = [...mine].sort((a, z) => this.powerOf(p, z) - this.powerOf(p, a))[0] || null; }
           else { const pick = (await this.chooseFromList(p, src, mine.map(b => b.card), 1, 'equip'))[0]; t = mine.find(b => b.card === pick); }
           if (t) await this.b9_abTargeted(t); if (t && !(this.ownerOf(t) || { battlefield: [] }).battlefield.includes(t)) t = null;
           if (t) { ctx.perm.attachedTo = t.id; this.refreshStatics(); this.say(`— ${src.name} is attached to ${t.card.name}`, p); }
@@ -5188,7 +5190,7 @@ class Game {
         case 'untapAll': { const ok = b => op.what === 'creatures' ? b.card.isCreature : op.what === 'artifacts' ? b.card.isArtifact : !b.card.isLand; for (const b of p.battlefield.filter(ok)) b.tapped = false; this.say(`— untaps all ${op.what}`, p); break; }
         case 'flicker': {
           const ok = b => op.what === 'creature' ? b.card.isCreature : op.what === 'artifact or creature' ? (b.card.isCreature || b.card.isArtifact) : op.what === 'permanent' ? true : !b.card.isLand;
-          const pool = p.battlefield.filter(b => ok(b) && b !== ctx.perm); if (!pool.length) break;
+          const pool = p.battlefield.filter(b => ok(b) && b !== ctx.perm && !(b.card.kw || []).includes('shroud')); if (!pool.length) break; /* b29 */
           let v; if (p.human) { const pick = (await this.chooseFromList(p, src, pool.map(b => b.card), 1, 'flicker'))[0]; v = pool.find(b => b.card === pick); } else v = [...pool].sort((a, b) => ((b.card.etbOps ? 5 : 0) + (b.tapped ? 1 : 0)) - ((a.card.etbOps ? 5 : 0) + (a.tapped ? 1 : 0)))[0];
           if (!v) break; if (op.n > 1 && !ctx.flickerDepth) await this.runOps(p, [{ ...op, n: op.n - 1 }], src, { ...ctx, flickerDepth: 1, perm: v });
           this.say(`— flickers ${v.card.name}`, p); await this.blinkNow(p, v, src); break; /* b25: one blink routine — this copy skipped leave-the-battlefield triggers (Watcher for Tomorrow's hidden card), exile triggers, attached Auras/Equipment falling off, and non-creature enter triggers */
@@ -6342,7 +6344,7 @@ class Game {
         case 'bounceOwnLand': { const pool = p.battlefield.filter(b => b.card.isLand); const t = p.ai ? [...pool].sort((a, z) => z.tapped - a.tapped)[0] : await this.pickPerm(p, src, pool); if (t) await this.bounce(p, t, p); break; }
         case 'stunTapped': { const pool = this.oppPerms(p, b => b.card.isCreature && b.tapped); const t = p.ai ? [...pool].sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0] : await this.pickPerm(p, src, pool, { harmful: true }); if (t) { (t.ck = t.ck || {}).stun = (t.ck.stun || 0) + 1; this.say(`— stun counter on ${t.card.name}`, p); } break; }
         case 'blinkAny': { const pool = this.allPerms(b => b.card.isCreature && b !== ctx.perm); let t; if (p.ai) t = pool.find(b => b.card.token && this.ownerOf(b) !== p && this.powerOf(this.ownerOf(b), b) >= 2) || [...pool].filter(b => this.ownerOf(b) === p && b.card.etbOps).sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0]; else t = await this.pickPerm(p, src, pool); if (!t) break; await this.blinkNow(this.ownerOf(t), t, src, { tapped: !!op.tapped }); break; }
-        case 'blinkMany': { const pool = p.battlefield.filter(b => !b.card.isLand && b !== ctx.perm && !b.card.token); let picks; if (p.human) { const cs = await this.chooseFromList(p, src, pool.map(b => b.card), pool.length, 'blink'); picks = pool.filter(b => cs.includes(b.card)); } else picks = pool.filter(b => b.card.etbOps || (b.card.isPlaneswalker && (b.loyalty || 0) < (b.card.startLoyalty || 0))); for (const b of picks) await this.blinkNow(p, b, src); break; }
+        case 'blinkMany': { const pool = p.battlefield.filter(b => !b.card.isLand && (b !== ctx.perm || p.human) && !b.card.token && !(b.card.kw || []).includes('shroud')); /* b29: 'any number of target nonland permanents you control' — shrouded ones can't be chosen; the source itself can (Brago may blink himself) */ let picks; if (p.human) { const cs = await this.chooseFromList(p, src, pool.map(b => b.card), pool.length, 'blink'); picks = pool.filter(b => cs.includes(b.card)); } else picks = pool.filter(b => b.card.etbOps || (b.card.isPlaneswalker && (b.loyalty || 0) < (b.card.startLoyalty || 0))); for (const b of picks) await this.blinkNow(p, b, src); break; }
         case 'blinkOne': { const pool = p.battlefield.filter(b => b.card.isCreature && b !== ctx.perm && (!op.notType || !matchesFilter(b.card, op.notType))); const t = p.ai ? [...pool].filter(b => b.card.etbOps && !b.card.token).sort((a, z) => p.ai.permBase(z) - p.ai.permBase(a))[0] : await this.pickPerm(p, src, pool); if (t) await this.blinkNow(p, t, src); break; }
         case 'shuffleSelfIn': { const c = src.orig || src; for (const q of this.players) { const i = q.graveyard.indexOf(c); if (i >= 0) { q.graveyard.splice(i, 1); q.library.push(c); shuffle(q.library, this.rng); this.say(`— ${c.name} is shuffled into ${q.name}'s library`, q); break; } } break; }
         case 'hatchlings': { const n = (ctx.perm && ctx.perm.ck && ctx.perm.ck.hatchling) || 0; if (n) await this.runOps(p, [{ op: 'tokens', n, pt: [1, 1], kw: ['flying'], types: 'Insect', tcolors: ['B'] }], src, {}); break; }

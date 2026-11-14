@@ -4320,7 +4320,7 @@ class Game {
     { const rb = card.room ? card : (card.mdfcOf && card.mdfcOf.room ? card.mdfcOf : null); if (rb) { const door = card.mdfcOf && card.mdfcOf.room ? 'R' : 'L'; const cast = !!this._roomCast; pm.doors = { L: cast && door === 'L', R: cast && door === 'R' }; pm.card = this.roomView(rb, pm.doors); pm.summoning = false; if (!cast) this.say(`— ${rb.name} enters with both doors locked`, p); } } /* b19: a Room that wasn't cast enters fully locked */
     if (card.etbXKind && x) { if (card.etbXKind === '+1/+1') pm.counters = this.counterAmt(p, x); else if (card.etbXKind === 'charge') pm.charge = x; else { pm.ck = { [card.etbXKind]: x }; } }
     if (card.choosesColor) { pm.chosenColor = this.chooseColor(p); this.say(`— ${card.name}: chooses ${{ W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' }[pm.chosenColor]}`, p); }
-    if (card.deadpool) { const pool = this.allPerms(b => b.card.isCreature && b !== pm); const score = b => (b.card.triggers || []).length * 2 + (b.card.abilities || []).length * 2 + Object.keys(b.card.statics || {}).length + (b.card.etbOps ? 1 : 0); let t = null; if (p.human) { if (this.hooks.humanMay && await this.hooks.humanMay({ p, card, question: 'exchange text boxes with another creature?' })) t = await this.pickPerm(p, card, pool, {}); } else t = [...pool].sort((a, z) => score(z) - score(a)).find(b => score(b) >= 2) || null; if (t) { const keys = ['triggers', 'abilities', 'statics', 'etbOps', 'anthems', 'equip', 'manaAb', 'kw', 'kwBase', 'oracle', 'ltbOps']; const mine = {}, theirs = {}; for (const k of keys) { mine[k] = pm.card[k]; theirs[k] = t.card[k]; } pm.card = { ...pm.card, ...theirs }; t.card = { ...t.card, ...mine }; this.refreshStatics(); this.say(`— ${card.name} exchanges text boxes with ${t.card.name}`, p); } }
+    if (card.deadpool) { const pool = this.allPerms(b => b.card.isCreature && b !== pm); const score = b => (b.card.triggers || []).length * 2 + (b.card.abilities || []).length * 2 + Object.keys(b.card.statics || {}).length + (b.card.etbOps ? 1 : 0); let t = null; if (p.human) { if (this.hooks.humanMay && await this.hooks.humanMay({ p, card, question: 'exchange text boxes with another creature?' })) t = await this.pickPerm(p, card, pool, {}); } else { const theirs = pool.filter(b => this.ownerOf(b) !== p).sort((a, z) => score(z) - score(a)); t = theirs[0] || null; /* b24: the AI swapped with its OWN Deathrite Shaman and kept 'at the beginning of your upkeep, you lose 3 life' on its own board — which killed it. Any opponent's creature takes the drawback with it; the best text box is the bonus */ } if (t) { const keys = ['triggers', 'abilities', 'statics', 'etbOps', 'anthems', 'equip', 'manaAb', 'kw', 'kwBase', 'oracle', 'ltbOps']; const mine = {}, theirs = {}; for (const k of keys) { mine[k] = pm.card[k]; theirs[k] = t.card[k]; } pm.card = { ...pm.card, ...theirs }; t.card = { ...t.card, ...mine }; this.refreshStatics(); this.say(`— ${card.name} exchanges text boxes with ${t.card.name}`, p); } }
     if (/as this enchantment enters, choose a planeswalker type/i.test(card.oracle || '')) { const cnt = {}; for (const c of [...p.library, ...p.hand, ...p.battlefield.map(b => b.card), ...p.command, ...p.graveyard]) if (c.isPlaneswalker) { const ty = ((c.type || '').split('—')[1] || '').trim().split(/\s+/)[0]; if (ty) cnt[ty] = (cnt[ty] || 0) + 1; } const types = Object.entries(cnt).sort((a, z) => z[1] - a[1]).map(e => e[0]); let ty = types[0];
       if (p.human && this.hooks.humanChoice) { const opts = types.length ? types : ['Ajani', 'Chandra', 'Elspeth', 'Garruk', 'Gideon', 'Jace', 'Liliana', 'Nissa', 'Sorin', 'Teferi', 'Tezzeret', 'Vraska']; const ch = await this.hooks.humanChoice({ p, card, question: `${card.name}: choose a planeswalker type`, options: opts, free: true }); if (ch) ty = ch; }
       if (ty) { pm.chosenType = ty.toLowerCase(); this.say(`— ${card.name}: chooses ${ty}`, p); } }
@@ -4401,6 +4401,17 @@ class Game {
   }
   targetName(t) { return !t ? '' : t.spell ? t.spell.card.name + ' (on the stack)' : t.card ? t.card.name : t.name; }
   ownerOf(perm) { return this.players.find(q => q.battlefield.includes(perm)) || null; }
+  /** b24: an AI that would die to its own 'at the beginning of your upkeep, you lose N life' permanent gets rid of it at an end step if that permanent can sacrifice itself (Deadpool's text box). It has to happen before the upkeep: once the trigger is on the stack, sacrificing the source no longer stops it. */
+  async aiDodgeUpkeepLoss(q) {
+    for (const b of [...q.battlefield]) {
+      const loss = (b.card.triggers || []).filter(t => t.when === 'upkeep' && !t.may && !t.each).reduce((s, t) => s + (t.ops || []).filter(o => o.op === 'lose' && typeof o.n === 'number').reduce((a, o) => a + o.n, 0), 0);
+      if (!loss || q.life > loss || q.dead || !q.battlefield.includes(b)) continue;
+      const ab = (b.card.abilities || []).find(a => a.sacSelf && a.zone === 'battlefield' && a.speed === 'instant' && (!a.tap || !b.tapped) && this.canPayCost(q, a.cost));
+      if (!ab) continue;
+      this.say(`— ${b.card.name} would kill ${q.name} at its next upkeep`, q);
+      await this.doAction(q, { kind: 'ability', card: b.card, perm: b, ab });
+    }
+  }
   isUncounterable(obj) { return !!obj.card.uncounterable || !!obj.uncounterable || !!(obj.caster && obj.caster.b1_uncTurn === this.turn) || obj.caster.battlefield.some(b => (b.card.noCounter || []).some(f => matchesFilter(obj.card, f))); }
   /** protection from a colour stops targeting by spells of that colour */
   protectedFrom(t, card) { return !!(t && t.protColors && ((card.colors || []).some(c => t.protColors.includes(c)) || (card.isArtifact && t.protColors.includes('artifacts')))); }
@@ -4715,6 +4726,7 @@ class Game {
     if (when === 'end' && p.phaseAtEnd && p.phaseAtEnd.length) { const pw = p.phaseAtEnd.splice(0).filter(b => p.battlefield.includes(b)); if (pw.length) { await this.phaseOut(p, pw); this.say(`— ${pw.map(b => b.card.name).join(', ')} phase out`, p); } }
     if (when === 'end' && this.monarch === p && !p.dead) { this.say('— the monarch draws a card', p); await this.draw(p, 1); }
     if (when === 'end' && !p.dead) await this.b3_endStep(p);
+    if (when === 'end') for (const q of this.alive()) if (q.ai && !q.human) await this.aiDodgeUpkeepLoss(q);
     if (when === 'upkeep' && this.initiative === p && !p.dead) await this.venture(p);
     if (when === 'upkeep') await this.b1_upkeep();
     if (when === 'drawStep') await this.b7_onStep(p, 'drawStep');
@@ -6876,8 +6888,9 @@ class Game {
       if (tr.pumpedOnly && !pumpedAtHit) continue;
       if (tr.withCounters && !this.hasCounters(attacker)) continue;
       if (tr.withCounters) { if (b.cheerTurn === this.turn) continue; b.cheerTurn = this.turn; }
-      if (tr.who === 'one or more creatures you control' && this._cdOnce && this._cdOnce.has(b)) continue;
-      (this._cdOnce = this._cdOnce || new Set()).add(b);
+      { const k = b.id + '|' + (this._cdDefender ? this._cdDefender.i : '') + '|' + (b.card.triggers || []).indexOf(tr); /* b24: 'one or more creatures you control deal combat damage to a player' triggers once PER PLAYER dealt damage in a damage step (Grim Hireling: two players hit = four Treasures); it was once per combat */
+        if (tr.who === 'one or more creatures you control' && this._cdOnce && this._cdOnce.has(k)) continue;
+        (this._cdOnce = this._cdOnce || new Set()).add(k); }
       this.say(`— ${b.card.name} combat damage trigger`, p); await this.runTrig(p, b, tr, { attacker, defender: this._cdDefender, dmg: this._cdDmg, x: this._cdDmg });
     }
   }
@@ -7317,6 +7330,7 @@ class Game {
         if (dmg > 0) pending.push({ defender, dmg, attacker });
       }
     }
+    this._cdOnce = new Set(); /* b24: a new damage step (first strike, then regular) */
     for (const h of pending) {
       if (h.defender.dead) continue;
       if (h.defender.b9_cmbSafe === this.turn) { this.say(`— combat damage to ${h.defender.name}${h.attacker._atkPw ? "'s planeswalker" : ''} is prevented`, h.defender); continue; }

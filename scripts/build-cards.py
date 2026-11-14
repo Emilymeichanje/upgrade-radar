@@ -17,7 +17,10 @@ def get(url, timeout=120):
 def load_bulk():
     if os.environ.get('BULK_FILE'):
         return json.load(open(os.environ['BULK_FILE'], encoding='utf-8'))
-    meta = json.load(get('https://api.scryfall.com/bulk-data/oracle-cards'))
+    lst = json.load(get('https://api.scryfall.com/bulk-data'))
+    meta = next((x for x in lst.get('data') or [] if x.get('type') == 'oracle_cards'), None)
+    if not meta or not meta.get('download_uri'):
+        raise RuntimeError('no oracle_cards entry in /bulk-data: ' + json.dumps(lst)[:300])
     return json.load(get(meta['download_uri'], 600))
 
 def row(c):
@@ -45,7 +48,7 @@ def main():
     try:
         bulk = load_bulk()
     except Exception as e:
-        print('bulk download failed, keeping the old file:', e, file=sys.stderr); return 0
+        print('bulk download failed, keeping the old file:', e, file=sys.stderr); return 1
     rows = {}
     for c in bulk:
         if c.get('object') != 'card' or c.get('layout') in SKIP_LAYOUT or c.get('set_type') in SKIP_SETTYPE: continue
@@ -53,7 +56,7 @@ def main():
         if not c.get('name') or not c.get('id'): continue
         rows[c['name'].lower()] = row(c)
     if len(rows) < 20000 and not os.environ.get('BULK_FILE'):
-        print(f'only {len(rows)} cards in the bulk file — refusing to overwrite', file=sys.stderr); return 0
+        print(f'only {len(rows)} cards in the bulk file — refusing to overwrite', file=sys.stderr); return 1
     kept = 0
     for r in old.get('cards') or []:
         if r and r[0].lower() not in rows: rows[r[0].lower()] = r; kept += 1

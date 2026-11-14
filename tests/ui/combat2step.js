@@ -27,6 +27,9 @@ await pg.click('[data-act=cancel]');
 await pg.waitForFunction(()=>GoldfishUI.current.turnPhase==='main1'&&GoldfishUI.current.myTurn&&!GoldfishUI.current.busy,null,{timeout:10000}).catch(()=>{});
 const back=await pg.evaluate(()=>({phase:GoldfishUI.current.turnPhase,engine:GoldfishUI.current.game.phase,mode:GoldfishUI.current.mode&&GoldfishUI.current.mode.kind,atk:!!document.querySelector('[data-act=attack]:not([disabled])')}));
 ok('Cancel returns to main 1 with Attack still available',back.phase==='main1'&&back.engine==='main1'&&!back.mode&&back.atk,JSON.stringify(back));
+// v123: a second tap/click landing on Attack right after a picker closes must not start combat (Lightning Greaves equip → combat)
+{ const g1=await pg.evaluate(()=>{const U=GoldfishUI.current;U.pickClosedAt=Date.now();document.querySelector('[data-act=attack]').click();return U.turnPhase+':'+U.myTurn+':'+(U.mode&&U.mode.kind)});
+  ok('a click on Attack within half a second of a picker closing is ignored',g1==='main1:true:null',g1); await pg.waitForTimeout(650); }
 const trigBefore=await pg.evaluate(()=>GoldfishUI.current.game.log.filter(x=>/Gandalf, Party Guest triggers/.test(x.m)).length);
 await pg.click('[data-act=attack]');
 await pg.waitForFunction(()=>GoldfishUI.current.mode&&GoldfishUI.current.mode.kind==='attack',null,{timeout:10000}).catch(()=>{});

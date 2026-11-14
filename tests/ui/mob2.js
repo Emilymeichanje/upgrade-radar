@@ -20,7 +20,7 @@ const card=(name,extra={})=>({object:'card',name,mana_cost:'{1}',type_line:/Fore
 
  const pg=await ctx.newPage();pg.on('pageerror',e=>errs.push(e.message));pg.on('dialog',d=>d.dismiss());
  await pg.goto('http://localhost:8765/');await pg.waitForFunction(()=>/SGD \$/.test(document.querySelector('#sumbox summary')?.textContent||''),null,{timeout:20000});
- await pg.click('#nav-play');await pg.waitForSelector('#ptstart',{timeout:20000});await pg.click('#ptstart');
+ await pg.click('#nav-play');await pg.waitForSelector('#ptstart',{timeout:20000});await pg.click('#ptstart');await pg.waitForSelector('#ptshortgo,.gt-bar',{timeout:30000}).catch(()=>{});if(await pg.$('#ptshortgo'))await pg.click('#ptshortgo'); /* v123: the deck has a name that never loads — the app now says so before the game */ 
  await pg.waitForFunction(()=>window.GoldfishUI&&GoldfishUI.current&&GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull',null,{timeout:60000});await pg.click('[data-act=keep]');
  await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy,null,{timeout:60000});
  await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game;const {tagCard}=Goldfish;let id=5000;for(const p of g.players){for(let i=0;i<4;i++)p.battlefield.push({id:id++,card:tagCard({name:'Bear'+i,type:'Creature — Bear',mana:'{1}{G}',oracle:'',cmc:2,power:2,toughness:2}),tapped:false,summoning:false,counters:0});for(let i=0;i<3;i++)p.battlefield.push({id:id++,card:tagCard({name:'Forest',type:'Basic Land — Forest',mana:'',oracle:'',cmc:0}),tapped:false,counters:0});}U.render();window.scrollTo(0,0);});

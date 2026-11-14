@@ -655,7 +655,7 @@ class Table {
   ask(kind, ctx) {
     this.ff = false; this.sfx.play('prompt');
     const prev = this.prompt;
-    return new Promise(res => { this.prompt = { kind, ...ctx, options: kind === 'alt' ? ctx.blues : kind === 'search' ? ctx.pool : kind === 'choice' ? (ctx.options || []) : [], res: v => { this.prompt = prev && prev.kind !== 'priority' ? prev : null; this.render(); res(v); } }; this.render(); });
+    return new Promise(res => { this.prompt = { kind, ...ctx, options: kind === 'alt' ? ctx.blues : kind === 'search' ? ctx.pool : kind === 'choice' ? (ctx.options || []) : [], res: v => { this.prompt = prev && prev.kind !== 'priority' ? prev : null; if (!['priority', 'counter', 'endstep', 'attack'].includes(kind)) this.pickClosedAt = Date.now(); this.render(); res(v); } }; this.render(); });
   }
   engineNotes(c) {
     const bits = [];
@@ -970,6 +970,7 @@ class Table {
   }
   action(a, btn) {
     const g = this.game, me = this.me, P = this.prompt;
+    if (/^(attack|end|to-main2|pass-turn|atk-go)$/.test(a) && Date.now() - (this.pickClosedAt || 0) < 500) return; // b20: a second tap/click landing where a picker's card or 'Choose' button just was must not start combat or end the turn (Lightning Greaves equip → combat, twice in one recording)
     if (a === 'goseat') { { const q = g.players[+btn.dataset.seat]; if (q && q.dead && this.mobile) { this.peekDead = this.peekDead || new Set(); if (this.peekDead.has(q.i)) this.peekDead.delete(q.i); else this.peekDead.add(q.i); this.render(); } } const el = this.board.querySelector(`.gt-opps .gs[data-seat="${btn.dataset.seat}"]`); if (el) { this.oppsCollapsed = false; this.board.querySelector('.gt-opps-wrap').classList.remove('collapsed'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' }); } return; }
     if (a === 'collapse-opps') { this.oppsCollapsed = !this.oppsCollapsed; this.render(); return; }
     if (a === 'hand-tog') { this.handHidden = !this.handHidden; this.render(); return; }

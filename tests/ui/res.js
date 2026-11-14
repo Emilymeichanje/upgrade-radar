@@ -23,7 +23,7 @@ const card=(name,extra={})=>({object:'card',name,mana_cost:'{1}',type_line:/Fore
  const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
  const boot=async()=>{await pg.goto('http://localhost:8765/');await pg.waitForFunction(()=>/SGD \$/.test(document.querySelector('#sumbox summary')?.textContent||''),null,{timeout:20000});await pg.click('#nav-play');await pg.waitForSelector('#ptstart,#ptresume',{timeout:20000});};
  await boot();ok('no resume offered on a fresh start',!(await pg.$('#ptresume')));
- await pg.click('#ptstart');await pg.waitForFunction(()=>window.GoldfishUI&&GoldfishUI.current&&GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull',null,{timeout:60000});await pg.click('[data-act=keep]');
+ await pg.click('#ptstart');await pg.waitForSelector('#ptshortgo,.gt-bar',{timeout:30000}).catch(()=>{});if(await pg.$('#ptshortgo'))await pg.click('#ptshortgo'); /* v123: the deck has a name that never loads — the app now says so before the game */ await pg.waitForFunction(()=>window.GoldfishUI&&GoldfishUI.current&&GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull',null,{timeout:60000});await pg.click('[data-act=keep]');
  await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy,null,{timeout:60000});
  // play a land, end turn, let opponents play until my next turn
  await pg.evaluate(async()=>{const U=GoldfishUI.current,g=U.game,me=U.me;const l=me.hand.find(c=>c.isLand);if(l)await U.act(()=>g.playLand(me,l));});await pg.click('[data-act=end]');

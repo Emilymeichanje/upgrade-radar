@@ -931,7 +931,7 @@ async function renderTab(){
       <div class="row"><button class="chip" id="savelist">Save list</button><span class="note" id="lstmsg"></span></div>
       <div id="costbox"></div>
       <div id="lstgrid"></div>`;
-    $('#savelist').onclick=async()=>{const full=parseListFull($('#lst').value);await saveDeck(d.slug,{list:full.map(x=>x.name),prints:printsOf(full),_enriched:null});$('#detail [data-t=list] .dot')?.remove();renderBracketBox(d);renderDeckGrid(d,stale);await refreshPrices();renderCost(d);brHint(d);renderBracketBox(d)};
+    $('#savelist').onclick=async()=>{const full=parseListFull($('#lst').value);{/* v146: an export that puts the commander under SIDEBOARD (or leaves it out) saved 99 cards; the commander always belongs to the list */const cmd=commanderNames(d);const have=new Set(full.flatMap(x=>[norm(x.name),norm(x.name.split(' // ')[0])]));if(![...cmd].some(k=>have.has(k)))for(const n of String(d.name).split(/\s+(?:\+|&)\s+/))if(n&&!have.has(norm(n))&&!have.has(norm(n.split(' // ')[0])))full.push({name:n.split(' // ')[0],print:null})}await saveDeck(d.slug,{list:full.map(x=>x.name),prints:printsOf(full),_enriched:null});$('#detail [data-t=list] .dot')?.remove();renderBracketBox(d);renderDeckGrid(d,stale);await refreshPrices();renderCost(d);brHint(d);renderBracketBox(d)};
     loadCombos();renderBracketBox(d);if(dk.list&&dk.list.length){renderDeckGrid(d,stale);renderCost(d)}
     return;
   }
@@ -1063,7 +1063,7 @@ function popularityMap(){const m={};for(const c of (S.snap&&S.snap.commanders)||
 async function staleBuild(){ // b13: a tab left open for hours keeps running an old engine — warn before a game starts on one
   try{const mine=+(((document.querySelector('script[src*="playtest.js"]')||{}).src||'').match(/v=(\d+)/)||[])[1];const r=await fetchT(location.pathname.replace(/[^/]*$/,'')+'index.html',{cache:'no-cache'},5000);if(!r.ok)return null;const live=+((await r.text()).match(/playtest\.js\?v=(\d+)/)||[])[1];return mine&&live&&live>mine?{mine,live}:null}catch(e){return null}}
 /* The loader says which step it is on and counts seconds, so a stuck screen identifies itself: a counter that stops = the page is frozen in that step; a counter that keeps running = waiting on that step. Any error is shown instead of leaving the loading text up forever. */
-const PAGE_BUILD='2026-11-15d';let ptTick=null,ptT0=0,ptStepName='';
+const PAGE_BUILD='2026-11-15e';let ptTick=null,ptT0=0,ptStepName='';
 function ptStep(t){ptStepName=t;const m=$('#ptstep');if(m)m.textContent=t;return new Promise(r=>setTimeout(r,30))} /* the short pause lets the text paint before a heavy step */
 async function startGame(cfg){
   try{await startGame0(cfg)}catch(e){const el=$('#play');el.innerHTML=`<div class="empty"><b>The game could not start.</b><br>Step: ${esc(ptStepName)}<br>${esc(String(e&&e.message||e))}<br><span class="note" style="white-space:pre-wrap;text-align:left;display:block">${esc(String(e&&e.stack||'').split('\n').slice(0,6).join('\n'))}</span><span class="note">page ${PAGE_BUILD} · send a screenshot of this</span></div><div class="row" style="justify-content:center"><button class="chip pri" id="ptretry">Try again</button><button class="chip" id="ptback2">Back to setup</button></div>`;$('#ptback2').onclick=openPlaytest;$('#ptretry').onclick=()=>startGame(cfg)}

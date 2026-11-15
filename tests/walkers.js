@@ -1365,5 +1365,12 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      { const [g,me]=base(); clear(g); const t1=put(g,me,{...cr('Tok A','Saproling',1,1),token:true}), t2=put(g,me,{...cr('Tok B','Beast',4,4),token:true}); g.hooks.humanSearch=async q=>q.pool.filter(c=>c.name==='Tok A'); await g.runOps(me,[{op:'populate'}],cr('Src','Elf',1,1),{});
        ok('populate: I choose which token is copied (it used to take the biggest)',me.battlefield.filter(b=>b.card.name==='Tok A').length===2&&me.battlefield.filter(b=>b.card.name==='Tok B').length===1); }
    }
+   // v142 (b38): found while reading eleven recordings
+   { const J=require(__dirname+'/../data/cards.json'); const DC=n=>{const r=J.cards.find(r=>r[0]===n); return tagCard({name:r[0],mana:r[1],type:r[2],oracle:r[3],cmc:r[4],power:r[5]??undefined,toughness:r[6]??undefined})};
+     { const [g,me]=base(); const dr=tagCard(mk('Test Dragon','Creature — Dragon','{4}{R}{R}','Flying',6,5,5)), el=tagCard(mk('Test Elf','Creature — Elf','{4}{G}{G}','',6,5,5)); const c0=g.costOf(me,dr).total; const inc=put(g,me,DC("Urza's Incubator")); inc.chosenType='dragon'; g.refreshStatics();
+       ok("Urza's Incubator: creature spells of the chosen type cost {2} less, others don't",c0-g.costOf(me,dr).total===2&&g.costOf(me,el).total===6,JSON.stringify([c0,g.costOf(me,dr).total,g.costOf(me,el).total])); }
+     { const [g,me]=base(); const opp=g.players[1]; const sr=put(g,opp,tagCard(mk('Shiny Rock','Artifact','{1}','',1))); const as=put(g,me,DC('Aura Shards')); g.hooks.humanSearch=async q=>q.pool.filter(c=>c.name==='Shiny Rock'); const n=g.log.length; await g.runOps(me,as.card.triggers[0].ops,as.card,{perm:as});
+       ok('Aura Shards: the log says what was destroyed',!opp.battlefield.includes(sr)&&g.log.slice(n).some(x=>/Shiny Rock/.test(x.m)),JSON.stringify(g.log.slice(n).map(x=>x.m))); }
+   }
  }
  console.log(fails+' failed');})();

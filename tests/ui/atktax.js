@@ -1,0 +1,20 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const pg=await b.newPage({viewport:{width:1300,height:900}});const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
+await pg.goto('file://'+__dirname+'/rec.html');await pg.evaluate(()=>{Math.random=Goldfish.mulberry(5);boot()});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.click('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy&&!GoldfishUI.current.prompt,null,{timeout:60000});
+// v139: an attack tax I can't pay warns at "Attack with N" instead of silently skipping to the second main phase
+await pg.evaluate(()=>{const U=GoldfishUI.current,g=U.game,me=U.me;const {tagCard}=Goldfish;
+  const put=(pl,c)=>{const b={id:Math.random(),card:c,tapped:false,counters:0,enteredTurn:0,summoning:false};pl.battlefield.push(b);return b};
+  put(me,tagCard({name:'Grizzly Bears',type:'Creature — Bear',mana:'{1}{G}',oracle:'',cmc:2,power:'2',toughness:'2'}));
+  for(const q of g.opponentsOf(me)) put(q,tagCard({name:'Ghostly Prison',type:'Enchantment',mana:'{2}{W}',oracle:"Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you.",cmc:3}));
+  me.battlefield.filter(x=>x.card.isLand).forEach(x=>x.tapped=true); g.refreshStatics();U.render();});
+await pg.click('[data-act=attack]');
+await pg.waitForFunction(()=>GoldfishUI.current.mode&&GoldfishUI.current.mode.kind==='attack',null,{timeout:10000});
+const chip=await pg.$eval('[data-act=def]',e=>e.textContent);
+ok('the defender button shows what attacking that player costs',/\{2\} each/.test(chip),chip);
+await pg.click('[data-act=atk-all]');await pg.waitForTimeout(600);await pg.click('[data-act=atk-go]');await pg.waitForTimeout(300);
+const st=await pg.evaluate(()=>({mode:GoldfishUI.current.mode&&GoldfishUI.current.mode.kind,note:(document.querySelector('#pttaxnote')||{}).textContent||'',phase:GoldfishUI.current.turnPhase}));
+ok('unpayable tax: still choosing attackers, with a warning that names the card',st.mode==='attack'&&/Ghostly Prison asks \{2\}/.test(st.note),JSON.stringify(st));
+ok('no page errors',!errs.length,errs.join('|'));await b.close();})();

@@ -1403,5 +1403,10 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
        const a1=put(g,me,cr('Big','Beast',6,6)), a2=put(g,me,cr('Dork','Elf',1,1)); a2.card.roles=['ramp']; for(const b of me.battlefield)b.summoning=false; put(g,g.players[1],cr('Wall','Wall',0,8)); const atk=me.ai.chooseAttacks(g,me);
        ok('AI: about to deck, everything that can attack does',atk.some(x=>x.attacker===a1)&&atk.some(x=>x.attacker===a2)&&atk.length>=3,String(atk.length)); }
    }
+   // v145: lists saved before quantities were kept (every basic once) are filled back to 100 for play
+   { const src=require('fs').readFileSync(__dirname+'/../index.html','utf8'); const fn=src.slice(src.indexOf('function padBasics('),src.indexOf('function printsOf(')); const padBasics=new Function('norm',fn+';return padBasics')(x=>String(x).toLowerCase()); const cmd=new Set(['sonic the hedgehog']);
+     const l=[...Array(77)].map((_,k)=>'Card'+k).concat(['Island','Mountain','Plains','Sonic the Hedgehog']); const r=padBasics(l,cmd); const c=n=>r.list.filter(x=>x===n).length;
+     ok('an 81-card list with one of each basic is filled to 100 with those basics, evenly',r.list.length===100&&c('Island')===8&&c('Mountain')===7&&c('Plains')===7&&/filled to 100/.test(r.note),r.note);
+     ok('a list that already has several of a basic, a full list, and a list without its commander line are judged correctly',padBasics(l.concat(['Island']),cmd)===null&&padBasics([...Array(100)].map((_,k)=>'c'+k),cmd)===null&&padBasics(l.slice(0,-1),cmd).list.length===99); }
  }
  console.log(fails+' failed');})();

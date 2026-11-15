@@ -2907,7 +2907,11 @@ class Game {
   /** loop guard: at most 250 triggered abilities resolve per turn (stops token / death-trigger loops) */
   trigOk() { if (this.trigBudget == null) this.trigBudget = 250; if (this.trigBudget-- > 0) return true; if (!this.trigWarned) { this.trigWarned = true; this.say('— trigger limit reached this turn (loop stopped)'); } return false; }
   landLimit(p) { return 1 + (p.extraLandsTurn || 0) + p.battlefield.reduce((s, b) => s + (b.card.extraLands || 0), 0); }
-  say(msg, p) { const line = (p ? p.name + ': ' : '') + msg; this.log.push({ t: this.turn, m: line }); if (this.hooks.log) this.hooks.log(line); }
+  /** b39: review notes — they go into the log for the exported game file only and are never shown on screen (hooks.log is not called).
+   *  Hands are written at the start of every turn and at the end of the active player's turn, so AI choices can be judged against what it held. */
+  note(msg) { if (this.b39_over) return; this.log.push({ t: this.turn, m: msg, hid: true }); }
+  b39_hands(when, only) { for (const q of this.alive()) { if (only && q !== only) continue; const lands = q.battlefield.filter(b => b.card.isLand); let avail = 0; try { avail = this.availableMana(q); } catch (e) {} this.note(`   [hand · ${when}] ${q.name}: life ${q.life} · lands ${lands.length} (${lands.filter(b => !b.tapped).length} untapped) · mana ${avail} · library ${q.library.length} · hand (${q.hand.length}): ${q.hand.map(c => c.name).join(', ') || '—'}${q.command.length ? ' · command zone: ' + q.command.map(c => c.name + (this.cmdTaxOf(q, c) ? ' (tax ' + this.cmdTaxOf(q, c) + ')' : '')).join(', ') : ''}`); } }
+  say(msg, p) { if (this.b39_over) return; const line = (p ? p.name + ': ' : '') + msg; this.log.push({ t: this.turn, m: line }); if (this.hooks.log) this.hooks.log(line); }
   alive() { return this.players.filter(p => !p.dead); }
   opponentsOf(p) { return this.alive().filter(q => q !== p); }
   /** players in turn order starting after `p` */
@@ -2971,7 +2975,7 @@ class Game {
     }
     p.battlefield = []; p.graveyard = []; /* b14: Wrexial cast spells out of an eliminated player's graveyard */
     await this.emit({ type: 'dies', p, why });
-    const a = this.alive(); if (a.length === 1 && !this.winner) { this.winner = a[0]; this.say(`${a[0].name} wins on turn ${this.turn}`); await this.emit({ type: 'win', p: a[0] }); }
+    const a = this.alive(); if (a.length === 1 && !this.winner) { this.winner = a[0]; this.say(`${a[0].name} wins on turn ${this.turn}`); this.b39_hands('game over'); this.b39_over = true; /* b39: nothing is logged after the win line (leftover triggers kept printing) */ await this.emit({ type: 'win', p: a[0] }); }
   }
   async changeLife(p, delta, source) {
     if (delta < 0) { if (p.lostTurn !== this.turn) { p.lostTurn = this.turn; p.lostThisTurn = 0; } p.lostThisTurn += -delta; }
@@ -5216,7 +5220,8 @@ class Game {
         case 'landToBf': {
           for (let k = 0; k < op.n; k++) {
             const pool = p.library.filter(c => c.isLand && (!op.basic || /\bBasic\b/.test(c.type)) && (!op.types.length || op.types.some(t => c.type.toLowerCase().includes(t))));
-            const pick = (await this.chooseFromList(p, src, pool, 1, 'battlefield'))[0]; if (!pick) break;
+            if (!pool.length) { this.say(`— ${src.name}: finds no ${op.basic ? 'basic ' : ''}land${this.mindcensored(p) ? ' (an opponent\'s Aven Mindcensor limits the search to the top four cards)' : ''}`, p); break; } // b39: this resolved without a word
+            const pick = (await this.chooseFromList(p, src, pool, 1, 'battlefield'))[0]; if (!pick) { if (p.human) this.say(`— ${src.name}: no land taken`, p); break; }
             p.library.splice(p.library.indexOf(pick), 1); const [pm] = await this.landEnters(p, pick, op.tapped);
             this.say(`— puts ${pick.name} onto the battlefield${pm.tapped ? ' tapped' : ''}`, p); await this.emit({ type: 'land', p, card: pick, perm: pm, fetched: true }); await this.landfall(p);
           }
@@ -7548,7 +7553,7 @@ class Game {
     for (const b of p.battlefield.filter(b => b.card.saga && !b.neutral)) await this.loreUp(p, b);
     await this.fireTriggers(p, 'drawStep'); if (p.dead || this.winner) return;
     await this.priorityRound('draw', p); if (p.dead || this.winner) return;
-    this.phase = 'main1'; this.step = 'main1'; await this.emit({ type: 'step', step: 'main1', p });
+    this.phase = 'main1'; this.step = 'main1'; this.b39_hands('turn start'); await this.emit({ type: 'step', step: 'main1', p });
     if (p.pendingMainMana) { this.addMana(p, Array(Math.min(p.pendingMainMana, 30)).fill('C')); p.pendingMainMana = 0; }
     await this.fireTriggers(p, 'main1'); if (p.dead || this.winner) return;
     for (const c of p.paradigms || []) { if (!p.exile.includes(c)) continue; const go = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card: c, question: 'paradigm: cast a copy without paying its mana cost?' })) : (p.ai ? p.ai.castValueRaw(this, p, c) > 0 : true); if (go) { const cp = { ...c, uid: UID++, token: true, paradigm: false }; this.say(`— casts a copy of ${c.name} (paradigm)`, p); await this.castFreeCard(p, cp); } }
@@ -7597,7 +7602,7 @@ class Game {
     await this.endStep(p);
   }
   async endStep(p) {
-    this.phase = 'end';
+    this.phase = 'end'; if (!p.dead) this.b39_hands('end of turn', p);
     for (const q of this.players) for (const b of [...q.battlefield]) if (b.warpTurn === this.turn) { q.battlefield.splice(q.battlefield.indexOf(b), 1); await this.emit({ type: 'destroy', owner: q, perm: b, quiet: true }); const c = b.card.orig || b.card; q.exile.push(c); (q.exileCast = q.exileCast || []).push({ card: c, free: false, owner: q, turn: this.turn, notBefore: this.turn + 1, forever: true }); this.say(`— ${c.name} is exiled (warp); it can be cast from exile later`, q); await this.leftBattlefield(q, b); }
     for (const r of (this.endToHand || []).splice(0)) { const o = this.players.find(q => q.graveyard.includes(r.card)); if (!o) continue; o.graveyard.splice(o.graveyard.indexOf(r.card), 1); o.hand.push(r.card); this.say(`— ${r.card.name} returns to ${o.name}'s hand`, o); }
     for (const [o, pm] of (this.endCmdReturns || []).splice(0)) { const i = o.battlefield.indexOf(pm); if (i < 0) continue; o.battlefield.splice(i, 1); await this.emit({ type: 'destroy', owner: o, perm: pm, quiet: true }); o.command.push(pm.card.orig || pm.card); this.say(`— ${pm.card.name} returns to the command zone`, o); await this.leftBattlefield(o, pm); }

@@ -1,0 +1,10 @@
+const {chromium}=require('playwright');
+(async()=>{const b=await chromium.launch();const pg=await b.newPage({viewport:{width:1300,height:900}});const errs=[];pg.on('pageerror',e=>errs.push(e.message));
+await pg.route(/api\.scryfall\.com/,r=>r.fulfill({status:404,json:{}}));const ok=(n,c,x='')=>console.log((c?'PASS ':'FAIL ')+n+(x?' — '+x:''));
+await pg.goto('file://'+__dirname+'/rec.html');await pg.evaluate(()=>{Math.random=Goldfish.mulberry(5);boot()});
+await pg.waitForFunction(()=>GoldfishUI.current.prompt&&GoldfishUI.current.prompt.kind==='mull');await pg.click('[data-act=keep]');
+await pg.waitForFunction(()=>GoldfishUI.current.myTurn&&!GoldfishUI.current.busy&&!GoldfishUI.current.prompt,null,{timeout:60000});
+const r=await pg.evaluate(()=>{const U=GoldfishUI.current;const t=U.logText();const ai=U.game.players.find(p=>!p.human);return {hands:(t.match(/\[hand · turn start\]/g)||[]).length,hasAi:t.split('\n').some(l=>/\[hand · turn start\] AI/.test(l)&&l.includes(ai.hand.length?'hand ('+ai.hand.length+')':'hand (')),legend:/review notes/.test(t),screen:(U.logEl?U.logEl.textContent:'').includes('[hand')||(document.body.textContent||'').includes('[hand ·'),json:(JSON.parse(U.recordingJson()).text||'').includes('[hand · turn start]')}});
+ok('the exported game lists every hand at the start of each turn',r.hands>=4&&r.hasAi&&r.legend&&r.json,JSON.stringify(r));
+ok('hands are not shown on screen during the game',!r.screen);
+ok('no page errors',!errs.length,errs.join('|'));await b.close();})();

@@ -2611,6 +2611,7 @@ function counterHits(counterCard, spell) {
 }
 
 function buildDeck(cards, commanderNames) {
+  cards = (cards || []).filter(c => c && c.name); commanderNames = (commanderNames || []).filter(Boolean); /* v140: one nameless card stopped the whole game from starting */
   const cmd = new Set(commanderNames.map(n => n.toLowerCase()));
   const library = [], commanders = [];
   for (const c of cards) (cmd.has(c.name.toLowerCase()) ? commanders : library).push(tagCard(c));

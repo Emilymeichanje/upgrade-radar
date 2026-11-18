@@ -1436,5 +1436,11 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
      const none=g.abilityOptions(me,{instant:true}).filter(o=>o.card===pt).length; const fod=put(g,me,cr('Fodder','Goat',0,1)); const opt=g.abilityOptions(me,{instant:true}).find(o=>o.card===pt);
      g.hooks.humanSearch=async q=>q.pool.filter(c=>c.name==='Fodder'); if(opt) await g.doAction(me,opt); 
      ok('Phyrexian Tower: tap and sacrifice a creature for {B}{B}',none===0&&!!opt&&!me.battlefield.includes(fod)&&pm.tapped&&(me.pool||[]).filter(x=>x.c==='B').length===2,JSON.stringify([none,!!opt,me.pool])); }
+   // v149 (b43): battles are permanents — Invasion of Ikoria enters and its enter trigger fetches a creature
+   { const J=require(__dirname+'/../data/cards.json'); const r=J.cards.find(r=>r[0].startsWith('Invasion of Ikoria')); const ik=tagCard({name:r[0],mana:r[1],type:r[2],oracle:r[3],cmc:r[4]});
+     const [g,me]=base(); for(const q of g.players)q.battlefield=[]; me.pool=[]; for(let k=0;k<9;k++)await g.landEnters(me,tagCard(mk('Forest','Basic Land — Forest','','',0)));
+     const small=cr('Small Beast','Beast',3,3), big=cr('Huge Beast','Beast',9,9), human=cr('A Human','Human Soldier',2,2); small.cmc=3; big.cmc=9; human.cmc=2; me.library.push(small,big,human); me.hand=[ik]; let pool=null; g.hooks.humanSearch=async q=>{pool=q.pool.map(c=>c.name); return q.pool.filter(c=>c.name==='Small Beast')}; g.hooks.humanNumber=async()=>6; g.hooks.humanX=async()=>6;
+     await g.cast(me,ik,'hand',null,{x:6}); await tick(g);
+     ok('Invasion of Ikoria (X=6): it stays on the battlefield and fetches a non-Human creature of mana value 6 or less',ik.isBattle&&me.battlefield.some(b=>b.card===ik)&&me.battlefield.some(b=>b.card===small)&&!!pool&&!pool.includes('Huge Beast')&&!pool.includes('A Human'),JSON.stringify(pool&&pool.filter(n=>/Beast|Human/.test(n)))); }
  }
  console.log(fails+' failed');})();

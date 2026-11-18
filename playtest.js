@@ -782,7 +782,7 @@ function tagAbilities(card) {
   const front = (card.parseOracle != null ? card.parseOracle : card.oracle).split('\n//\n')[0];
   let txt0 = front; if (first) { const F = first.charAt(0).toUpperCase() + first.slice(1); txt0 = txt0.split(card.name.split(' // ')[0]).join('\u0001').replace(new RegExp('\\b' + F + '\\b(?!,)', 'g'), '\u0001'); }
   { const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); const wb = s => new RegExp('(?<![a-z])' + esc(s) + '(?![a-z])', 'g'); txt0 = txt0.toLowerCase().replace(wb(name), 'this card').replace(wb(short), 'this card').split('\u0001').join('this card'); }
-  const txt = txt0.replace(/this (creature|artifact|enchantment|land|permanent|aura|saga|class|equipment|planet|vehicle|spacecraft|god)(?! token)/g, 'this card');
+  const txt = txt0.replace(/this (creature|artifact|enchantment|land|permanent|aura|saga|class|equipment|planet|vehicle|spacecraft|god|siege|battle)(?! token)/g, 'this card');
   const lines = txt.split('\n').map(l => l.replace(/\([^)]*\)/g, '').trim()).filter(Boolean);
   card.abilities = []; card.triggers = []; card.etbOps = null; card.gyCast = null;
   const instantSpeed = l => !/activate only as a sorcery/.test(l);
@@ -881,7 +881,7 @@ function tagAbilities(card) {
     if (/^the "legend rule" doesn't apply to tokens you control/.test(l)) { ST('b2_noLegendRuleTokens', true); continue; }
     if ((m = l.match(/^(\{[^:]+\}), \{t\}: proliferate x times, where x is the number of planeswalker types among planeswalkers you control/))) { AB(m[1], [{ op: 'b2_proliferatePwTypes' }], { tap: true }); continue; }
     if (/^whenever you sacrifice a land, create a tapped token that's a copy of this card if seven or more land cards are in your graveyard\. otherwise, create a tapped 1\/1 black insect creature token with flying/.test(l)) { TR('sacrifice', [{ op: 'b2_scouring' }], { any: false, sacFilter: 'land' }); continue; }
-    if (/^when this siege enters, search your library and\/or graveyard for a non-human creature card with mana value x or less and put it onto the battlefield/.test(l)) { ETB([{ op: 'tutorTo', filter: 'nonhuman creature', dest: 'battlefield', n: 1, max: { $: 'x' }, alsoGy: true }]); continue; }
+    if (/^when this (?:siege|card) enters, search your library and\/or graveyard for a non-human creature card with mana value x or less and put it onto the battlefield/.test(l)) { ETB([{ op: 'tutorTo', filter: 'nonhuman creature', dest: 'battlefield', n: 1, max: { $: 'x' }, alsoGy: true }]); continue; }
     if ((m = l.match(/^(\{[^:]+\}), \{t\}, sacrifice a creature: search your library for a creature card with mana value equal to 1 plus the sacrificed creature's mana value, put that card onto the battlefield, then shuffle\. activate only as a sorcery/))) { AB(m[1], [{ op: 'b2_pod' }], { tap: true, sacOther: true, speed: 'sorcery' }); card.noTutor = true; continue; }
     if (/^when this card enters, exile any number of other nonland permanents you control until this card leaves the battlefield\. create a 1\/1 white soldier creature token for each permanent exiled this way/.test(l)) { ETB([{ op: 'b2_abdel' }]); continue; }
     // ---- end b2 (parse)
@@ -1614,7 +1614,7 @@ function tagAbilities(card) {
     if (/^creatures entering or dying don't cause abilities to trigger/.test(l)) { ST('torpor', 'creature'); ST('torporDies', true); continue; }
     if (/^creatures entering don't cause abilities to trigger/.test(l)) { ST('torpor', 'creature'); continue; }
     if (/^combat damage can't be prevented/.test(l)) { ST('noCombatPrevent', true); continue; }
-    if (/^when this siege enters, search your library and\/or graveyard for a non-human creature card with mana value x or less and put it onto the battlefield/.test(l) || /^when this card enters, search your library and\/or graveyard for a non-human creature card with mana value x or less and put it onto the battlefield/.test(l)) { ETB([{ op: 'tutorTo', filter: 'nonhuman creature', dest: 'battlefield', n: 1, max: { $: 'x' } }]); continue; }
+    if (/^when this (?:siege|card) enters, search your library and\/or graveyard for a non-human creature card with mana value x or less and put it onto the battlefield/.test(l) || /^when this card enters, search your library and\/or graveyard for a non-human creature card with mana value x or less and put it onto the battlefield/.test(l)) { ETB([{ op: 'tutorTo', filter: 'nonhuman creature', dest: 'battlefield', n: 1, max: { $: 'x' } }]); continue; }
     if (/^activated abilities of creatures your opponents control can't be activated/.test(l)) { ST('linvalaK', true); continue; }
     if (/^as this card enters, choose a number/.test(l)) { card.choosesNumber = true; continue; }
     if (/^noncreature spells with mana value equal to the chosen number can't be cast/.test(l)) { ST('prelate', true); continue; }
@@ -2445,7 +2445,7 @@ function tagCard(c) {
   const card = {
     uid: UID++, name: c.name, type: front, oracle: c.oracle || '', cmc: isLand ? 0 : (c.cmc || 0), manaCost: (c.mana || '').split(' // ')[0], mana: manaInfo((c.mana || '').split(' // ')[0]),
     img: c.img || '', isLand, isCreature: /\bCreature\b/.test(front), isInstant: /\bInstant\b/.test(front), isSorcery: /\bSorcery\b/.test(front),
-    isArtifact: /\bArtifact\b/.test(front), isEnchantment: /\bEnchantment\b/.test(front), isPlaneswalker: /\bPlaneswalker\b/.test(front),
+    isArtifact: /\bArtifact\b/.test(front), isEnchantment: /\bEnchantment\b/.test(front), isPlaneswalker: /\bPlaneswalker\b/.test(front), isBattle: /\bBattle\b/.test(front), /* b43: battles are permanents — they resolved like a spell with no effect and went to the graveyard, so 'When this Siege enters' never happened */
     isLegendary: /\bLegendary\b/.test(front),
     power: parseInt(c.power) || (c.power === '*' ? 2 : 0), toughness: parseInt(c.toughness) || (c.toughness === '*' ? 2 : 0),
     kw: kwLines(o).concat((c.keywords || []).map(k => k.toLowerCase()).filter(k => KW.includes(k))).filter((k, i, a) => a.indexOf(k) === i),
@@ -4627,7 +4627,7 @@ class Game {
       if (victim.countered && p.battlefield.some(b => b.card.statics && b.card.statics.baral && !b.neutral)) { const go = p.human ? !!(this.hooks.humanMay && await this.hooks.humanMay({ p, card, question: 'Baral: draw a card, then discard a card?' })) : true; if (go) { await this.draw(p, 1); await this.runOps(p, [{ op: 'discard', n: 1 }], card, {}); } }
       await this.leaveStack(spell, 'resolved'); await this.emit({ type: 'resolve', p, card }); return;
     }
-    const perm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker;
+    const perm = card.isCreature || card.isArtifact || card.isEnchantment || card.isPlaneswalker || card.isBattle;
     if (card.roles.includes('wipe') && (!perm || /^when[^\n]*enters[^\n]*(destroy|exile|damage|-\d)/im.test(card.oracle || '')) && !/target player controls/i.test(card.oracle || '')) { /* b17: casting Pyrohemia or Elspeth, Sun's Champion swept the board — their sweep is an ability, not the spell */
       if (card.b1_wipeSnap) spell.b1_snap = p.battlefield.filter(b => b.card.isCreature && !b.card.token);
       await this.emit({ type: 'wipe', p, card });

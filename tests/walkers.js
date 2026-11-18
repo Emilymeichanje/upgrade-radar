@@ -1429,5 +1429,12 @@ const put=async(g,p,name)=>{const pm=await g.enterPerm(p,C(name));pm.summoning=f
        ok("Sonic + Kilo attack: both triggers are on the stack together and I order them — counters first, then proliferate",!!order&&order.length===2&&so.counters===2&&ki.counters===2,JSON.stringify([order,so.counters,ki.counters])); }
      { const [g,me]=base(); clear(g); const opp=g.players[1]; const il=put(g,me,DC('Ilharg, the Raze-Boar')); me.hand=[L('Mountain','Mountain')]; const n=g.log.length; await g.runOps(me,il.card.triggers[0].ops,il.card,{perm:il}); ok('Ilharg with no creature card in hand says so',g.log.slice(n).some(x=>/no creature card in hand/.test(x.m))); }
    }
+   // v148 (b42): Phyrexian Tower taps for {C}; black only by sacrificing a creature
+   { const J=require(__dirname+'/../data/cards.json'); const r=J.cards.find(r=>r[0]==='Phyrexian Tower'); const pt=tagCard({name:r[0],mana:r[1],type:r[2],oracle:r[3],cmc:r[4]});
+     const [g,me]=base(); for(const q of g.players)q.battlefield=[]; me.pool=[]; const [pm]=await g.landEnters(me,pt); const bsp=tagCard(mk('Black Spell','Sorcery','{B}','Draw a card.',1)), csp=tagCard(mk('Grey Spell','Artifact','{1}','',1)); me.hand=[bsp,csp];
+     ok('Phyrexian Tower alone: colourless only — a {B} spell is not castable, a {1} spell is',pt.produces.join('')==='C'&&!g.castMode(me,bsp,'hand')&&!!g.castMode(me,csp,'hand'),JSON.stringify(pt.produces));
+     const none=g.abilityOptions(me,{instant:true}).filter(o=>o.card===pt).length; const fod=put(g,me,cr('Fodder','Goat',0,1)); const opt=g.abilityOptions(me,{instant:true}).find(o=>o.card===pt);
+     g.hooks.humanSearch=async q=>q.pool.filter(c=>c.name==='Fodder'); if(opt) await g.doAction(me,opt); 
+     ok('Phyrexian Tower: tap and sacrifice a creature for {B}{B}',none===0&&!!opt&&!me.battlefield.includes(fod)&&pm.tapped&&(me.pool||[]).filter(x=>x.c==='B').length===2,JSON.stringify([none,!!opt,me.pool])); }
  }
  console.log(fails+' failed');})();

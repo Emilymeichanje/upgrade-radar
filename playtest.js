@@ -2481,6 +2481,11 @@ function tagCard(c) {
     }
     for (const col of 'WUBRG') if (new RegExp('add \\{' + col + '\\}|\\{t\\}: add \\{[^}]*' + col, 'i').test(o) || new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front)) card.produces.push(col);
     for (const mm of o.matchAll(/\{t\}(?:, pay \d+ life)?: add ([^.\n]+)/gi)) for (const s of mm[1].matchAll(/\{([wubrg])\}/gi)) { const col = s[1].toUpperCase(); if (!card.produces.includes(col)) card.produces.push(col); }
+    { /* b42: a colour that only appears behind an extra cost is not what the land taps for. Phyrexian Tower ("{T}: Add {C}" / "{T}, Sacrifice a creature: Add {B}{B}") was tapping for black on its own. */
+      const cols = t => [...t.matchAll(/\{([wubrg])\}/gi)].map(x => x[1].toUpperCase()); const bad = new Set(), good = new Set();
+      for (const ln of o.split('\n')) { const mm = ln.match(/^([^:"]*): add ([^.\n]+)/i); if (!mm) continue; const extra = /\bsacrifice (?!this\b)|\bdiscard\b/i.test(mm[1]); for (const k of cols(mm[2])) (extra ? bad : good).add(k); }
+      const basic = col => new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front);
+      if (bad.size) card.produces = card.produces.filter(k => !bad.has(k) || good.has(k) || basic(k)); }
     if (/any color in your commander's color identity/i.test(o)) card.cmdIdentity = true;
     if (/add one mana of any color|mana of any (one )?color|any type/i.test(o) || /command tower|mana confluence|city of brass|exotic orchard|reflecting pool|forbidden orchard|gemstone caverns|path of ancestry/i.test(c.name)) card.produces = ['W', 'U', 'B', 'R', 'G'];
     if (/^\{t\}: add one mana of any color that a land an opponent controls could produce/m.test(o)) card.landDyn = 'oppLands';
@@ -2490,6 +2495,7 @@ function tagCard(c) {
     { const ma = parseManaAbility(o.split('\n//\n')[0]); card.manaAmount = ma ? ma.amount : 1; }
     { const fc = (c.type || '').split(' // '); if (fc.length > 1 && /\bLand\b/.test(fc[1]) && (c.oracle || '').includes('\n//\n')) { const back = tagCard({ name: c.name.split(' // ')[1] || c.name, type: fc[1], oracle: (c.oracle || '').split('\n//\n')[1] || '', cmc: 0, img: c.img }); back.orig = card; card.backLand = back; card.pathway = true; } }
     tagLandEntry(card, o); tagGyHate(card, o); tagAbilities(card); tagFlags(card, c, o, true);
+    { /* b42: …and the costed mode is its own ability: tap, sacrifice a creature, add that mana */ const sm = o.match(/^\{t\}, sacrifice an? (creature|artifact|land|swamp|permanent): add ((?:\{[wubrgc]\})+)\.?$/im); if (sm && !(card.abilities || []).some(a => a.mana && a.sacOther)) { const colors = [...sm[2].matchAll(/\{([wubrgc])\}/gi)].map(x => x[1].toUpperCase()); (card.abilities = card.abilities || []).push({ zone: 'battlefield', label: 'sacrifice for ' + sm[2].toUpperCase(), cost: { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0, x: false }, tap: true, sacSelf: false, exileSelf: false, discardSelf: false, life: 0, exileOthers: 0, discard: 0, sacOther: sm[1].toLowerCase(), speed: 'instant', mana: true, ops: [{ op: 'addMana', colors }], text: 'add ' + sm[2].toLowerCase() + '.' }); } }
     if (card.saga) { const sv = card.saga; card.saga = sv; }
     return card;
   }

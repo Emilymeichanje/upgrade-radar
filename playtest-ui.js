@@ -796,7 +796,7 @@ class Table {
   /** can the card in targeting mode target this stack object? */
   validSpellTarget(obj) {
     const m = this.mode; if (!m || m.kind !== 'target' || !this.targetsSpells(m.card)) return false;
-    if (m.card.redirect) return !!obj.target;
+    if (m.card.redirect) return !!obj.target || (!!m.card.redirectAb && obj.kind === 'ability' && obj.caster !== this.me && !obj.b47_by); // b47: Deflecting Swat on an ability
     return obj.caster !== this.me && G.counterHits(m.card, obj.card) && !this.game.isUncounterable(obj);
   }
   startCast(card, zone) {

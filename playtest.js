@@ -2519,6 +2519,27 @@ function tagCard(c) {
     { const fc = (c.type || '').split(' // '); if (fc.length > 1 && /\bLand\b/.test(fc[1]) && (c.oracle || '').includes('\n//\n')) { const back = tagCard({ name: c.name.split(' // ')[1] || c.name, type: fc[1], oracle: (c.oracle || '').split('\n//\n')[1] || '', cmc: 0, img: c.img }); back.orig = card; card.backLand = back; card.pathway = true; } }
     tagLandEntry(card, o); tagGyHate(card, o); tagAbilities(card); tagFlags(card, c, o, true);
     { /* b42: …and the costed mode is its own ability: tap, sacrifice a creature, add that mana */ const sm = o.match(/^\{t\}, sacrifice an? (creature|artifact|land|swamp|permanent): add ((?:\{[wubrgc]\})+)\.?$/im); if (sm && !(card.abilities || []).some(a => a.mana && a.sacOther)) { const colors = [...sm[2].matchAll(/\{([wubrgc])\}/gi)].map(x => x[1].toUpperCase()); (card.abilities = card.abilities || []).push({ zone: 'battlefield', label: 'sacrifice for ' + sm[2].toUpperCase(), cost: { generic: 0, pips: { W: 0, U: 0, B: 0, R: 0, G: 0 }, total: 0, x: false }, tap: true, sacSelf: false, exileSelf: false, discardSelf: false, life: 0, exileOthers: 0, discard: 0, sacOther: sm[1].toLowerCase(), speed: 'instant', mana: true, ops: [{ op: 'addMana', colors }], text: 'add ' + sm[2].toLowerCase() + '.' }); } }
+    { /* b47: mana abilities of a land that cost mana ("{2}, {T}: Add {B} for each Swamp you control", filter lands, "{1}, {T}: Add {W}{U}") are not what the land taps for. Each becomes a mode: the planner may switch it on by tapping other sources for its cost (b47_cfgs), and the player gets it as an ability. Cabal Coffers was a free {B}; Mystic Gate a free {W}/{U}. */
+      const ft = o.split('\n//\n')[0], modes = []; let unknown = false, plain = new Set(), anyPlain = false;
+      for (const ln of ft.split('\n')) { const mm = ln.match(/^([^:"]*): add ([^.\n]+)/i); if (!mm) continue; const cs = [...mm[1].matchAll(/\{([^}]+)\}/g)].map(x => x[1].toUpperCase()).filter(x => x !== 'T');
+        if (!cs.length) { if (/^\{t\}(, pay \d+ life)?$/i.test(mm[1].trim())) { anyPlain = true; for (const k of mm[2].matchAll(/\{([wubrg])\}/gi)) plain.add(k[1].toUpperCase()); if (/any color|any type|any one color/i.test(mm[2])) for (const k of 'WUBRG') plain.add(k); } continue; }
+        if (!/^(\{[^}]+\}, )+\{t\}$/i.test(mm[1].trim())) continue; // extra non-mana costs are handled elsewhere
+        const need = cs.map(x => /^\d+$/.test(x) ? { n: +x } : { cols: x.split('/').filter(k => 'WUBRG'.includes(k)) }); if (need.some(x => x.cols && !x.cols.length)) { unknown = true; continue; }
+        if (/spend this mana only|activate only/i.test(ln)) { unknown = true; continue; } // restricted mana keeps its own handling (Great Hall of the Citadel)
+        const t = mm[2].toLowerCase().trim(); let out = null, dyn = null, m2;
+        if ((m2 = t.match(/^\{b\} for each (basic )?swamp you control$/))) dyn = m2[1] ? 'basicSwamps' : 'swamps';
+        else if (/^(\{[wubrgc]\})+$/.test(t)) out = [...t.matchAll(/\{([wubrgc])\}/g)].map(x => [x[1].toUpperCase()]);
+        else if (/^(\{[wubrgc]\})+(, (or )?(\{[wubrgc]\})+| or (\{[wubrgc]\})+)+$/.test(t)) { const gs = t.split(/, or |, | or /).map(g => [...g.matchAll(/\{([wubrgc])\}/g)].map(x => x[1].toUpperCase())); const u = [...new Set(gs.flat())]; out = gs[0].map(() => u.slice()); }
+        else if (/^one mana of any color$/.test(t)) out = [ALLC.slice()];
+        else if ((m2 = t.match(/^(two|three|four|five|six) mana in any combination of colors$/))) out = Array(numOf(m2[1])).fill(0).map(() => ALLC.slice());
+        else { unknown = true; continue; }
+        modes.push({ need, total: need.reduce((x, y) => x + (y.n || 1), 0), out, dyn, costText: mm[1].replace(/, \{t\}$/i, '').trim(), text: ln.trim() }); }
+      if (modes.length && !unknown) {
+        const basicCols = [...'WUBRG'].filter(col => new RegExp('\\b' + { W: 'plains', U: 'island', B: 'swamp', R: 'mountain', G: 'forest' }[col] + '\\b', 'i').test(front));
+        card.produces = [...new Set([...plain, ...basicCols])]; if (!card.produces.length && anyPlain) card.produces = ['C']; card.manaAmount = 1; card.b47_modes = modes;
+        modes.forEach((md, i) => { const variants = md.need.some(x => x.cols && x.cols.length > 1) ? md.need.find(x => x.cols && x.cols.length > 1).cols : [null];
+          for (const v of variants) { const sym = md.need.map(x => x.n != null ? '{' + x.n + '}' : '{' + (x.cols.length > 1 ? v : x.cols[0]) + '}').join(''); const cost = manaInfo(sym); cost.b47_plain = true;
+            (card.abilities = card.abilities || []).push({ zone: 'battlefield', label: 'pay ' + sym + ': add ' + md.text.replace(/^[^:]*: add /i, '').replace(/\.$/, ''), cost, tap: true, sacSelf: false, exileSelf: false, discardSelf: false, life: 0, exileOthers: 0, discard: 0, speed: 'instant', mana: true, ops: [{ op: 'b47_landMana', i }], text: md.text }); } }); } }
     if (card.saga) { const sv = card.saga; card.saga = sv; }
     return card;
   }
@@ -2578,6 +2599,7 @@ function tagCard(c) {
   card.uncounterable = /this spell can't be countered/.test(o);
   card.redirect = /change the target of target spell|choose new targets for target spell|change the target of target (instant|sorcery)/.test(o) && /\b(Instant|Sorcery)\b/.test((c.type || '').split(' // ')[0]); /* b45: Hydroelectric Specimen is a creature — it was resolving as a redirect spell and never entered */
   if (card.redirect && !r.includes('redirect')) r.push('redirect');
+  card.redirectAb = card.redirect && /(?:new targets for|change the target of) target spell or ability/.test(o); // b47: Deflecting Swat, Bolt Bend — abilities too
   const tokN = res.match(/create (a|an|two|three|four|\d+) (?:tapped )?(?:\d+\/\d+|[a-z ]*creature token)/); card.tokenCount = tokN ? (NUM[tokN[1]] || parseInt(tokN[1]) || 1) : 0;
   const drawN = res.match(/draw (a|two|three|four|five|six|seven|\d+) cards?/); card.drawN = drawN ? (NUM[drawN[1]] || parseInt(drawN[1]) || 1) : 0;
   card.spellOps = isPerm ? null : (/^threshold — return that card from your graveyard to the battlefield instead if there are seven or more cards in your graveyard/m.test(o) ? [{ op: 'gyToHand', n: 1, filter: 'creature', thresholdBf: 7 }] : parseOps(res)).filter(op => !((op.op === 'destroy' && r.includes('removal')) || (op.op === 'destroyAll' && op.how === 'destroy' && r.includes('wipe') && /creature/.test(op.what || '')) || (op.op === 'damage' && card.dmg) || (op.op === 'draw' && card.drawN) || (op.op === 'gain' && card.gainN) || (op.op === 'tokens' && card.tokenCount) || (op.op === 'pumpAll' && r.includes('pump')) || (op.op === 'bounceTarget' && r.includes('removal')) || (op.op === 'lose' && !/loses? \d+ life/.test(res)) || (op.op === 'note' && /goad/.test(op.text || '')) || (op.op === 'gyToBf' && card.reanimate) || (op.op === 'tutorTo' && card.tutor)));
@@ -3171,12 +3193,41 @@ class Game {
     if (alt) for (const t of p.battlefield.filter(b => b.card.isCreature && b.card.token)) out.push({ kind: 'altar', b: t, amount: alt.card.altar.amount, colors: alt.card.altar.colors, pen: 6, via: alt.card });
     if (!p.hand.filter(c => c !== card).length) for (const b of p.battlefield.filter(b => b.card.manaAb && b.card.manaAb.led)) out.push({ kind: 'led', b, amount: 3, colors: ALLC.slice(), pen: 9 });
     if (card && card.isLegendary) this.b4_manaSrcs(p, out);
+    if (this._b47cfg && this._b47cfg.p === p) for (const [land, sel] of this._b47cfg.map) { /* b47: a costed land mode switched on for this plan — the land's plain tap and its partners' own mana are replaced by the mode's output; paying taps the partners too */
+      if (land.tapped || land.neutral || !p.battlefield.includes(land)) continue; const outs = this.b47_modeOut(p, land, sel.mode); if (!outs.length) continue;
+      for (let i = out.length - 1; i >= 0; i--) if (out[i].b && (out[i].b === land || sel.partners.includes(out[i].b))) out.splice(i, 1);
+      for (const e of outs) out.push({ kind: 'perm', b: land, amount: e.amount, colors: e.colors, pen: 1, b47also: sel.partners }); }
     { /* b40: a Signet turns {1} into two mana — with nothing else to pay that {1} it makes no mana at all (Dark Ritual was cast off a lone Signet) */ const sig = out.filter(x => x.b && x.b.card.manaAb && x.b.card.manaAb.needs && x.kind === 'perm'); if (sig.length && !out.some(x => !sig.includes(x) && (x.amount || 0) > 0)) for (const x of sig) out.splice(out.indexOf(x), 1); }
     return out;
   }
   availableMana(p) { return this.manaSrcs(p).reduce((s, x) => s + x.amount, 0); }
   /** plan which sources to use for `cost` (+ `reserve` generic left over). returns the chosen sources, or null */
+  /** b47: what a costed land mode adds right now: [{amount, colors}] */
+  b47_modeOut(p, land, mode) { const md = (land.card.b47_modes || [])[mode]; if (!md) return []; if (md.dyn) { const n = p.battlefield.filter(b => b.card.isLand && /\bSwamp\b/.test(b.card.type || '') && (md.dyn !== 'basicSwamps' || /\bBasic\b/.test(b.card.type || ''))).length; return n > 0 ? [{ amount: n, colors: ['B'] }] : []; } return md.out.map(c => ({ amount: 1, colors: c.slice() })); }
+  /** b47: ways to switch on costed land modes — each land with one mode and the other sources tapped to pay for it */
+  b47_cfgs(p, cost) {
+    const lands = p.battlefield.filter(b => !b.tapped && !b.neutral && b.card.isLand && b.card.b47_modes).slice(0, 3); if (!lands.length) return [];
+    const base = this.manaSrcs(p, cost); const seen = new Map(); for (const e of base) if (e.kind === 'perm' && e.b) seen.set(e.b, (seen.get(e.b) || 0) + 1);
+    const cands = base.filter(e => e.kind === 'perm' && e.b && seen.get(e.b) === 1 && !e.sac && !e.b6noTap && !e.b4also && !e.b7_noGeneric && (e.amount || 0) >= 1);
+    const flex = e => e.colors.filter(c => c !== 'C').length * 10 + e.amount;
+    const optsFor = land => { const res = []; (land.card.b47_modes || []).forEach((md, mode) => { if (!this.b47_modeOut(p, land, mode).length) return; const pool = cands.filter(e => e.b !== land).sort((a, b) => flex(a) - flex(b));
+        const col = md.need.find(x => x.cols); const gen = md.need.reduce((x, y) => x + (y.n || 0), 0);
+        const colC = col ? pool.filter(e => e.colors.some(c => col.cols.includes(c))) : [null];
+        for (const ce of colC.slice(0, 12)) { const rest = pool.filter(e => e !== ce);
+          if (!gen) { if (ce) res.push({ mode, partners: [ce.b] }); continue; }
+          const sets = []; if (gen === 1) for (const e of rest.slice(0, 12)) sets.push([e]); else { const big = rest.filter(e => e.amount >= gen)[0]; if (big) sets.push([big]); let acc = 0; const g = []; for (const e of rest) { if (acc >= gen) break; g.push(e); acc += e.amount; } if (acc >= gen) sets.push(g); let acc2 = 0; const g2 = []; for (const e of [...rest].reverse()) { if (acc2 >= gen) break; g2.push(e); acc2 += e.amount; } if (acc2 >= gen) sets.push(g2); }
+          for (const st of sets) res.push({ mode, partners: [...(ce ? [ce.b] : []), ...st.map(e => e.b)] }); } }); return res; };
+    const per = lands.map(l => [l, optsFor(l)]); const cfgs = [];
+    for (const [l, os] of per) for (const o of os) cfgs.push(new Map([[l, o]]));
+    for (let i = 0; i < per.length; i++) for (let j = i + 1; j < per.length; j++) for (const a of per[i][1]) for (const b of per[j][1]) { if (cfgs.length > 70) break; if (a.partners.some(x => b.partners.includes(x) || x === per[j][0]) || b.partners.includes(per[i][0])) continue; cfgs.push(new Map([[per[i][0], a], [per[j][0], b]])); }
+    return cfgs.slice(0, 70).map(map => ({ p, map }));
+  }
   manaPlan(p, cost, reserve = 0) {
+    const r = this.manaPlan0(p, cost, reserve); if (r || this._b47cfg || (cost && cost.b47_plain) || !p.battlefield.some(b => b.card.b47_modes && !b.tapped)) return r;
+    for (const cfg of this.b47_cfgs(p, cost)) { this._b47cfg = cfg; try { const r2 = this.manaPlan0(p, cost, reserve); if (r2) return r2; } finally { this._b47cfg = null; } }
+    return null;
+  }
+  manaPlan0(p, cost, reserve = 0) {
     const srcs = this.manaSrcs(p, cost).map(s => ({ ...s, left: s.amount, used: false }));
     if (srcs.reduce((s, x) => s + x.amount, 0) < cost.total + reserve) return null;
     const need = { ...cost.pips };
@@ -3269,7 +3320,7 @@ class Game {
   convokeGranted(p, card, zone) { return p.battlefield.some(b => { const g = b.card.statics && !b.neutral && b.card.statics.grantConvoke; if (!g) return false; if (g === 'exile') return !!card.impulse || zone === 'exile'; if (g === 'creature') return card.isCreature; if (g === 'multicolored') return (card.colors || []).length > 1; return matchesFilter(card, g); }); }
   canPayCost(p, cost, reserve = 0) { return !!this.manaPlan(p, cost, reserve); }
   payCost(p, cost, forcedPlan = null) {
-    const plan0 = forcedPlan || this.manaPlan(p, cost); if (!plan0 && (cost.total || 0) > 0) return false;
+    const plan0 = forcedPlan || this.manaPlan(p, cost); if (!plan0 && (cost.total || 0) > 0) return false; this._b47said = null;
     const plan = plan0 || [];
     this.lastSpend = { total: cost.total || 0, c: plan.reduce((s, x) => s + ((x.colors && x.colors.length === 1 && x.colors[0] === 'C') ? (x.amount || 1) : 0), 0) };
     this.lastSpend.colors = this.b3_colorsSpent(plan, cost);
@@ -3284,7 +3335,7 @@ class Game {
       if (s.kind === 'hand') { const i = p.hand.indexOf(s.c); if (i >= 0) { p.hand.splice(i, 1); p.exile.push(s.c); this.say(`— exiles ${s.c.name} from hand for mana`, p); } continue; }
       if (s.kind === 'altar') { const i = p.battlefield.indexOf(s.b); if (i >= 0) { p.battlefield.splice(i, 1); this.say(`— sacrifices ${s.b.card.name} to ${s.via.name}`, p); (this.pendingSac = this.pendingSac || []).push([p, s.b]); } continue; }
       if (s.kind === 'led') { const i = p.battlefield.indexOf(s.b); if (i >= 0) { p.graveyard.push(...p.hand); p.hand = []; p.battlefield.splice(i, 1); p.graveyard.push(s.b.card); this.say(`— discards their hand and sacrifices ${s.b.card.name} for mana`, p); } continue; }
-      const b = s.b; if (s.b6noTap) b.b6m01Turn = this.turn; else b.tapped = true; b.b45_tapTurn = this.turn; b.b45_tapSeq = (this.b45_seq = (this.b45_seq || 0) + 1); const S = b.card.statics || {}; if (s.b4also) s.b4also.tapped = true;
+      const b = s.b; if (s.b6noTap) b.b6m01Turn = this.turn; else b.tapped = true; b.b45_tapTurn = this.turn; b.b45_tapSeq = (this.b45_seq = (this.b45_seq || 0) + 1); const S = b.card.statics || {}; if (s.b4also) s.b4also.tapped = true; if (s.b47also) for (const x of s.b47also) { if (!x.tapped) { x.tapped = true; if (!this._b47said || this._b47said !== s.b) { this._b47said = s.b; this.say(`— taps ${s.b47also.map(y => y.card.name).join(', ')} to pay for ${s.b.card.name}'s mana ability`, p); } } }
       if (b.tapped && b.card.isCreature) this._tappedQueue = [...(this._tappedQueue || []), b];
       if (b.card.isArtifact) for (const o of this.opponentsOf(p)) for (const av of o.battlefield.filter(x => x.card.statics && x.card.statics.avalanche && !x.neutral)) (this.pendingLife = this.pendingLife || []).push([p, -1, av.card]); /* b22: tapping an artifact for mana is activating an ability of it (Avalanche of Sector 7 only pinged for equip and the like) */
       if (/^\{T\}, Pay 1 life: Add \{B\}\. Put a hatchling counter on this land\./.test(b.card.oracle || '')) { (b.ck = b.ck || {}).hatchling = (b.ck.hatchling || 0) + 1; p.life -= 1; }
@@ -4618,7 +4669,11 @@ class Game {
   }
   async resolveObj0(obj) {
     const { card, caster: p } = obj;
-    if (obj.kind === 'ability') { obj.resolved = true; this.say(`— ${obj.src.name}'s ability resolves`, p); { const prevAb = this._b9AbRes; this._b9AbRes = {}; try { await this.runOps(p, obj.ab.ops, obj.src, obj.ctxA); } finally { this._b9AbRes = prevAb; } } await this.emit({ type: 'resolve', p, card: obj.src }); return; }
+    if (obj.kind === 'ability') { obj.resolved = true; this.say(`— ${obj.src.name}'s ability resolves`, p);
+      const rd = obj.b47_by && !obj.b47_by.dead && obj.b47_by !== p && obj.b47_by.human ? obj.b47_by : null; const flip = rd && !p.human && /target|damage|destroy|exile|bounce|tap|fight|pump|counter|steal|threaten|control|sacrifice|shrink|goad|flicker|blink|attach/i.test(JSON.stringify(obj.ab.ops || []));
+      const ai0 = p.ai; if (rd) { this.b47_redir = { ctrl: p, by: rd, used: false }; if (flip) { p.human = true; p.ai = null; } }
+      { const prevAb = this._b9AbRes; this._b9AbRes = {}; try { await this.runOps(p, obj.ab.ops, obj.src, obj.ctxA); } catch (e) { if (!rd) throw e; this.say(`— ${obj.card.name}: the redirected ability could not finish (${String(e && e.message || e).slice(0, 80)})`, rd); } finally { this._b9AbRes = prevAb; if (rd) { if (flip) { p.human = false; p.ai = ai0; } const u = this.b47_redir && this.b47_redir.used; this.b47_redir = null; if (!u) this.say(`— ${obj.card.name} had no target for ${rd.name} to change`, rd); } } }
+      await this.emit({ type: 'resolve', p, card: obj.src }); return; }
     if (obj.target && !this.targetLegal(obj)) {
       obj.fizzled = true; this.say(`— ${card.name} fizzles: ${obj.target.spell ? obj.target.spell.card.name + ' is no longer on the stack' : 'its target is no longer legal'}`, p);
       await this.emit({ type: 'fizzle', p, card, obj }); await this.leaveStack(obj); return;
@@ -4639,7 +4694,9 @@ class Game {
     return out.filter(t => t !== obj.target);
   }
   async doRedirect(p, card, target, self) {
-    const victim = target && target.spell; if (!victim || !this.stack.includes(victim) || !victim.target) { this.say(`— nothing to redirect`, p); return; }
+    const victim = target && target.spell;
+    if (victim && this.stack.includes(victim) && victim.kind === 'ability' && card.redirectAb && victim.caster !== p) { /* b47: abilities pick their targets as they resolve in this engine, so 'choose new targets' hands that choice to the redirecting player: when the ability resolves, p makes every target choice in it, from everything it could legally target */ victim.b47_by = p; if (victim.ctxA && victim.ctxA.target) { victim.b47_had = victim.ctxA.target; victim.ctxA = { ...victim.ctxA, target: null }; victim.target = null; } this.say(`— ${p.name} will choose the targets of ${victim.card.name}`, p); await this.emit({ type: 'retarget', p, obj: victim, target: null }); return; }
+    if (!victim || !this.stack.includes(victim) || !victim.target) { this.say(`— nothing to redirect`, p); return; }
     const cands = this.retargetCandidates(victim); /* b18: the redirect spell is still on the stack while it resolves, so a counterspell can be pointed at it — it then fizzles */ if (self && victim.card.roles.includes('counter') && counterHits(victim.card, self.card) && !cands.some(t => t.spell === self) && !(victim.target && victim.target.spell === self)) cands.push({ spell: self }); if (!cands.length) { this.say(`— ${victim.card.name} has no other legal target`, p); return; }
     let nt = null;
     if (p.human) nt = this.hooks.humanRetarget ? await this.hooks.humanRetarget({ p, card, obj: victim, candidates: cands }) : null;
@@ -5006,6 +5063,10 @@ class Game {
   // ---------- helpers for card-specific effects ----------
   /** pick a permanent: AI by value (opponents' for harmful effects, own otherwise), humans from a list */
   async pickPerm(p, src, pool, { harmful = false, dest = 'target' } = {}) {
+    { const rd = this.b47_redir; if (rd && p === rd.ctrl && SHROUD_DESTS.has(dest)) { /* b47: a redirected ability — every permanent of the kinds this effect could pick is a legal new target, the controller's own included, and the redirecting player chooses */ const F = ['isCreature', 'isArtifact', 'isEnchantment', 'isPlaneswalker', 'isLand']; const all = this.alive().flatMap(q => q.battlefield.filter(b => !b.neutral));
+        let cands = pool.slice(); if (pool.length) { const common = F.filter(f => pool.every(b => b.card[f])); const any = F.filter(f => pool.some(b => b.card[f])); cands = all.filter(b => common.length ? common.every(f => b.card[f]) : any.some(f => b.card[f])); }
+        cands = cands.filter(b => b.card !== src && this.canTarget(p, b, src) && !(dest === 'destroy' && false)); if (!cands.length) return null; rd.used = true;
+        const c = (await this.chooseFromList(rd.by, src, cands.map(b => b.card), 1, dest))[0]; const pick = cands.find(b => b.card === c) || null; if (pick) { const o = this.ownerOf(pick); if (o) pick.owner = o.i; this.say(`— ${rd.by.name} points it at ${pick.card.name}`, rd.by); } return pick; } }
     pool = pool.filter(b => !(harmful && this.ownerOf(b) !== p && (b.card.kw.includes('hexproof') || b.card.kw.includes('shroud'))));
     if (SHROUD_DESTS.has(dest)) pool = pool.filter(b => !(b.card.kw || []).includes('shroud')); /* b29: shroud stops its controller's own spells and abilities too (a creature wearing Lightning Greaves could be targeted by its owner's pump, blink, bounce, Aura…). Choices that don't target — sacrifice, soulbond, legend rule, counters moved by a non-targeting effect — are untouched */
     if (!pool.length) return null;
@@ -5125,10 +5186,12 @@ class Game {
   }
   async chooseFromList(p, src, pool, n, dest) {
     if (!pool.length) return [];
+    if (this.b47_redir && p === this.b47_redir.ctrl && (dest === 'target' || dest === 'damage' || dest === 'destroy' || dest === 'exile' || dest === 'bounce')) this.b47_redir.used = true;
     if (p.human) { const r = this.hooks.humanSearch ? await this.hooks.humanSearch({ p, card: src, pool, n, dest, upTo: true }) : null; const out = [].concat(r || []); if (r && r.keepOrder) out.keepOrder = r.keepOrder; return out; } // b13: scry/surveil may also return the order of the kept cards
     return p.ai ? [].concat(p.ai.chooseCards(this, p, pool, n, dest) || []) : pool.slice(0, n);
   }
   async choosePlayer(p, src, players, why) {
+    { const rd = this.b47_redir; if (rd && p === rd.ctrl) { const t = ((src && src.oracle) || '').toLowerCase(); const wide = /target opponent/.test(t) && !/target player|any target/.test(t) ? this.opponentsOf(p) : this.alive(); const set = [...new Set([...players, ...wide])].filter(q => !q.dead); if (!set.length) return null; rd.used = true; const q = this.hooks.humanChoosePlayer ? await this.hooks.humanChoosePlayer({ p: rd.by, card: src, players: set, why: why || `${src.name}: choose the new target` }) : set[0]; if (q) this.say(`— ${rd.by.name} points it at ${q.name}`, rd.by); return q || null; } }
     players = players.filter(q => q === p || (!(q.b1_hexUB === this.turn && ((src && src.colors) || []).some(c => c === 'U' || c === 'B')) && !this.protFromPlayer(q, p) && !q.battlefield.some(b => b.card.statics && b.card.statics.playerHexproof && !b.neutral)));
     if (!players.length) return null;
     if (players.length === 1) return players[0];
@@ -5322,6 +5385,9 @@ class Game {
           if (!pool.length) { if (p.human) this.say(`— ${pm.card.name}: no instant or sorcery spell with a single target that could target it`, p); break; }
           let v = null; if (p.human) { if (this.hooks.humanMay && !(await this.hooks.humanMay({ p, card: src, question: `change the target of a spell to ${pm.card.name}?` }))) break; const c = (await this.chooseFromList(p, src, pool.map(o => o.card), 1, 'target'))[0]; v = pool.find(o => o.card === c) || null; } else v = pool.find(o => o.caster !== p && o.target && !o.target.battlefield && this.ownerOf(o.target) === p && (o.card.roles || []).includes('removal') && (o.target.card.cmc || 0) > 3) || pool.find(o => o.target === p && o.caster !== p) || null;
           if (!v) break; v.target = pm; this.say(`— ${v.card.name} now targets ${pm.card.name}`, p); await this.emit({ type: 'retarget', p, obj: v, target: pm }); break; }
+        case 'b47_landMana': { const pm = ctx.perm; if (!pm) break; const outs = this.b47_modeOut(p, pm, op.i); if (!outs.length) { this.say(`— ${pm.card.name}: adds no mana`, p); break; } const add = [];
+          for (const e of outs) for (let k = 0; k < e.amount; k++) { let c = e.colors[0]; if (e.colors.length > 1 && p.human && this.hooks.humanChoice) { const N = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green', C: 'Colorless' }; const ch = await this.hooks.humanChoice({ p, card: src, question: `${pm.card.name}: mana ${add.length + 1} of ${outs.reduce((x, y) => x + y.amount, 0)}`, options: e.colors.map(x => N[x]) }); c = e.colors.find(x => N[x] === ch) || c; } add.push(c); }
+          this.addMana(p, add); break; }
         case 'b45_tecutlan': { const pm = ctx.perm; const sp = ctx.castCard; if (!pm || !sp) break; if (sp.isInstant || sp.isSorcery) break; if (pm.b45_tapTurn !== this.turn || pm.b45_credit === pm.b45_tapSeq) break; /* 'using mana produced by Tecutlan': it was tapped for mana this turn and that tap has not already been counted for an earlier spell */ pm.b45_credit = pm.b45_tapSeq; this.say(`— ${pm.card.name}: discover ${sp.cmc || 0}`, p); await this.runOps(p, [{ op: 'discover', n: sp.cmc || 0 }], src, ctx); break; }
         case 'b45_distCounters': { const x = Math.max(0, ctx.x || 0); let left = x; const mine = () => p.battlefield.filter(b => b.card.isCreature); if (!x || !mine().length) { if (p.human) this.say(`— ${src.name}: ${x ? 'no creature to put counters on' : 'X is 0'}`, p); break; }
           while (left > 0) { const t = p.ai ? [...mine()].sort((a, z) => this.powerOf(p, z) - this.powerOf(p, a))[0] : (mine().length === 1 ? mine()[0] : await this.pickPerm(p, src, mine(), { dest: 'counters' })); if (!t) break; let n = left; if (p.human && mine().length > 1 && left > 1 && this.hooks.humanNumber && !this.shortcutting) { const v = await this.hooks.humanNumber({ p, card: src, question: `How many of the ${left} remaining +1/+1 counters go on ${t.card.name}?`, min: 1, max: left }); if (v >= 1 && v <= left) n = v; } const k = this.counterAmt(p, n); t.counters = (t.counters || 0) + k; await this.countersPut(p, t, k); this.say(`— ${n} +1/+1 counter${n === 1 ? '' : 's'} on ${t.card.name}`, p); left -= n; } break; }
@@ -7225,7 +7291,7 @@ class Game {
   // ---------- priority ----------
   /** everything `q` could legally do right now outside their own main phase */
   /** is there a spell or ability on the stack whose target could be changed right now? */
-  redirectable(q) { return this.stack.some(o => o.target && !(o.kind === 'ability' && !(o.target.card || o.target.life != null || o.target.spell)) && (this.retargetCandidates(o).length > 0 || (o.kind === 'spell' && o.card.roles.includes('counter') && !!o.target.spell) /* b18: a counterspell can always be pointed at the redirect spell itself */)); }
+  redirectable(q) { if (q && q.human && q.hand.some(c => c.redirectAb) && this.stack.some(o => o.kind === 'ability' && o.caster !== q && !o.b47_by)) return true; /* b47 */ return this.stack.some(o => o.target && !(o.kind === 'ability' && !(o.target.card || o.target.life != null || o.target.spell)) && (this.retargetCandidates(o).length > 0 || (o.kind === 'spell' && o.card.roles.includes('counter') && !!o.target.spell) /* b18: a counterspell can always be pointed at the redirect spell itself */)); }
   legalActions(q) {
     if (q.dead) return [];
     const out = [];
@@ -7343,7 +7409,7 @@ class Game {
       else if (!p.ai && this.hooks.humanChoice) { const perms = this.oppPerms(p, x => x.card.isCreature || x.card.isPlaneswalker); const opts = [...opps.map(q => `${q.name} (${q.life} life)`), ...perms.map(x => `${x.card.name} — ${this.ownerOf(x).name}${x.card.isPlaneswalker ? ` (loyalty ${x.loyalty})` : ` (${this.powerOf(this.ownerOf(x), x)}/${this.toughOf(this.ownerOf(x), x)})`}`)]; const ch = await this.hooks.humanChoice({ p, card: b.card, question: `${b.card.name}: deal ${n} damage to which opponent, creature or planeswalker?`, options: opts }); const k = opts.indexOf(ch); if (k >= 0 && k < opps.length) { const q = opps[k]; this.say(`— ${b.card.name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, b.card, { by: p }); } else if (k >= opps.length) { const x = perms[k - opps.length]; const o = this.ownerOf(x); this.say(`— ${b.card.name} deals ${n} damage to ${x.card.name}`, p); if (x.card.isPlaneswalker) await this.pwDamage(o, x, n); else { await this.dealtDamage(o, x, n, b.card); await this.sba(); } } }
       else { const q = p.ai ? [...opps].sort((a, z) => a.life - z.life)[0] : await this.choosePlayer(p, b.card, opps, `${b.card.name}: deal ${n} damage to which opponent?`); if (q) { this.say(`— ${b.card.name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, b.card, { by: p }); } } } finally { this._awbo--; } } }
   async b13_tamiyo(perm) { if (!perm || !perm.b13Tam) return; perm.b13Tam = perm.b13Tam.filter(t => !t.p.dead && (t.p.turnCount || 0) === t.until); for (const t of perm.b13Tam) { this.say(`— ${perm.card.name} dealt combat damage: draw a card (Tamiyo)`, t.p); await this.runOpsCore(t.p, [{ op: 'draw', n: 1 }], perm.card, {}); } }
-  async b13_dmgOppAny(p, src, n, tag) { const opps = this.opponentsOf(p); const name = (src && src.name) || 'it';
+  async b13_dmgOppAny(p, src, n, tag) { const b47 = this.b47_redir && this.b47_redir.ctrl === p; if (b47) this.b47_redir.used = true; const opps = b47 ? this.alive() /* a redirected 'any target' may be turned on its own controller */ : this.opponentsOf(p); const name = (src && src.name) || 'it';
     const hit = async x => { const o = this.ownerOf(x); this.say(`— ${name} deals ${n} damage to ${x.card.name}`, p); if (x.card.isPlaneswalker) await this.pwDamage(o, x, n); else { await this.dealtDamage(o, x, n, src); await this.sba(); } };
     const face = async q => { this.say(`— ${name} deals ${n} damage to ${q.name}`, p); await this.damagePlayer(q, n, src, { by: p }); };
     if (p.ai || this.shortcutting || !this.hooks.humanChoice) { const k = this.oppPerms(p, x => (x.card.isCreature && this.toughOf(this.ownerOf(x), x) - this.markedOf(x) <= n) || (x.card.isPlaneswalker && (x.loyalty || 0) <= n)).sort((a, z) => p.ai ? p.ai.permBase(z) - p.ai.permBase(a) : 0)[0]; const low = [...opps].sort((a, z) => a.life - z.life)[0]; if (low && low.life <= n) return face(low); if (k) return hit(k); if (low) return face(low); return; }

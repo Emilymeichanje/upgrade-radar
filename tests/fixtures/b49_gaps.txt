@@ -1,0 +1,60 @@
+speed | Burnout Bashtronaut :: {2}: This creature gets +1/+0 until end of turn.
+speed | Chicago Loop :: Pay X speed: Add X mana in any combination of colors. ## {5}, {T}: Create your choice of a 3/1 green Dinosaur Skeleton creature token with trample, a 2/2 orange Bear token with haste, or a 1/1 white Bird token with flying.
+speed | Gastal Raider :: When this creature enters, target opponent reveals their hand. You choose an instant or sorcery card from it. That player discards that card.
+speed | Leonin Surveyor :: During your turn, this creature has first strike.
+speed | Lightwheel Enhancements :: Enchanted permanent gets +1/+1 and has vigilance.
+speed | Mendicant Core, Guidelight :: Mendicant Core's power is equal to the number of artifacts you control.
+speed | Mutant Surveyor :: {2}: This creature gets +1/+1 until end of turn.
+speed | Need for Speed (Not the Odyssey One) :: As long as your speed is 1 or higher, creatures you control have haste. The same is true for speed 2 and higher and trample, speed 3 or higher and first strike, and speed 4 and higher and super haste.
+speed | Outpace Oblivion :: When this enchantment enters, it deals 5 damage to up to one target creature or planeswalker.
+exhaust | Adrenaline Jockey :: Whenever a player casts a spell, if it's not their turn, this creature deals 4 damage to them.
+exhaust | Bitter Work :: Whenever you attack a player with one or more creatures with power 4 or greater, draw a card.
+exhaust | Boommobile :: When this Vehicle enters, add four mana of any one color. Spend this mana only to activate abilities.
+exhaust | Hog-Monkey :: At the beginning of combat on your turn, target creature you control with a +1/+1 counter on it gains menace until end of turn.
+exhaust | Invasion Submersible :: When this Vehicle enters, return up to one other target nonland permanent to its owner's hand.
+exhaust | Liliana the Repentant :: Whenever another creature or planeswalker you control enters, mill two cards.
+exhaust | Peema Trailblazer :: Whenever this creature deals combat damage to a player, you get that many {E} .
+exhaust | Sabotage Strategist :: Whenever one or more creatures attack you, those creatures get -1/-0 until end of turn.
+exhaust | Winter, Cursed Rider :: Artifacts you control have "Ward—Pay 2 life."
+madness | Archfiend of Spite :: Whenever a source an opponent controls deals damage to this creature, that source's controller loses that much life unless they sacrifice that many permanents of their choice.
+madness | Asylum Visitor :: At the beginning of each player's upkeep, if that player has no cards in hand, you draw a card and you lose 1 life.
+madness | Basking Rootwalla :: {1}{G}: This creature gets +2/+2 until end of turn. Activate only once each turn.
+madness | Blazing Rootwalla :: {R}: This creature gets +2/+0 until end of turn. Activate only once each turn.
+madness | Chilling Grasp :: Tap up to two target creatures. Those creatures don't untap during their controller's next untap step.
+madness | Curse of Fool's Wisdom :: Whenever enchanted player draws a card, they lose 2 life and you gain 2 life.
+madness | Emrakul, the World Anew :: Flying, protection from spells and from permanents that were cast this turn ## When Emrakul leaves the battlefield, sacrifice all creatures you control.
+madness | Gibbering Descent :: At the beginning of each player's upkeep, that player loses 1 life and discards a card. ## Hellbent — Skip your upkeep step if you have no cards in hand.
+madness | Gorgon Recluse :: Whenever this creature blocks or becomes blocked by a nonblack creature, destroy that creature at end of combat.
+madness | Grave Scrabbler :: When this creature enters, if its madness cost was paid, you may return target creature card from a graveyard to its owner's hand.
+madness | Hell Mongrel :: Discard a card: This creature gets +1/+1 until end of turn.
+madness | Malevolent Whispers :: Gain control of target creature until end of turn. Untap that creature. It gets +2/+0 and gains haste until end of turn.
+madness | Muck Drubb :: When this creature enters, change the target of target spell that targets only a single creature to this creature.
+madness | Nagging Thoughts :: Look at the top two cards of your library. Put one of them into your hand and the other into your graveyard.
+madness | Necrogoyf :: Necrogoyf's power is equal to the number of creature cards in all graveyards. ## At the beginning of each player's upkeep, that player discards a card.
+madness | Psychotic Episode :: Target player reveals their hand and the top card of their library. You choose a card revealed this way. That player puts the chosen card on the bottom of their library.
+madness | Skophos Reaver :: During your turn, this creature gets +2/+0.
+madness | Welcome to the Fold :: Gain control of target creature if its toughness is 2 or less. If this spell's madness cost was paid, instead gain control of that creature if its toughness is X or less.
+mayhem | Scarlet Spider, Kaine :: When Scarlet Spider enters, you may discard a card. If you do, put a +1/+1 counter on him.
+unearth | Anathemancer :: When this creature enters, it deals damage to target player equal to the number of nonbasic lands that player controls.
+unearth | Ashnod's Harvester :: Whenever this creature attacks, exile target card from a graveyard.
+unearth | Brackwater Elemental :: When this creature attacks or blocks, sacrifice it at the beginning of the next end step.
+unearth | Canoptek Tomb Sentinel :: Exile Cannon — When this creature enters from a graveyard, exile up to one target nonland permanent.
+unearth | Dregscape Sliver :: Each Sliver creature card in your graveyard has unearth {2}.
+unearth | Extractor Demon :: Whenever another creature leaves the battlefield, you may have target player mill two cards.
+unearth | Fatestitcher :: {T}: You may tap or untap another target permanent.
+unearth | Grixis Slavedriver :: When this creature leaves the battlefield, create a 2/2 black Zombie creature token.
+unearth | Heavyweight Demolisher :: At the beginning of your upkeep, tap this creature unless you pay {3}.
+unearth | Hexmark Destroyer :: Multi-threat Eliminator — This creature can't be blocked except by six or more creatures.
+unearth | Kathari Bomber :: When this creature deals combat damage to a player, create two 1/1 red Goblin creature tokens and sacrifice this creature.
+unearth | Kederekt Leviathan :: When this creature enters, return all other nonland permanents to their owners' hands.
+unearth | Mask of the Jadecrafter :: {X}, {T}, Sacrifice this artifact: Create an X/X colorless Golem artifact creature token. Activate only as a sorcery.
+unearth | Mishra's Research Desk :: {1}, {T}, Sacrifice this artifact: Exile the top two cards of your library. Choose one of them. Until the end of your next turn, you may play that card.
+unearth | Phyrexian Dragon Engine :: When this creature enters from your graveyard, you may discard your hand. If you do, draw three cards.
+unearth | Sedraxis Specter :: Whenever this creature deals combat damage to a player, that player discards a card.
+unearth | Skorpekh Lord :: Command Protocols — Other artifact creatures you control get +1/+0 and have menace.
+unearth | Terisian Mindbreaker :: Whenever this creature attacks, defending player mills half their library, rounded up.
+unearth | Tocasia's Onulet :: When this creature leaves the battlefield, you gain 2 life.
+unearth | Tomb Blade :: Whenever this creature deals combat damage to a player, that player loses life equal to the number of creatures they control unless they sacrifice a creature of their choice.
+unearth | Tri-Sentinel, Act of Vengeance :: When Tri-Sentinel enters, for each opponent, Tri-Sentinel deals 3 damage to up to one target creature that player controls.
+unearth | Triarch Praetorian :: Dynastic Codes — When this creature enters from a graveyard, you draw two cards and you lose 2 life.
+unearth | Undead Leotau :: {R}: This creature gets +1/-1 until end of turn.

@@ -3382,15 +3382,16 @@ class Game {
     return null;
   }
   manaPlan0(p, cost, reserve = 0) {
-    const srcs = this.manaSrcs(p, cost).map(s => ({ ...s, left: s.amount, used: false }));
+    const srcs = this.manaSrcs(p, cost).map(s => ({ ...s, left: s.amount, used: false, eachLeft: s.each && s.each.length === s.amount ? s.each.slice() : null })); // b52: a tap that makes fixed different colours (Utopia Sprawl's Forest = {G}+{U}, Bloom Tender) gives exactly those, one each
     if (srcs.reduce((s, x) => s + x.amount, 0) < cost.total + reserve) return null;
     const need = { ...cost.pips };
     // b31: coloured pips are a matching problem. The old greedy pass took the first source for each colour in WUBRG order and gave up when a later colour had none left — Stomping Ground (R/G) + Sulfur Falls (U/R) + Island could not pay {G}{U}{R}, because red took Stomping Ground and green was stranded. Same preferences as before, but when a colour finds no free source an earlier pip is moved to another source that can also pay it (augmenting path).
     const asg = [];
     const place = (col, seen) => {
-      const cands = srcs.filter(s => s.colors.includes(col) && !seen.has(s)).sort((a, b) => ((b.left > 0) - (a.left > 0)) || (b.used - a.used) || (a.pen - b.pen) || (a.colors.length - b.colors.length) || (a.amount - b.amount));
-      for (const s of cands) { seen.add(s); if (s.left > 0) { s.left--; s.used = true; return s; }
-        for (const x of asg) if (x.s === s) { const t = place(x.col, seen); if (t) { x.s = t; return s; } } }
+      const has = s => s.eachLeft ? s.each.includes(col) : s.colors.includes(col), free = s => s.eachLeft ? s.eachLeft.includes(col) : s.left > 0;
+      const cands = srcs.filter(s => has(s) && !seen.has(s)).sort((a, b) => (free(b) - free(a)) || (b.used - a.used) || (a.pen - b.pen) || (a.colors.length - b.colors.length) || (a.amount - b.amount));
+      for (const s of cands) { seen.add(s); if (free(s)) { s.left--; if (s.eachLeft) s.eachLeft.splice(s.eachLeft.indexOf(col), 1); s.used = true; return s; }
+        for (const x of asg) if (x.s === s && (!s.eachLeft || x.col === col)) { const t = place(x.col, seen); if (t) { x.s = t; return s; } } }
       return null; };
     for (const col of 'WUBRG') while (need[col] > 0) { const cand = place(col, new Set()); if (!cand) return null; asg.push({ col, s: cand }); need[col]--; }
     for (const s of srcs) { const n = asg.filter(x => x.s === s).length; s.used = n > 0 || s.left < s.amount; if (n) { s.pip = true; if (s.b1_opal) need.b1x = (need.b1x || 0) + n; } }
